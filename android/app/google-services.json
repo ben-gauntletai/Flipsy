@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "185837991801",
+    "project_id": "flipsy-gauntlet",
+    "storage_bucket": "flipsy-gauntlet.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:185837991801:android:e3a82e3cdec037601ca1a8",
+        "android_client_info": {
+          "package_name": "com.gauntletai.flipsy"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6xJRsS5z4N74qOMrP2dpI60vEzYj5Ea8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
