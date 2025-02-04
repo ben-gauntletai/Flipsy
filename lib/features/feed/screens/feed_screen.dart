@@ -21,6 +21,216 @@ class FeedScreen extends StatefulWidget {
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
+class VideoControllerManager {
+  final Map<int, VideoPlayerController> _controllers = {};
+  final Map<int, Completer<void>> _initializationCompleters = {};
+  final Map<int, bool> _initializationStarted = {};
+  final int preloadForward;
+  final int keepPrevious;
+  int _currentIndex = -1; // Initialize to -1 to ensure first update runs
+
+  VideoControllerManager({
+    this.preloadForward = 1,
+    this.keepPrevious = 1,
+  });
+
+  bool shouldBeLoaded(int index) {
+    return index >= _currentIndex - keepPrevious &&
+        index <= _currentIndex + preloadForward;
+  }
+
+  Future<void> updateCurrentIndex(int newIndex, List<Video> videos) async {
+    print(
+        'VideoControllerManager: Updating current index to $newIndex with ${videos.length} videos');
+
+    // Always initialize if no controller exists for this index
+    if (!_controllers.containsKey(newIndex)) {
+      print(
+          'VideoControllerManager: No controller exists for index $newIndex, initializing');
+      try {
+        print(
+            'VideoControllerManager: Starting initialization for index $newIndex');
+        await _initializeController(newIndex, videos[newIndex]);
+        print(
+            'VideoControllerManager: Successfully initialized controller for index $newIndex');
+      } catch (e, stackTrace) {
+        print(
+            'VideoControllerManager: Failed to initialize controller for index $newIndex');
+        print('Error: $e');
+        print('Stack trace: $stackTrace');
+        rethrow;
+      }
+    }
+
+    // Update current index after successful initialization
+    _currentIndex = newIndex;
+
+    // Initialize other videos in the window in the background
+    for (int i = newIndex - keepPrevious; i <= newIndex + preloadForward; i++) {
+      if (i >= 0 && i < videos.length && i != newIndex) {
+        _initializeController(i, videos[i]).catchError((e, stackTrace) {
+          print(
+              'VideoControllerManager: Failed to initialize controller for index $i');
+          print('Error: $e');
+          print('Stack trace: $stackTrace');
+        });
+      }
+    }
+
+    // Clean up controllers outside the window
+    _controllers.keys.toList().forEach((index) {
+      if (!shouldBeLoaded(index)) {
+        _disposeController(index);
+      }
+    });
+  }
+
+  Future<void> _initializeController(int index, Video video) async {
+    print(
+        'VideoControllerManager: Entering _initializeController for index $index');
+    print('VideoControllerManager: Video URL: ${video.videoURL}');
+
+    if (_controllers.containsKey(index)) {
+      print(
+          'VideoControllerManager: Controller already exists for index $index');
+      return;
+    }
+
+    if (_initializationStarted[index] == true) {
+      print(
+          'VideoControllerManager: Initialization already started for index $index');
+      if (_initializationCompleters.containsKey(index)) {
+        print(
+            'VideoControllerManager: Waiting for existing initialization to complete');
+        await _initializationCompleters[index]!.future;
+        return;
+      }
+    }
+
+    print('VideoControllerManager: Creating new controller for index $index');
+    _initializationStarted[index] = true;
+    _initializationCompleters[index] = Completer<void>();
+
+    VideoPlayerController? controller;
+    try {
+      print(
+          'VideoControllerManager: Creating VideoPlayerController for ${video.videoURL}');
+      controller = VideoPlayerController.network(
+        video.videoURL,
+        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      );
+
+      print(
+          'VideoControllerManager: Created controller, starting initialization');
+      _controllers[index] = controller;
+
+      print('VideoControllerManager: Calling initialize() on controller');
+      await controller.initialize();
+      print(
+          'VideoControllerManager: Controller initialization completed successfully');
+
+      if (!_initializationCompleters[index]!.isCompleted) {
+        _initializationCompleters[index]?.complete();
+        print(
+            'VideoControllerManager: Initialization completer completed successfully');
+      }
+    } catch (e, stackTrace) {
+      print(
+          'VideoControllerManager: Error initializing controller for index $index');
+      print('Error: $e');
+      print('Stack trace: $stackTrace');
+
+      // Cleanup on error
+      if (controller != null) {
+        print('VideoControllerManager: Disposing failed controller');
+        await controller.dispose();
+      }
+
+      _cleanupController(index);
+
+      if (_initializationCompleters.containsKey(index) &&
+          !_initializationCompleters[index]!.isCompleted) {
+        _initializationCompleters[index]?.completeError(e);
+      }
+      rethrow;
+    }
+  }
+
+  Future<VideoPlayerController?> getController(int index) async {
+    print('VideoControllerManager: Getting controller for index $index');
+    print(
+        'VideoControllerManager: Available controllers: ${_controllers.keys.toList()}');
+    print(
+        'VideoControllerManager: Initialization started for indices: ${_initializationStarted.keys.toList()}');
+
+    if (!_controllers.containsKey(index)) {
+      print('VideoControllerManager: No controller exists for index $index');
+      return null;
+    }
+
+    try {
+      if (_initializationCompleters.containsKey(index)) {
+        print(
+            'VideoControllerManager: Waiting for initialization to complete for index $index');
+        await _initializationCompleters[index]!.future;
+      }
+
+      final controller = _controllers[index];
+      if (controller != null) {
+        print(
+            'VideoControllerManager: Returning initialized controller for index $index');
+        if (controller.value.isInitialized) {
+          print('VideoControllerManager: Controller is properly initialized');
+        } else {
+          print(
+              'VideoControllerManager: Warning - Controller exists but is not initialized');
+        }
+      } else {
+        print('VideoControllerManager: Controller is null for index $index');
+      }
+      return controller;
+    } catch (e, stackTrace) {
+      print(
+          'VideoControllerManager: Error getting controller for index $index');
+      print('Error: $e');
+      print('Stack trace: $stackTrace');
+      return null;
+    }
+  }
+
+  void _cleanupController(int index) {
+    print('VideoControllerManager: Cleaning up controller for index $index');
+    _controllers[index]?.dispose();
+    _controllers.remove(index);
+    _initializationCompleters.remove(index);
+    _initializationStarted.remove(index);
+  }
+
+  void _disposeController(int index) {
+    print('VideoControllerManager: Disposing controller for index $index');
+    _cleanupController(index);
+  }
+
+  void disposeAll() {
+    print('VideoControllerManager: Disposing all controllers');
+    for (var controller in _controllers.values) {
+      controller.dispose();
+    }
+    _controllers.clear();
+    _initializationCompleters.clear();
+    _initializationStarted.clear();
+  }
+
+  void pauseAllExcept(int index) {
+    _controllers.forEach((idx, controller) {
+      if (idx != index && controller.value.isPlaying) {
+        print('VideoControllerManager: Pausing video at index $idx');
+        controller.pause();
+      }
+    });
+  }
+}
+
 class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   late PageController _pageController;
   final VideoService _videoService = VideoService();
@@ -32,7 +242,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   bool _hasMoreVideos = true;
   DocumentSnapshot? _lastDocument;
   StreamSubscription<List<Video>>? _videoSubscription;
-  final List<VideoPlayerController> _videoControllers = [];
+  late VideoControllerManager _controllerManager;
   String? _error;
   int _currentPage = 0;
 
@@ -42,6 +252,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     print('FeedScreen: Initializing');
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController();
+    _controllerManager = VideoControllerManager();
     _loadVideos();
     _pageController.addListener(_onPageChanged);
   }
@@ -49,7 +260,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _disposeControllers();
+    _controllerManager.disposeAll();
     _pageController.removeListener(_onPageChanged);
     _pageController.dispose();
     _videoSubscription?.cancel();
@@ -64,50 +275,46 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           _currentPage = newPage;
           print('FeedScreen: Page changed to $_currentPage');
         });
+
+        // Update controller manager with new index and handle playback
+        _controllerManager.updateCurrentIndex(newPage, _videos).then((_) async {
+          // Ensure the current video plays and others are paused
+          final currentController =
+              await _controllerManager.getController(newPage);
+          if (currentController != null) {
+            print('FeedScreen: Playing video at index $newPage');
+            currentController.play();
+            currentController.setLooping(true);
+          }
+          _controllerManager.pauseAllExcept(newPage);
+        });
+
+        // Load more videos when user reaches the last 2 videos
+        if (newPage >= _videos.length - 2 &&
+            !_isLoadingMore &&
+            _hasMoreVideos) {
+          _loadMoreVideos();
+        }
       }
-
-      // Load more videos when user reaches the last 2 videos
-      if (newPage >= _videos.length - 2 && !_isLoadingMore && _hasMoreVideos) {
-        _loadMoreVideos();
-      }
-    }
-  }
-
-  void _disposeControllers() {
-    for (var controller in _videoControllers) {
-      controller.dispose();
-    }
-    _videoControllers.clear();
-  }
-
-  void _pauseAllVideos() {
-    for (var controller in _videoControllers) {
-      controller.pause();
-    }
-  }
-
-  void _resumeCurrentVideo() {
-    if (_videoControllers.isNotEmpty && _pageController.hasClients) {
-      final currentPage = _pageController.page?.round() ?? 0;
-      if (currentPage >= 0 && currentPage < _videoControllers.length) {
-        _videoControllers[currentPage].play();
-      }
-    }
-  }
-
-  void _handleVisibilityChanged() {
-    if (!widget.isVisible) {
-      _pauseAllVideos();
-    } else {
-      _resumeCurrentVideo();
     }
   }
 
   @override
-  void didUpdateWidget(FeedScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.isVisible != widget.isVisible) {
-      _handleVisibilityChanged();
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused) {
+      _controllerManager.pauseAllExcept(-1); // Pause all videos
+    } else if (state == AppLifecycleState.resumed && mounted) {
+      // Resume playback of current video when app is resumed
+      final currentController =
+          _controllerManager.getController(_currentPage).then((controller) {
+        if (controller != null && widget.isVisible) {
+          print(
+              'FeedScreen: Resuming video at index $_currentPage after app resume');
+          controller.play();
+          controller.setLooping(true);
+        }
+      });
     }
   }
 
@@ -152,6 +359,23 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             _hasMoreVideos = videos.length == 5;
             print('FeedScreen: Updated state with ${_videos.length} videos');
           });
+
+          // Pre-initialize controllers for the first few videos
+          if (videos.isNotEmpty) {
+            try {
+              print('FeedScreen: Starting controller initialization');
+              await _controllerManager.updateCurrentIndex(0, videos);
+              print(
+                  'FeedScreen: Controller initialization completed successfully');
+            } catch (e) {
+              print('FeedScreen: Error initializing controllers: $e');
+              if (mounted) {
+                setState(() {
+                  _error = 'Error initializing video: $e';
+                });
+              }
+            }
+          }
         }
       }, onError: (error) {
         print('FeedScreen: Error loading videos: $error');
@@ -281,6 +505,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   isVisible: widget.isVisible && index == _currentPage,
                   index: index,
                   currentPage: _currentPage,
+                  getController: _controllerManager.getController,
                 );
               },
             ),
@@ -342,6 +567,7 @@ class VideoFeedItem extends StatefulWidget {
   final bool isVisible;
   final int index;
   final int currentPage;
+  final Future<VideoPlayerController?> Function(int index) getController;
 
   const VideoFeedItem({
     Key? key,
@@ -350,6 +576,7 @@ class VideoFeedItem extends StatefulWidget {
     this.isVisible = true,
     required this.index,
     required this.currentPage,
+    required this.getController,
   }) : super(key: key);
 
   @override
@@ -357,116 +584,145 @@ class VideoFeedItem extends StatefulWidget {
 }
 
 class _VideoFeedItemState extends State<VideoFeedItem> {
-  late VideoPlayerController _videoController;
+  VideoPlayerController? _videoController;
   bool _isPlaying = false;
   bool _isMuted = false;
   bool _showMuteIcon = false;
   bool _isInitialized = false;
   bool _hasError = false;
   String? _errorMessage;
-  _FeedScreenState? _feedScreenState;
   DateTime? _tapDownTime;
+  bool _isLoading = true;
+  Timer? _initializationRetryTimer;
+  int _initializationAttempts = 0;
+  static const int maxInitializationAttempts = 3;
 
   @override
   void initState() {
     super.initState();
     print(
         'VideoFeedItem: Initializing video ${widget.video.id} at index ${widget.index}');
-    _initializeVideo();
+    _initializeController();
+  }
+
+  Future<void> _initializeController() async {
+    if (!mounted) return;
+
+    if (_initializationAttempts >= maxInitializationAttempts) {
+      print(
+          'VideoFeedItem: Max initialization attempts reached for ${widget.video.id}');
+      setState(() {
+        _hasError = true;
+        _errorMessage = 'Failed to load video after multiple attempts';
+        _isLoading = false;
+      });
+      return;
+    }
+
+    _initializationAttempts++;
+    print(
+        'VideoFeedItem: Attempt $_initializationAttempts to initialize ${widget.video.id}');
+
+    setState(() {
+      _isLoading = true;
+      _hasError = false;
+      _errorMessage = null;
+    });
+
+    try {
+      final controller = await widget.getController(widget.index);
+      if (!mounted) return;
+
+      if (controller == null) {
+        print(
+            'VideoFeedItem: Controller is null for ${widget.video.id}, retrying in 1 second');
+        _scheduleRetry();
+        return;
+      }
+
+      setState(() {
+        _videoController = controller;
+        _isInitialized = controller.value.isInitialized;
+        _isLoading = false;
+        print('VideoFeedItem: Successfully initialized ${widget.video.id}');
+      });
+
+      if (_isInitialized) {
+        _checkAndUpdatePlaybackState();
+      } else {
+        print(
+            'VideoFeedItem: Controller not initialized for ${widget.video.id}, retrying in 1 second');
+        _scheduleRetry();
+      }
+    } catch (e) {
+      print(
+          'VideoFeedItem: Error initializing controller for ${widget.video.id}: $e');
+      if (!mounted) return;
+
+      _scheduleRetry();
+    }
+  }
+
+  void _scheduleRetry() {
+    _initializationRetryTimer?.cancel();
+    _initializationRetryTimer = Timer(const Duration(seconds: 1), () {
+      if (mounted) {
+        _initializeController();
+      }
+    });
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final feedState = context.findAncestorStateOfType<_FeedScreenState>();
-    if (feedState != null && feedState != _feedScreenState) {
-      _feedScreenState = feedState;
-      _feedScreenState!._videoControllers.add(_videoController);
-      print(
-          'VideoFeedItem: Added controller to feed state for ${widget.video.id}');
-    }
-    _checkAndUpdatePlaybackState();
+  void dispose() {
+    _initializationRetryTimer?.cancel();
+    super.dispose();
   }
 
   void _checkAndUpdatePlaybackState() {
-    if (!mounted || !_isInitialized) {
+    if (!mounted || !_isInitialized || _videoController == null) {
       print(
-          'VideoFeedItem: Skipping playback check - mounted: $mounted, initialized: $_isInitialized');
+          'VideoFeedItem: Skipping playback check - mounted: $mounted, initialized: $_isInitialized, controller: ${_videoController != null}');
       return;
     }
 
     final shouldPlay = widget.isVisible && widget.index == widget.currentPage;
     print(
-        'VideoFeedItem: Checking playback state for ${widget.video.id} - shouldPlay: $shouldPlay, isPlaying: $_isPlaying, index: ${widget.index}, currentPage: ${widget.currentPage}');
+        'VideoFeedItem: Checking playback state for ${widget.video.id} - shouldPlay: $shouldPlay, isPlaying: $_isPlaying');
 
     if (shouldPlay && !_isPlaying) {
       print('VideoFeedItem: Starting playback for ${widget.video.id}');
-      _videoController.play();
-      _videoController.setLooping(true);
+      _videoController!.play();
+      _videoController!.setLooping(true);
       _isPlaying = true;
     } else if (!shouldPlay && _isPlaying) {
       print('VideoFeedItem: Pausing playback for ${widget.video.id}');
-      _videoController.pause();
+      _videoController!.pause();
       _isPlaying = false;
     }
   }
 
-  Future<void> _initializeVideo() async {
-    try {
-      print('VideoFeedItem: Creating controller for ${widget.video.videoURL}');
-      _videoController = VideoPlayerController.network(widget.video.videoURL);
-
-      await _videoController.initialize();
-      print('VideoFeedItem: Controller initialized for ${widget.video.id}');
-
-      if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-        _checkAndUpdatePlaybackState();
-      }
-    } catch (e) {
-      print('VideoFeedItem: Error initializing video ${widget.video.id}: $e');
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _errorMessage = 'Error loading video: $e';
-        });
-      }
-    }
-  }
-
-  @override
-  void didUpdateWidget(VideoFeedItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    print(
-        'VideoFeedItem: Widget updated for ${widget.video.id} - visible: ${widget.isVisible}, index: ${widget.index}, currentPage: ${widget.currentPage}');
-
-    if (oldWidget.isVisible != widget.isVisible ||
-        oldWidget.currentPage != widget.currentPage) {
-      _checkAndUpdatePlaybackState();
-    }
-  }
-
   void _togglePlay() {
+    if (_videoController == null) return;
+
     setState(() {
       _isPlaying = !_isPlaying;
       if (_isPlaying) {
-        _videoController.play();
+        _videoController!.play();
       } else {
-        _videoController.pause();
+        _videoController!.pause();
       }
     });
   }
 
   void _toggleMute() {
+    if (_videoController == null) return;
+
     setState(() {
       _isMuted = !_isMuted;
       _showMuteIcon = true;
-      _videoController.setVolume(_isMuted ? 0 : 1);
+      _videoController!.setVolume(_isMuted ? 0 : 1);
     });
 
-    // Hide the mute icon after 1 second
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) {
         setState(() {
@@ -476,21 +732,10 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     });
   }
 
-  @override
-  void dispose() {
-    if (mounted && _feedScreenState != null) {
-      // Safely remove controller from parent's list
-      _feedScreenState!._videoControllers.remove(_videoController);
-    }
-    _videoController.pause(); // Ensure video is paused before disposal
-    _videoController.dispose();
-    super.dispose();
-  }
-
   // Profile Picture Navigation
   void _navigateToProfile(BuildContext context) {
     // Pause video before navigating
-    _videoController.pause();
+    _videoController?.pause();
     _isPlaying = false;
 
     Navigator.push(
@@ -503,7 +748,7 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     ).then((_) {
       // Resume video if the feed is still visible when returning
       if (widget.isVisible && mounted) {
-        _videoController.play();
+        _videoController?.play();
         _isPlaying = true;
       }
     });
@@ -511,6 +756,41 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Colors.white,
+        ),
+      );
+    }
+
+    if (_hasError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error, color: Colors.white),
+            Text(
+              _errorMessage ?? 'Error loading video',
+              style: const TextStyle(color: Colors.white),
+            ),
+            TextButton(
+              onPressed: _initializeController,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_videoController == null || !_isInitialized) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: Colors.white,
+        ),
+      );
+    }
+
     final String displayName =
         widget.userData?['displayName'] ?? widget.video.userId;
     final String? avatarURL = widget.userData?['avatarURL'];
@@ -525,25 +805,24 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
         if (widget.isVisible && _tapDownTime != null) {
           final tapDuration = DateTime.now().difference(_tapDownTime!);
           if (tapDuration.inMilliseconds < 200) {
-            // Short tap - toggle mute
             _toggleMute();
           }
           _tapDownTime = null;
         }
       },
       onLongPressDown: (details) {
-        if (widget.isVisible) {
-          _videoController.pause();
+        if (widget.isVisible && _videoController != null) {
+          _videoController!.pause();
         }
       },
       onLongPressUp: () {
-        if (widget.isVisible) {
-          _videoController.play();
+        if (widget.isVisible && _videoController != null) {
+          _videoController!.play();
         }
       },
       onLongPressCancel: () {
-        if (widget.isVisible) {
-          _videoController.play();
+        if (widget.isVisible && _videoController != null) {
+          _videoController!.play();
         }
       },
       behavior: HitTestBehavior.opaque,
@@ -553,28 +832,15 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
             child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
-                width: _videoController.value.size?.width ?? 0,
-                height: _videoController.value.size?.height ?? 0,
-                child: _hasError
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.error, color: Colors.white),
-                            Text(
-                              _errorMessage ?? 'Error loading video',
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                          ],
-                        ),
-                      )
-                    : VideoPlayer(_videoController),
+                width: _videoController?.value.size?.width ?? 0,
+                height: _videoController?.value.size?.height ?? 0,
+                child: VideoPlayer(_videoController!),
               ),
             ),
           ),
 
           // Play/Pause Overlay
-          if (!_videoController.value.isInitialized)
+          if (!_videoController!.value.isInitialized)
             const Center(
               child: CircularProgressIndicator(
                 color: Colors.white,
