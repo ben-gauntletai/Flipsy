@@ -151,7 +151,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       }
 
       print('Creating video document');
-      await _videoService.createVideo(
+      final video = await _videoService.createVideo(
         userId: user.uid,
         videoURL: videoURL,
         duration: metadata['duration'],
@@ -160,11 +160,12 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         description: _descriptionController.text.trim(),
         videoFile: _videoFile,
       );
-      print('Video document created successfully');
+      print('Video document created successfully with ID: ${video.id}');
 
       if (mounted) {
         Navigator.of(context).pop(); // Close progress dialog
-        Navigator.of(context).pop(); // Return to previous screen
+        Navigator.of(context)
+            .pop(video.id); // Return to previous screen with video ID
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video uploaded successfully!')),
         );

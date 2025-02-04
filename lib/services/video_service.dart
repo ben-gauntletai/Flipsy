@@ -112,6 +112,10 @@ class VideoService {
     File? videoFile,
   }) async {
     try {
+      print('VideoService: Creating new video document');
+      print('VideoService: User ID: $userId');
+      print('VideoService: Video URL: $videoURL');
+
       String thumbnailURL;
       if (videoFile != null) {
         thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
@@ -121,6 +125,9 @@ class VideoService {
             'https://via.placeholder.com/320x480.png?text=Video+Thumbnail';
       }
 
+      print('VideoService: Thumbnail URL: $thumbnailURL');
+
+      // Use server timestamp for both createdAt and updatedAt
       final videoData = {
         'userId': userId,
         'videoURL': videoURL,
@@ -137,13 +144,44 @@ class VideoService {
         'status': 'active',
       };
 
+      print('VideoService: Creating document with data: $videoData');
+
       final DocumentReference docRef =
           await _firestore.collection('videos').add(videoData);
-      final DocumentSnapshot doc = await docRef.get();
+      print('VideoService: Created document with ID: ${docRef.id}');
 
-      return Video.fromFirestore(doc);
+      // Wait for the server timestamp to be set by listening to the document
+      DocumentSnapshot doc;
+      int attempts = 0;
+      const maxAttempts = 5;
+      const delay = Duration(milliseconds: 200);
+
+      do {
+        await Future.delayed(delay);
+        doc = await docRef.get();
+        attempts++;
+
+        final data = doc.data() as Map<String, dynamic>?;
+        if (data != null) {
+          print(
+              'VideoService: Attempt $attempts - createdAt: ${data['createdAt']}');
+        }
+      } while (attempts < maxAttempts &&
+          (doc.data() as Map<String, dynamic>?)?.containsKey('createdAt') !=
+              true);
+
+      if (attempts >= maxAttempts) {
+        print(
+            'VideoService: Warning - Server timestamp not resolved after $maxAttempts attempts');
+      }
+
+      final video = Video.fromFirestore(doc);
+      print(
+          'VideoService: Created video object with createdAt: ${video.createdAt}');
+
+      return video;
     } catch (e) {
-      print('Error creating video document: $e');
+      print('VideoService: Error creating video document: $e');
       throw Exception('Failed to create video document: $e');
     }
   }
@@ -167,34 +205,76 @@ class VideoService {
   Stream<List<Video>> getVideoFeed(
       {int limit = 10, DocumentSnapshot? startAfter}) {
     print('VideoService: Getting video feed with limit: $limit');
-    Query query = _firestore
-        .collection('videos')
-        .where('status', isEqualTo: 'active')
-        .orderBy('createdAt', descending: true)
-        .limit(limit);
+    try {
+      // Create the base query
+      Query query =
+          _firestore.collection('videos').where('status', isEqualTo: 'active');
 
-    if (startAfter != null) {
-      query = query.startAfterDocument(startAfter);
-    }
+      // If we're paginating, add the startAfter
+      if (startAfter != null) {
+        print('VideoService: Using startAfter document: ${startAfter.id}');
+        query = query.startAfterDocument(startAfter);
+      }
 
-    return query.snapshots().map((snapshot) {
-      print('VideoService: Got ${snapshot.docs.length} videos from Firestore');
-      final videos = snapshot.docs
-          .map((doc) {
-            try {
-              return Video.fromFirestore(doc);
-            } catch (e) {
-              print('VideoService: Error parsing video doc ${doc.id}: $e');
-              return null;
+      // Add ordering and limit
+      query = query.orderBy('createdAt', descending: true).limit(limit);
+
+      return query.snapshots().map((snapshot) {
+        print(
+            'VideoService: Got ${snapshot.docs.length} videos from Firestore');
+        print(
+            'VideoService: Document IDs: ${snapshot.docs.map((doc) => doc.id).join(', ')}');
+
+        // Debug timestamp information
+        for (final doc in snapshot.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          print('VideoService: Document ${doc.id}:');
+          print('  - createdAt: ${data['createdAt']}');
+          print('  - videoURL: ${data['videoURL']}');
+          print('  - status: ${data['status']}');
+        }
+
+        // Use a map to ensure uniqueness and maintain order
+        final Map<String, Video> uniqueVideos = {};
+
+        for (final doc in snapshot.docs) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+
+            // Skip documents with null timestamps
+            if (data['createdAt'] == null) {
+              print(
+                  'VideoService: Skipping doc ${doc.id} - timestamp not yet resolved');
+              continue;
             }
-          })
-          .where((video) => video != null)
-          .cast<Video>()
-          .toList();
 
-      print('VideoService: Returning ${videos.length} valid videos');
-      return videos;
-    });
+            // Validate video URL
+            if (data['videoURL'] == null ||
+                data['videoURL'].toString().isEmpty) {
+              print('VideoService: Skipping doc ${doc.id} - invalid video URL');
+              continue;
+            }
+
+            final video = Video.fromFirestore(doc);
+            uniqueVideos[doc.id] = video;
+            print('VideoService: Successfully processed video ${doc.id}');
+          } catch (e) {
+            print('VideoService: Error parsing video doc ${doc.id}: $e');
+          }
+        }
+
+        final result = uniqueVideos.values.toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        print('VideoService: Returning ${result.length} unique videos');
+        print(
+            'VideoService: Video IDs in order: ${result.map((v) => v.id).join(', ')}');
+        return result;
+      });
+    } catch (e) {
+      print('VideoService: Error setting up video feed stream: $e');
+      rethrow;
+    }
   }
 
   // Get a batch of videos (non-stream version for pagination)
@@ -204,34 +284,68 @@ class VideoService {
   }) async {
     print('VideoService: Getting video feed batch with limit: $limit');
     try {
-      Query query = _firestore
-          .collection('videos')
-          .where('status', isEqualTo: 'active')
-          .orderBy('createdAt', descending: true)
-          .limit(limit);
+      // Create the base query
+      Query query =
+          _firestore.collection('videos').where('status', isEqualTo: 'active');
 
+      // If we're paginating, add the startAfter
       if (startAfter != null) {
+        print('VideoService: Using startAfter document: ${startAfter.id}');
         query = query.startAfterDocument(startAfter);
       }
 
+      // Add ordering and limit
+      query = query.orderBy('createdAt', descending: true).limit(limit);
+
       final snapshot = await query.get();
       print('VideoService: Got ${snapshot.docs.length} videos from Firestore');
+      print(
+          'VideoService: Document IDs: ${snapshot.docs.map((doc) => doc.id).join(', ')}');
 
-      final videos = snapshot.docs
-          .map((doc) {
-            try {
-              return Video.fromFirestore(doc);
-            } catch (e) {
-              print('VideoService: Error parsing video doc ${doc.id}: $e');
-              return null;
-            }
-          })
-          .where((video) => video != null)
-          .cast<Video>()
-          .toList();
+      // Debug timestamp information
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        print('VideoService: Document ${doc.id}:');
+        print('  - createdAt: ${data['createdAt']}');
+        print('  - videoURL: ${data['videoURL']}');
+        print('  - status: ${data['status']}');
+      }
 
-      print('VideoService: Returning ${videos.length} valid videos');
-      return videos;
+      // Use a map to ensure uniqueness and maintain order
+      final Map<String, Video> uniqueVideos = {};
+
+      for (final doc in snapshot.docs) {
+        try {
+          final data = doc.data() as Map<String, dynamic>;
+
+          // Skip documents with null timestamps
+          if (data['createdAt'] == null) {
+            print(
+                'VideoService: Skipping doc ${doc.id} - timestamp not yet resolved');
+            continue;
+          }
+
+          // Validate video URL
+          if (data['videoURL'] == null || data['videoURL'].toString().isEmpty) {
+            print('VideoService: Skipping doc ${doc.id} - invalid video URL');
+            continue;
+          }
+
+          final video = Video.fromFirestore(doc);
+          uniqueVideos[doc.id] = video;
+          print('VideoService: Successfully processed video ${doc.id}');
+        } catch (e) {
+          print('VideoService: Error parsing video doc ${doc.id}: $e');
+        }
+      }
+
+      final result = uniqueVideos.values.toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      print('VideoService: Returning ${result.length} unique videos');
+      print(
+          'VideoService: Video IDs in order: ${result.map((v) => v.id).join(', ')}');
+      return result;
     } catch (e) {
       print('VideoService: Error getting video feed batch: $e');
       return [];

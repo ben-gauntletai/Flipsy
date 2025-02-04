@@ -37,14 +37,34 @@ class Video {
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    print('Video.fromFirestore: Converting doc ${doc.id}');
+    print('Video.fromFirestore: Raw createdAt: ${data['createdAt']}');
+    print('Video.fromFirestore: Raw updatedAt: ${data['updatedAt']}');
+
+    // Handle timestamps
+    DateTime createdAt;
+    DateTime updatedAt;
+
+    try {
+      createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+      updatedAt = (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
+    } catch (e) {
+      print('Video.fromFirestore: Error converting timestamps: $e');
+      createdAt = DateTime.now();
+      updatedAt = DateTime.now();
+    }
+
+    print('Video.fromFirestore: Converted createdAt: $createdAt');
+    print('Video.fromFirestore: Converted updatedAt: $updatedAt');
+
     return Video(
       id: doc.id,
       userId: data['userId'] as String? ?? '',
       videoURL: data['videoURL'] as String? ?? '',
       thumbnailURL: data['thumbnailURL'] as String? ?? '',
       description: data['description'] as String?,
-      createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      createdAt: createdAt,
+      updatedAt: updatedAt,
       likesCount: (data['likesCount'] as num?)?.toInt() ?? 0,
       commentsCount: (data['commentsCount'] as num?)?.toInt() ?? 0,
       shareCount: (data['shareCount'] as num?)?.toInt() ?? 0,
@@ -57,6 +77,10 @@ class Video {
   }
 
   Map<String, dynamic> toFirestore() {
+    print('Video.toFirestore: Converting video $id');
+    print('Video.toFirestore: createdAt: $createdAt');
+    print('Video.toFirestore: updatedAt: $updatedAt');
+
     return {
       'userId': userId,
       'videoURL': videoURL,

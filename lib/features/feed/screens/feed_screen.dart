@@ -8,6 +8,9 @@ import 'dart:async';
 import '../../../widgets/user_avatar.dart';
 import '../../../features/profile/screens/profile_screen.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:collection';
+import 'dart:math' as math;
+import '../../../features/video/screens/video_upload_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -18,19 +21,21 @@ class FeedScreen extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  State<FeedScreen> createState() => _FeedScreenState();
+  State<FeedScreen> createState() => FeedScreenState();
 }
 
 class VideoControllerManager {
   final Map<int, VideoPlayerController> _controllers = {};
+  final Map<int, String> _controllerUrls = {};
   final Map<int, Completer<void>> _initializationCompleters = {};
   final Map<int, bool> _initializationStarted = {};
+  final Set<int> _disposingControllers = {}; // Track controllers being disposed
   final int preloadForward;
   final int keepPrevious;
-  int _currentIndex = -1; // Initialize to -1 to ensure first update runs
+  int _currentIndex = -1;
 
   VideoControllerManager({
-    this.preloadForward = 1,
+    this.preloadForward = 2,
     this.keepPrevious = 1,
   });
 
@@ -42,47 +47,64 @@ class VideoControllerManager {
   Future<void> updateCurrentIndex(int newIndex, List<Video> videos) async {
     print(
         'VideoControllerManager: Updating current index to $newIndex with ${videos.length} videos');
+    print(
+        'VideoControllerManager: Current controllers: ${_controllers.keys.toList()}');
+    print('VideoControllerManager: Current URLs: $_controllerUrls');
 
-    // Always initialize if no controller exists for this index
-    if (!_controllers.containsKey(newIndex)) {
-      print(
-          'VideoControllerManager: No controller exists for index $newIndex, initializing');
-      try {
-        print(
-            'VideoControllerManager: Starting initialization for index $newIndex');
-        await _initializeController(newIndex, videos[newIndex]);
-        print(
-            'VideoControllerManager: Successfully initialized controller for index $newIndex');
-      } catch (e, stackTrace) {
-        print(
-            'VideoControllerManager: Failed to initialize controller for index $newIndex');
-        print('Error: $e');
-        print('Stack trace: $stackTrace');
-        rethrow;
-      }
+    if (newIndex < 0 || newIndex >= videos.length) {
+      print('VideoControllerManager: Invalid index $newIndex');
+      return;
     }
 
-    // Update current index after successful initialization
+    // Initialize current index first
+    try {
+      print(
+          'VideoControllerManager: Initializing controller for current index $newIndex');
+      await _initializeController(newIndex, videos[newIndex]);
+    } catch (e) {
+      print(
+          'VideoControllerManager: Failed to initialize controller for current index: $e');
+    }
+
+    // Update current index
     _currentIndex = newIndex;
 
-    // Initialize other videos in the window in the background
-    for (int i = newIndex - keepPrevious; i <= newIndex + preloadForward; i++) {
-      if (i >= 0 && i < videos.length && i != newIndex) {
-        _initializeController(i, videos[i]).catchError((e, stackTrace) {
+    // Initialize controllers in the window
+    final startIdx = math.max(0, newIndex - keepPrevious);
+    final endIdx = math.min(videos.length - 1, newIndex + preloadForward);
+
+    print(
+        'VideoControllerManager: Initializing controllers from $startIdx to $endIdx');
+
+    for (int i = startIdx; i <= endIdx; i++) {
+      if (i != newIndex && i >= 0 && i < videos.length) {
+        try {
+          await _initializeController(i, videos[i]);
+        } catch (e) {
           print(
-              'VideoControllerManager: Failed to initialize controller for index $i');
-          print('Error: $e');
-          print('Stack trace: $stackTrace');
-        });
+              'VideoControllerManager: Failed to initialize controller for index $i: $e');
+        }
       }
     }
 
     // Clean up controllers outside the window
-    _controllers.keys.toList().forEach((index) {
+    final List<int> toDispose = [];
+    for (final index in _controllers.keys) {
       if (!shouldBeLoaded(index)) {
-        _disposeController(index);
+        toDispose.add(index);
       }
-    });
+    }
+
+    // Dispose controllers sequentially to avoid race conditions
+    for (final index in toDispose) {
+      if (!_disposingControllers.contains(index)) {
+        await _disposeController(index);
+      }
+    }
+
+    print(
+        'VideoControllerManager: After update - Controllers: ${_controllers.keys.toList()}');
+    print('VideoControllerManager: After update - URLs: $_controllerUrls');
   }
 
   Future<void> _initializeController(int index, Video video) async {
@@ -90,78 +112,95 @@ class VideoControllerManager {
         'VideoControllerManager: Entering _initializeController for index $index');
     print('VideoControllerManager: Video URL: ${video.videoURL}');
 
-    if (_controllers.containsKey(index)) {
+    // Don't initialize if the controller is being disposed
+    if (_disposingControllers.contains(index)) {
       print(
-          'VideoControllerManager: Controller already exists for index $index');
+          'VideoControllerManager: Controller $index is being disposed, skipping initialization');
       return;
     }
 
-    if (_initializationStarted[index] == true) {
-      print(
-          'VideoControllerManager: Initialization already started for index $index');
-      if (_initializationCompleters.containsKey(index)) {
+    // Check if we need to reinitialize due to URL change
+    if (_controllers.containsKey(index)) {
+      if (_controllerUrls[index] != video.videoURL) {
         print(
-            'VideoControllerManager: Waiting for existing initialization to complete');
-        await _initializationCompleters[index]!.future;
+            'VideoControllerManager: URL changed for index $index, reinitializing');
+        await _disposeController(index);
+      } else if (_controllers[index]!.value.isInitialized) {
+        print(
+            'VideoControllerManager: Controller exists with same URL and is initialized');
         return;
       }
     }
 
-    print('VideoControllerManager: Creating new controller for index $index');
+    // If initialization is in progress, wait for it
+    if (_initializationStarted[index] == true &&
+        _initializationCompleters.containsKey(index)) {
+      print(
+          'VideoControllerManager: Waiting for existing initialization for index $index');
+      try {
+        await _initializationCompleters[index]!.future;
+        // Check URL after waiting
+        if (_controllerUrls[index] == video.videoURL) {
+          return;
+        }
+      } catch (e) {
+        print('VideoControllerManager: Previous initialization failed: $e');
+      }
+    }
+
     _initializationStarted[index] = true;
     _initializationCompleters[index] = Completer<void>();
 
     VideoPlayerController? controller;
     try {
-      print(
-          'VideoControllerManager: Creating VideoPlayerController for ${video.videoURL}');
       controller = VideoPlayerController.network(
         video.videoURL,
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
-      print(
-          'VideoControllerManager: Created controller, starting initialization');
       _controllers[index] = controller;
+      _controllerUrls[index] = video.videoURL;
 
-      print('VideoControllerManager: Calling initialize() on controller');
       await controller.initialize();
-      print(
-          'VideoControllerManager: Controller initialization completed successfully');
+
+      // Double check the controller hasn't been disposed during initialization
+      if (_disposingControllers.contains(index)) {
+        print(
+            'VideoControllerManager: Controller was disposed during initialization');
+        await controller.dispose();
+        return;
+      }
 
       if (!_initializationCompleters[index]!.isCompleted) {
         _initializationCompleters[index]?.complete();
-        print(
-            'VideoControllerManager: Initialization completer completed successfully');
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       print(
-          'VideoControllerManager: Error initializing controller for index $index');
-      print('Error: $e');
-      print('Stack trace: $stackTrace');
+          'VideoControllerManager: Error initializing controller for index $index: $e');
 
-      // Cleanup on error
-      if (controller != null) {
-        print('VideoControllerManager: Disposing failed controller');
+      if (controller != null && !_disposingControllers.contains(index)) {
         await controller.dispose();
       }
+      _controllers.remove(index);
+      _controllerUrls.remove(index);
 
-      _cleanupController(index);
-
-      if (_initializationCompleters.containsKey(index) &&
-          !_initializationCompleters[index]!.isCompleted) {
+      if (_initializationCompleters[index]?.isCompleted == false) {
         _initializationCompleters[index]?.completeError(e);
       }
+
       rethrow;
     }
   }
 
   Future<VideoPlayerController?> getController(int index) async {
     print('VideoControllerManager: Getting controller for index $index');
-    print(
-        'VideoControllerManager: Available controllers: ${_controllers.keys.toList()}');
-    print(
-        'VideoControllerManager: Initialization started for indices: ${_initializationStarted.keys.toList()}');
+
+    // Don't return a controller that's being disposed
+    if (_disposingControllers.contains(index)) {
+      print(
+          'VideoControllerManager: Controller $index is being disposed, returning null');
+      return null;
+    }
 
     if (!_controllers.containsKey(index)) {
       print('VideoControllerManager: No controller exists for index $index');
@@ -173,6 +212,13 @@ class VideoControllerManager {
         print(
             'VideoControllerManager: Waiting for initialization to complete for index $index');
         await _initializationCompleters[index]!.future;
+      }
+
+      // Check again after waiting for initialization
+      if (_disposingControllers.contains(index)) {
+        print(
+            'VideoControllerManager: Controller was disposed during initialization wait');
+        return null;
       }
 
       final controller = _controllers[index];
@@ -198,27 +244,42 @@ class VideoControllerManager {
     }
   }
 
-  void _cleanupController(int index) {
+  Future<void> _disposeController(int index) async {
+    print('VideoControllerManager: Disposing controller for index $index');
+
+    // Mark the controller as being disposed
+    _disposingControllers.add(index);
+
+    try {
+      await _cleanupController(index);
+    } finally {
+      // Remove from disposing set after cleanup
+      _disposingControllers.remove(index);
+    }
+  }
+
+  Future<void> _cleanupController(int index) async {
     print('VideoControllerManager: Cleaning up controller for index $index');
-    _controllers[index]?.dispose();
+    final controller = _controllers[index];
+    if (controller != null) {
+      try {
+        await controller.dispose();
+      } catch (e) {
+        print('VideoControllerManager: Error disposing controller: $e');
+      }
+    }
     _controllers.remove(index);
+    _controllerUrls.remove(index);
     _initializationCompleters.remove(index);
     _initializationStarted.remove(index);
   }
 
-  void _disposeController(int index) {
-    print('VideoControllerManager: Disposing controller for index $index');
-    _cleanupController(index);
-  }
-
-  void disposeAll() {
+  Future<void> disposeAll() async {
     print('VideoControllerManager: Disposing all controllers');
-    for (var controller in _controllers.values) {
-      controller.dispose();
+    final indices = _controllers.keys.toList();
+    for (final index in indices) {
+      await _disposeController(index);
     }
-    _controllers.clear();
-    _initializationCompleters.clear();
-    _initializationStarted.clear();
   }
 
   void pauseAllExcept(int index) {
@@ -231,7 +292,7 @@ class VideoControllerManager {
   }
 }
 
-class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
+class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   late PageController _pageController;
   final VideoService _videoService = VideoService();
   final UserService _userService = UserService();
@@ -245,6 +306,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   late VideoControllerManager _controllerManager;
   String? _error;
   int _currentPage = 0;
+  Set<String> _processedVideoIds = {}; // Track processed video IDs
+  String? _targetVideoId; // Add this property to track target video
 
   @override
   void initState() {
@@ -329,6 +392,23 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     );
   }
 
+  void jumpToVideo(String videoId) {
+    print('FeedScreen: Attempting to jump to video $videoId');
+    setState(() {
+      _targetVideoId = videoId;
+    });
+
+    // Find the index of the video
+    final index = _videos.indexWhere((v) => v.id == videoId);
+    if (index != -1) {
+      print('FeedScreen: Found video at index $index, jumping to it');
+      _pageController.jumpToPage(index);
+    } else {
+      print(
+          'FeedScreen: Video not found in current list, waiting for stream update');
+    }
+  }
+
   Future<void> _loadVideos() async {
     print('FeedScreen: Starting to load videos');
     setState(() {
@@ -344,27 +424,80 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           _videoService.getVideoFeed(limit: 5).listen((videos) async {
         print('FeedScreen: Received ${videos.length} videos from stream');
 
+        // Debug current state
+        print(
+            'FeedScreen: Current video IDs: ${_videos.map((v) => v.id).toList()}');
+        print('FeedScreen: New video IDs: ${videos.map((v) => v.id).toList()}');
+
         if (videos.isNotEmpty) {
           _lastDocument = await _videoService.getLastDocument(videos.last.id);
           print('FeedScreen: Got last document for pagination');
         }
 
-        await _loadUserData(videos);
-        print('FeedScreen: Loaded user data for videos');
+        // Process new videos and update user data
+        final List<Video> newVideos = [];
+        final Set<String> newVideoIds = {};
+
+        for (final video in videos) {
+          if (!_processedVideoIds.contains(video.id)) {
+            newVideos.add(video);
+            newVideoIds.add(video.id);
+          }
+        }
+
+        if (newVideos.isNotEmpty) {
+          await _loadUserData(newVideos);
+          print('FeedScreen: Loaded user data for new videos');
+        }
 
         if (mounted) {
           setState(() {
-            _videos = videos;
+            // Update the processed IDs set
+            _processedVideoIds.addAll(newVideoIds);
+
+            // Merge new videos with existing ones, maintaining order
+            final Map<String, Video> mergedVideos = {};
+
+            // Add existing videos first
+            for (final video in _videos) {
+              mergedVideos[video.id] = video;
+            }
+
+            // Add or update with new videos
+            for (final video in videos) {
+              mergedVideos[video.id] = video;
+            }
+
+            // Convert back to list and sort by createdAt
+            _videos = mergedVideos.values.toList()
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
             _isLoading = false;
             _hasMoreVideos = videos.length == 5;
+
             print('FeedScreen: Updated state with ${_videos.length} videos');
+            print(
+                'FeedScreen: Final video IDs: ${_videos.map((v) => v.id).toList()}');
+
+            // Check if we need to jump to a specific video
+            if (_targetVideoId != null) {
+              final targetIndex =
+                  _videos.indexWhere((v) => v.id == _targetVideoId);
+              if (targetIndex != -1) {
+                print(
+                    'FeedScreen: Found target video at index $targetIndex, jumping to it');
+                _pageController.jumpToPage(targetIndex);
+                _targetVideoId = null; // Clear the target
+              }
+            }
           });
 
           // Pre-initialize controllers for the first few videos
-          if (videos.isNotEmpty) {
+          if (_videos.isNotEmpty) {
             try {
               print('FeedScreen: Starting controller initialization');
-              await _controllerManager.updateCurrentIndex(0, videos);
+              await _controllerManager.updateCurrentIndex(
+                  _currentPage, _videos);
               print(
                   'FeedScreen: Controller initialization completed successfully');
             } catch (e) {
@@ -413,15 +546,35 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       if (newVideos.isNotEmpty) {
         _lastDocument = await _videoService.getLastDocument(newVideos.last.id);
 
-        // Pre-fetch user data for new videos
-        await _loadUserData(newVideos);
+        // Filter out already processed videos
+        final List<Video> uniqueNewVideos = newVideos
+            .where((video) => !_processedVideoIds.contains(video.id))
+            .toList();
 
-        if (mounted) {
-          setState(() {
-            _videos.addAll(newVideos);
-            _isLoadingMore = false;
-            _hasMoreVideos = newVideos.length == 5;
-          });
+        if (uniqueNewVideos.isNotEmpty) {
+          // Pre-fetch user data for new videos
+          await _loadUserData(uniqueNewVideos);
+
+          if (mounted) {
+            setState(() {
+              // Add new video IDs to processed set
+              _processedVideoIds.addAll(uniqueNewVideos.map((v) => v.id));
+
+              // Add new videos to the list
+              _videos.addAll(uniqueNewVideos);
+              // Re-sort the entire list
+              _videos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+              _isLoadingMore = false;
+              _hasMoreVideos = newVideos.length == 5;
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _isLoadingMore = false;
+            });
+          }
         }
       } else {
         if (mounted) {
@@ -557,6 +710,25 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          // Navigate to upload screen and wait for result
+          final videoId = await Navigator.push<String>(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const VideoUploadScreen(),
+            ),
+          );
+
+          // If we got a video ID back, jump to that video
+          if (videoId != null && mounted) {
+            print('FeedScreen: Received uploaded video ID: $videoId');
+            jumpToVideo(videoId);
+          }
+        },
+        backgroundColor: const Color(0xFFFF2B55),
+        child: const Icon(Icons.add),
+      ),
     );
   }
 }
@@ -611,6 +783,14 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   bool _isHandlingDoubleTap = false;
   bool _isLongPressing = false;
 
+  // Queue system for like actions
+  final Queue<_LikeAction> _likeActionQueue = Queue<_LikeAction>();
+  bool _isProcessingQueue = false;
+
+  // Track local state
+  int _localLikesCount = 0;
+  bool _localLikeState = false;
+
   @override
   void initState() {
     super.initState();
@@ -628,24 +808,27 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
     // Initialize like status
     _initializeLikeStatus();
+
+    _localLikesCount = widget.video.likesCount;
+    print('VideoFeedItem: Initializing with like count: $_localLikesCount');
   }
 
   Future<void> _initializeLikeStatus() async {
     try {
-      // Check initial like status
       final isLiked = await _videoService.hasUserLikedVideo(widget.video.id);
       if (mounted) {
         setState(() {
           _isLiked = isLiked;
+          _localLikeState = isLiked;
         });
       }
 
-      // Listen for changes
       _likeStatusSubscription =
           _videoService.watchUserLikeStatus(widget.video.id).listen((isLiked) {
-        if (mounted) {
+        if (mounted && !_isProcessingQueue) {
           setState(() {
             _isLiked = isLiked;
+            _localLikeState = isLiked;
           });
         }
       });
@@ -654,46 +837,81 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     }
   }
 
-  Future<void> _handleLikeAction() async {
-    if (_isLiking) return;
+  Future<void> _processLikeActionQueue() async {
+    if (_isProcessingQueue) return;
 
-    setState(() {
-      _isLiking = true;
-    });
+    _isProcessingQueue = true;
 
-    try {
-      final success = _isLiked
-          ? await _videoService.unlikeVideo(widget.video.id)
-          : await _videoService.likeVideo(widget.video.id);
+    while (_likeActionQueue.isNotEmpty) {
+      final action = _likeActionQueue.first;
+      print(
+          'VideoFeedItem: Processing like action: ${action.isLike ? 'like' : 'unlike'}');
 
-      if (success && mounted) {
-        setState(() {
-          _isLiked = !_isLiked;
-          if (_isLiked) {
-            _likeAnimationController.forward().then((_) {
-              _likeAnimationController.reverse();
-            });
-          }
-        });
-      }
-    } catch (e) {
-      print('VideoFeedItem: Error handling like action: $e');
-      // Show error snackbar
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error updating like status'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLiking = false;
-        });
+      try {
+        final success = action.isLike
+            ? await _videoService.likeVideo(widget.video.id)
+            : await _videoService.unlikeVideo(widget.video.id);
+
+        if (!success && mounted) {
+          print('VideoFeedItem: Action failed, reverting optimistic update');
+          // Revert the specific action that failed
+          setState(() {
+            _localLikesCount += action.isLike ? -1 : 1;
+            _localLikeState = !action.isLike;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Failed to update like status'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        print('VideoFeedItem: Error processing like action: $e');
+        if (mounted) {
+          // Revert the specific action that failed
+          setState(() {
+            _localLikesCount += action.isLike ? -1 : 1;
+            _localLikeState = !action.isLike;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error updating like status'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } finally {
+        _likeActionQueue.removeFirst();
       }
     }
+
+    _isProcessingQueue = false;
+  }
+
+  Future<void> _handleLikeAction() async {
+    if (_isLiking) return;
+    _isLiking = true;
+
+    final newLikeState = !_localLikeState;
+    final action = _LikeAction(isLike: newLikeState);
+
+    // Apply optimistic update
+    setState(() {
+      _localLikeState = newLikeState;
+      _localLikesCount += newLikeState ? 1 : -1;
+      if (newLikeState) {
+        _showHeartAnimation();
+      }
+    });
+
+    // Add to queue and process
+    _likeActionQueue.add(action);
+    await _processLikeActionQueue();
+
+    _isLiking = false;
   }
 
   void _showHeartAnimation() {
@@ -873,9 +1091,11 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   void _handleDoubleTap() {
     if (_isLongPressing) return;
 
-    print('VideoFeedItem: Double tap detected, current like status: $_isLiked');
-    _handleLikeAction();
-    _showHeartAnimation();
+    print(
+        'VideoFeedItem: Double tap detected, current like status: $_localLikeState');
+    if (!_localLikeState) {
+      _handleLikeAction();
+    }
   }
 
   void _handleLongPressStart(LongPressStartDetails details) {
@@ -1025,14 +1245,14 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                 ),
                 const SizedBox(height: 25),
 
-                // Like Button
+                // Like Button with optimistic count
                 _buildActionButton(
-                  icon: _isLiked
+                  icon: _localLikeState
                       ? FontAwesomeIcons.solidHeart
                       : FontAwesomeIcons.heart,
-                  label: widget.video.likesCount.toString(),
+                  label: _localLikesCount.toString(),
                   iconSize: 28,
-                  color: _isLiked ? Colors.red : Colors.white,
+                  color: _localLikeState ? Colors.red : Colors.white,
                   onTap: _handleLikeAction,
                 ),
                 const SizedBox(height: 15),
@@ -1168,4 +1388,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       child: child,
     );
   }
+}
+
+// Helper class to track like actions
+class _LikeAction {
+  final bool isLike;
+  _LikeAction({required this.isLike});
 }

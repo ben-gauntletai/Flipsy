@@ -13,6 +13,7 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
+  final GlobalKey<FeedScreenState> _feedKey = GlobalKey<FeedScreenState>();
 
   void _onItemTapped(int index) {
     if (index == 2) {
@@ -25,12 +26,23 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  void _onUploadTapped() {
-    Navigator.of(context).push(
+  void _onUploadTapped() async {
+    // Navigate to upload screen and wait for result
+    final videoId = await Navigator.of(context).push<String>(
       MaterialPageRoute(
         builder: (context) => const VideoUploadScreen(),
       ),
     );
+
+    // If we got a video ID back, ensure we're on the feed screen and jump to the video
+    if (videoId != null && mounted) {
+      setState(() {
+        _selectedIndex = 0; // Switch to feed screen
+      });
+
+      // Use the GlobalKey to access the FeedScreen state
+      _feedKey.currentState?.jumpToVideo(videoId);
+    }
   }
 
   @override
@@ -39,79 +51,51 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          FeedScreen(isVisible: _selectedIndex == 0), // Home
-          const Center(child: Text('Search')), // Discover
-          const Center(child: Text('Upload')), // Upload
+          FeedScreen(key: _feedKey, isVisible: _selectedIndex == 0), // Home
+          const Center(child: Text('Discover')), // Discover
+          const SizedBox.shrink(), // Upload (placeholder)
           const Center(child: Text('Inbox')), // Inbox
-          const ProfileScreen(), // Profile
+          const Center(child: Text('Profile')), // Profile
         ],
       ),
-      bottomNavigationBar: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: const BoxDecoration(
-          color: Colors.black,
-          border: Border(
-            top: BorderSide(
-              color: Colors.white12,
-              width: 0.5,
-            ),
-          ),
+      bottomNavigationBar: Theme(
+        data: Theme.of(context).copyWith(
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
         ),
         child: BottomNavigationBar(
-          type: BottomNavigationBarType.fixed,
           currentIndex: _selectedIndex,
           onTap: _onItemTapped,
+          type: BottomNavigationBarType.fixed,
+          backgroundColor: Colors.black,
           selectedItemColor: Colors.white,
-          unselectedItemColor: Colors.white54,
-          backgroundColor: Colors.transparent,
-          selectedFontSize: 11,
-          unselectedFontSize: 11,
-          iconSize: 24,
-          elevation: 0,
-          items: [
-            const BottomNavigationBarItem(
-              icon: Icon(Icons.home_filled),
-              activeIcon: Icon(Icons.home_filled),
+          unselectedItemColor: Colors.grey,
+          showSelectedLabels: true,
+          showUnselectedLabels: true,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined),
+              activeIcon: Icon(Icons.home),
               label: 'Home',
             ),
-            const BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.compass, size: 22),
-              activeIcon: FaIcon(FontAwesomeIcons.solidCompass, size: 22),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.search),
+              activeIcon: Icon(Icons.search),
               label: 'Discover',
             ),
             BottomNavigationBarItem(
-              icon: Container(
-                width: 44,
-                height: 30,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.purple.shade600,
-                      Colors.pink.shade500,
-                    ],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.add,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ),
-              ),
-              label: '',
+              icon: Icon(Icons.add_box_outlined),
+              activeIcon: Icon(Icons.add_box),
+              label: 'Upload',
             ),
-            const BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.inbox, size: 22),
-              activeIcon: FaIcon(FontAwesomeIcons.boxOpen, size: 22),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.inbox_outlined),
+              activeIcon: Icon(Icons.inbox),
               label: 'Inbox',
             ),
-            const BottomNavigationBarItem(
-              icon: FaIcon(FontAwesomeIcons.user, size: 22),
-              activeIcon: FaIcon(FontAwesomeIcons.circleUser, size: 22),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline),
+              activeIcon: Icon(Icons.person),
               label: 'Profile',
             ),
           ],
