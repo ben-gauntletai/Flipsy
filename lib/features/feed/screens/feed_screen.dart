@@ -314,7 +314,7 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
         _videoController.pause();
         _isPlaying = false;
       } else if (_isPlaying) {
-        // Resume playing if it was playing before
+        // Only resume if we're coming back to the feed and it was playing before
         _videoController.play();
       }
     }
@@ -326,8 +326,31 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
       // Safely remove controller from parent's list
       _feedScreenState!._videoControllers.remove(_videoController);
     }
+    _videoController.pause(); // Ensure video is paused before disposal
     _videoController.dispose();
     super.dispose();
+  }
+
+  // Profile Picture Navigation
+  void _navigateToProfile(BuildContext context) {
+    // Pause video before navigating
+    _videoController.pause();
+    _isPlaying = false;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ProfileScreen(
+          userId: widget.video.userId,
+        ),
+      ),
+    ).then((_) {
+      // Resume video if the feed is still visible when returning
+      if (widget.isVisible && mounted) {
+        _videoController.play();
+        _isPlaying = true;
+      }
+    });
   }
 
   @override
@@ -417,16 +440,7 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
                 // Profile Picture
                 _buildCircleButton(
                   child: GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => ProfileScreen(
-                            userId: widget.video.userId,
-                          ),
-                        ),
-                      );
-                    },
+                    onTap: () => _navigateToProfile(context),
                     child: UserAvatar(
                       avatarURL: avatarURL,
                       radius: 20,
