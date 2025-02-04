@@ -583,7 +583,8 @@ class VideoFeedItem extends StatefulWidget {
   State<VideoFeedItem> createState() => _VideoFeedItemState();
 }
 
-class _VideoFeedItemState extends State<VideoFeedItem> {
+class _VideoFeedItemState extends State<VideoFeedItem>
+    with SingleTickerProviderStateMixin {
   VideoPlayerController? _videoController;
   bool _isPlaying = false;
   bool _isMuted = false;
@@ -597,12 +598,126 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
   int _initializationAttempts = 0;
   static const int maxInitializationAttempts = 3;
 
+  // Like animation controller
+  late AnimationController _likeAnimationController;
+  bool _isLiked = false;
+  bool _isLiking = false;
+  bool _showLikeAnimation = false;
+  final VideoService _videoService = VideoService();
+  StreamSubscription<bool>? _likeStatusSubscription;
+
+  DateTime? _lastTapTime;
+  Timer? _doubleTapTimer;
+  bool _isHandlingDoubleTap = false;
+  bool _isLongPressing = false;
+
   @override
   void initState() {
     super.initState();
     print(
         'VideoFeedItem: Initializing video ${widget.video.id} at index ${widget.index}');
+
+    // Initialize like animation controller
+    _likeAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+
+    // Initialize video controller
     _initializeController();
+
+    // Initialize like status
+    _initializeLikeStatus();
+  }
+
+  Future<void> _initializeLikeStatus() async {
+    try {
+      // Check initial like status
+      final isLiked = await _videoService.hasUserLikedVideo(widget.video.id);
+      if (mounted) {
+        setState(() {
+          _isLiked = isLiked;
+        });
+      }
+
+      // Listen for changes
+      _likeStatusSubscription =
+          _videoService.watchUserLikeStatus(widget.video.id).listen((isLiked) {
+        if (mounted) {
+          setState(() {
+            _isLiked = isLiked;
+          });
+        }
+      });
+    } catch (e) {
+      print('VideoFeedItem: Error initializing like status: $e');
+    }
+  }
+
+  Future<void> _handleLikeAction() async {
+    if (_isLiking) return;
+
+    setState(() {
+      _isLiking = true;
+    });
+
+    try {
+      final success = _isLiked
+          ? await _videoService.unlikeVideo(widget.video.id)
+          : await _videoService.likeVideo(widget.video.id);
+
+      if (success && mounted) {
+        setState(() {
+          _isLiked = !_isLiked;
+          if (_isLiked) {
+            _likeAnimationController.forward().then((_) {
+              _likeAnimationController.reverse();
+            });
+          }
+        });
+      }
+    } catch (e) {
+      print('VideoFeedItem: Error handling like action: $e');
+      // Show error snackbar
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error updating like status'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLiking = false;
+        });
+      }
+    }
+  }
+
+  void _showHeartAnimation() {
+    setState(() {
+      _showLikeAnimation = true;
+    });
+    _likeAnimationController.forward().then((_) {
+      _likeAnimationController.reverse().then((_) {
+        if (mounted) {
+          setState(() {
+            _showLikeAnimation = false;
+          });
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _doubleTapTimer?.cancel();
+    _likeAnimationController.dispose();
+    _likeStatusSubscription?.cancel();
+    _initializationRetryTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _initializeController() async {
@@ -670,12 +785,6 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
         _initializeController();
       }
     });
-  }
-
-  @override
-  void dispose() {
-    _initializationRetryTimer?.cancel();
-    super.dispose();
   }
 
   void _checkAndUpdatePlaybackState() {
@@ -754,6 +863,39 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     });
   }
 
+  void _handleTap() {
+    if (_isLongPressing || _isHandlingDoubleTap) return;
+
+    print('VideoFeedItem: Single tap detected');
+    _toggleMute();
+  }
+
+  void _handleDoubleTap() {
+    if (_isLongPressing) return;
+
+    print('VideoFeedItem: Double tap detected, current like status: $_isLiked');
+    _handleLikeAction();
+    _showHeartAnimation();
+  }
+
+  void _handleLongPressStart(LongPressStartDetails details) {
+    print('VideoFeedItem: Long press start detected');
+    _isLongPressing = true;
+    if (widget.isVisible && _videoController != null) {
+      _videoController!.pause();
+    }
+  }
+
+  void _handleLongPressEnd(LongPressEndDetails details) {
+    print('VideoFeedItem: Long press end detected');
+    if (widget.isVisible && _videoController != null) {
+      _videoController!.play();
+    }
+    Future.delayed(const Duration(milliseconds: 200), () {
+      _isLongPressing = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -796,31 +938,13 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     final String? avatarURL = widget.userData?['avatarURL'];
 
     return GestureDetector(
-      onTapDown: (details) {
-        if (widget.isVisible && _isInitialized) {
-          _tapDownTime = DateTime.now();
-        }
-      },
-      onTapUp: (details) {
-        if (widget.isVisible && _tapDownTime != null) {
-          final tapDuration = DateTime.now().difference(_tapDownTime!);
-          if (tapDuration.inMilliseconds < 200) {
-            _toggleMute();
-          }
-          _tapDownTime = null;
-        }
-      },
-      onLongPressDown: (details) {
-        if (widget.isVisible && _videoController != null) {
-          _videoController!.pause();
-        }
-      },
-      onLongPressUp: () {
-        if (widget.isVisible && _videoController != null) {
-          _videoController!.play();
-        }
-      },
+      onTap: _handleTap,
+      onDoubleTap: _handleDoubleTap,
+      onLongPressStart: _handleLongPressStart,
+      onLongPressEnd: _handleLongPressEnd,
       onLongPressCancel: () {
+        print('VideoFeedItem: Long press cancelled');
+        _isLongPressing = false;
         if (widget.isVisible && _videoController != null) {
           _videoController!.play();
         }
@@ -864,6 +988,24 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
               ),
             ),
 
+          // Heart Animation Overlay
+          if (_showLikeAnimation)
+            Center(
+              child: ScaleTransition(
+                scale: Tween<double>(begin: 0.0, end: 1.0).animate(
+                  CurvedAnimation(
+                    parent: _likeAnimationController,
+                    curve: Curves.elasticOut,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.favorite,
+                  color: Colors.white,
+                  size: 100,
+                ),
+              ),
+            ),
+
           // Right Side Action Buttons
           Positioned(
             right: 8,
@@ -885,9 +1027,13 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
 
                 // Like Button
                 _buildActionButton(
-                  icon: FontAwesomeIcons.solidHeart,
+                  icon: _isLiked
+                      ? FontAwesomeIcons.solidHeart
+                      : FontAwesomeIcons.heart,
                   label: widget.video.likesCount.toString(),
                   iconSize: 28,
+                  color: _isLiked ? Colors.red : Colors.white,
+                  onTap: _handleLikeAction,
                 ),
                 const SizedBox(height: 15),
 
@@ -983,24 +1129,29 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     required IconData icon,
     required String label,
     double iconSize = 35,
+    Color color = Colors.white,
+    VoidCallback? onTap,
   }) {
-    return Column(
-      children: [
-        Icon(
-          icon,
-          color: Colors.white,
-          size: iconSize,
-        ),
-        const SizedBox(height: 3),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Icon(
+            icon,
+            color: color,
+            size: iconSize,
           ),
-        ),
-      ],
+          const SizedBox(height: 3),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

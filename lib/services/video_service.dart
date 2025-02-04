@@ -5,10 +5,15 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:video_compress/video_compress.dart';
 import '../models/video.dart';
 import 'package:uuid/uuid.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class VideoService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
+  final String _currentUserId;
+
+  VideoService()
+      : _currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
 
   // Generate and upload thumbnail
   Future<String> generateAndUploadThumbnail(
@@ -304,5 +309,107 @@ class VideoService {
       print('Error deleting video: $e');
       throw Exception('Failed to delete video');
     }
+  }
+
+  /// Likes a video and returns true if successful
+  Future<bool> likeVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Attempting to like video $videoId');
+      final batch = _firestore.batch();
+
+      // Add to user's liked videos
+      final userLikeRef = _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('likedVideos')
+          .doc(videoId);
+
+      batch.set(userLikeRef, {
+        'videoId': videoId,
+        'likedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Increment video likes count
+      final videoRef = _firestore.collection('videos').doc(videoId);
+      batch.update(videoRef, {
+        'likesCount': FieldValue.increment(1),
+      });
+
+      await batch.commit();
+      print('VideoService: Successfully liked video $videoId');
+      return true;
+    } catch (e) {
+      print('VideoService: Error liking video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Unlikes a video and returns true if successful
+  Future<bool> unlikeVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Attempting to unlike video $videoId');
+      final batch = _firestore.batch();
+
+      // Remove from user's liked videos
+      final userLikeRef = _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('likedVideos')
+          .doc(videoId);
+
+      batch.delete(userLikeRef);
+
+      // Decrement video likes count
+      final videoRef = _firestore.collection('videos').doc(videoId);
+      batch.update(videoRef, {
+        'likesCount': FieldValue.increment(-1),
+      });
+
+      await batch.commit();
+      print('VideoService: Successfully unliked video $videoId');
+      return true;
+    } catch (e) {
+      print('VideoService: Error unliking video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Checks if the current user has liked a video
+  Future<bool> hasUserLikedVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Checking if user liked video $videoId');
+      final doc = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('likedVideos')
+          .doc(videoId)
+          .get();
+
+      return doc.exists;
+    } catch (e) {
+      print('VideoService: Error checking like status for video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Stream of the current user's like status for a video
+  Stream<bool> watchUserLikeStatus(String videoId) {
+    if (_currentUserId.isEmpty) {
+      return Stream.value(false);
+    }
+
+    return _firestore
+        .collection('users')
+        .doc(_currentUserId)
+        .collection('likedVideos')
+        .doc(videoId)
+        .snapshots()
+        .map((doc) => doc.exists);
   }
 }
