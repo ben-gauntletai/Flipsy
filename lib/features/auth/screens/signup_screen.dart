@@ -108,7 +108,9 @@ class _SignupScreenState extends State<SignupScreen> {
       ),
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
-          if (state is AuthError) {
+          if (state is Authenticated) {
+            Navigator.of(context).pop();
+          } else if (state is AuthError) {
             String message = state.message.toLowerCase();
             setState(() {
               if (message.contains('email') && message.contains('use')) {
@@ -117,7 +119,8 @@ class _SignupScreenState extends State<SignupScreen> {
                 _passwordError = 'Please choose a stronger password';
               } else if (message.contains('invalid email')) {
                 _emailError = 'Please enter a valid email address';
-              } else {
+              } else if (!message.contains('recaptcha') &&
+                  !message.contains('appcheck')) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(state.message),
@@ -149,6 +152,7 @@ class _SignupScreenState extends State<SignupScreen> {
                     TextFormField(
                       controller: _displayNameController,
                       textInputAction: TextInputAction.next,
+                      textCapitalization: TextCapitalization.words,
                       decoration: InputDecoration(
                         labelText: 'Display Name',
                         prefixIcon: const Icon(Icons.person_outline),
@@ -213,7 +217,6 @@ class _SignupScreenState extends State<SignupScreen> {
                         if (_passwordError != null) {
                           setState(() => _passwordError = null);
                         }
-                        // Validate confirm password when password changes
                         if (_confirmPasswordController.text.isNotEmpty) {
                           _formKey.currentState?.validate();
                         }

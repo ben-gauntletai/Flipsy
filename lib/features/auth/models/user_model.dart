@@ -29,19 +29,44 @@ class UserModel extends Equatable {
   });
 
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
+    print('UserModel: Converting Firestore document to UserModel');
     final data = doc.data() as Map<String, dynamic>;
+
+    // Handle timestamps
+    final createdAtTimestamp = data['createdAt'];
+    final updatedAtTimestamp = data['updatedAt'];
+
+    final DateTime createdAt;
+    final DateTime updatedAt;
+
+    if (createdAtTimestamp is Timestamp) {
+      createdAt = createdAtTimestamp.toDate();
+    } else {
+      createdAt = DateTime.now();
+      print('UserModel: createdAt is not a Timestamp, using current time');
+    }
+
+    if (updatedAtTimestamp is Timestamp) {
+      updatedAt = updatedAtTimestamp.toDate();
+    } else {
+      updatedAt = DateTime.now();
+      print('UserModel: updatedAt is not a Timestamp, using current time');
+    }
+
+    print('UserModel: Creating instance with data: ${data.toString()}');
+
     return UserModel(
       id: doc.id,
-      email: data['email'] as String,
-      displayName: data['displayName'] as String,
+      email: data['email'] as String? ?? '',
+      displayName: data['displayName'] as String? ?? '',
       avatarURL: data['avatarURL'] as String?,
       bio: data['bio'] as String?,
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp).toDate(),
-      followersCount: data['followersCount'] as int? ?? 0,
-      followingCount: data['followingCount'] as int? ?? 0,
-      totalLikes: data['totalLikes'] as int? ?? 0,
-      totalVideos: data['totalVideos'] as int? ?? 0,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      followersCount: (data['followersCount'] as num?)?.toInt() ?? 0,
+      followingCount: (data['followingCount'] as num?)?.toInt() ?? 0,
+      totalLikes: (data['totalLikes'] as num?)?.toInt() ?? 0,
+      totalVideos: (data['totalVideos'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -102,4 +127,4 @@ class UserModel extends Equatable {
         totalLikes,
         totalVideos,
       ];
-} 
+}

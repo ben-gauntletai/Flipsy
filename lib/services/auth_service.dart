@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flipsy/features/auth/models/user_model.dart';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   // Get current user
   User? get currentUser => _auth.currentUser;
@@ -28,40 +30,58 @@ class AuthService {
     }
   }
 
-  // Sign up with email and password
-  Future<UserCredential> signUpWithEmailAndPassword({
+  // Sign up with email and password using Cloud Function
+  Future<UserModel> signUpWithEmailAndPassword({
     required String email,
     required String password,
     required String displayName,
   }) async {
+    print('AuthService: Starting user creation via Cloud Function');
     try {
-      final credential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
+      print('AuthService: Getting Firebase Functions instance');
+      final callable = _functions.httpsCallable('createUser');
+      print('AuthService: Calling createUser function with email: $email');
 
-      // Create user profile in Firestore
-      if (credential.user != null) {
-        final now = DateTime.now();
-        final user = UserModel(
-          id: credential.user!.uid,
-          email: email,
-          displayName: displayName,
-          createdAt: now,
-          updatedAt: now,
-        );
+      final result = await callable.call({
+        'email': email,
+        'password': password,
+        'displayName': displayName,
+      });
 
-        await _firestore
-            .collection('users')
-            .doc(credential.user!.uid)
-            .set(user.toMap());
+      print('AuthService: Cloud Function result: ${result.data}');
 
-        // Update display name in Firebase Auth
-        await credential.user!.updateDisplayName(displayName);
+      // Extract the UID from the Cloud Function result
+      final uid = (result.data as Map<String, dynamic>)['uid'] as String;
+
+      // Wait for Firestore to complete writing
+      await Future.delayed(const Duration(milliseconds: 2000));
+
+      // Get the user profile directly
+      final userProfile = await getUserProfile(uid);
+      if (userProfile == null) {
+        throw Exception('Failed to create user profile');
       }
 
-      return credential;
+      // Now attempt to sign in
+      try {
+        print('AuthService: Attempting to sign in after profile verification');
+        await _auth.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+        print('AuthService: Sign in successful');
+        return userProfile;
+      } catch (signInError) {
+        print('AuthService: Error signing in after creation: $signInError');
+        // Even if sign in fails, return the profile since we know it exists
+        return userProfile;
+      }
     } catch (e) {
+      print('AuthService: Error in signUpWithEmailAndPassword: $e');
+      if (e is FirebaseFunctionsException) {
+        print(
+            'AuthService: Firebase Functions error details - Code: ${e.code}, Message: ${e.message}, Details: ${e.details}');
+      }
       throw _handleAuthException(e);
     }
   }
@@ -78,12 +98,20 @@ class AuthService {
   // Get user profile from Firestore
   Future<UserModel?> getUserProfile(String userId) async {
     try {
+      print('AuthService: Getting user profile for uid: $userId');
       final doc = await _firestore.collection('users').doc(userId).get();
-      if (doc.exists) {
-        return UserModel.fromFirestore(doc);
+
+      if (!doc.exists) {
+        print('AuthService: User profile document does not exist');
+        return null;
       }
-      return null;
+
+      print('AuthService: User profile document exists, creating UserModel');
+      final userModel = UserModel.fromFirestore(doc);
+      print('AuthService: UserModel created successfully');
+      return userModel;
     } catch (e) {
+      print('AuthService: Error getting user profile: $e');
       throw Exception('Failed to get user profile: $e');
     }
   }
@@ -103,6 +131,19 @@ class AuthService {
 
   // Handle Firebase Auth exceptions
   Exception _handleAuthException(dynamic e) {
+    print('AuthService: Handling auth exception: $e');
+
+    if (e is FirebaseFunctionsException) {
+      switch (e.code) {
+        case 'already-exists':
+          return Exception('The email address is already in use.');
+        case 'invalid-argument':
+          return Exception(e.message ?? 'Invalid input provided.');
+        default:
+          return Exception(e.message ?? 'An unknown error occurred.');
+      }
+    }
+
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'user-not-found':
@@ -120,19 +161,10 @@ class AuthService {
         case 'invalid-credential':
           return Exception('The email or password is incorrect.');
         default:
-          final message = e.message;
-          if (message != null && message.toLowerCase().contains('recaptcha')) {
-            return Exception('Invalid login attempt. Please try again.');
-          }
-          return Exception(message ?? 'An unknown error occurred.');
+          return Exception(e.message ?? 'An unknown error occurred.');
       }
     }
-    // Handle non-FirebaseAuthException errors
-    String errorMessage = e.toString().toLowerCase();
-    if (errorMessage.contains('recaptcha') ||
-        errorMessage.contains('credential')) {
-      return Exception('Invalid login attempt. Please try again.');
-    }
+
     return Exception('An unknown error occurred. Please try again.');
   }
 }

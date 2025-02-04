@@ -9,16 +9,20 @@ import 'package:flipsy/firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   try {
+    print('Initializing Firebase...');
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+    print('Firebase initialized successfully');
   } catch (e) {
-    // If Firebase is already initialized, we can ignore this error
+    print('Error initializing Firebase: $e');
     if (!e.toString().contains('duplicate-app')) {
       rethrow;
     }
   }
+
   runApp(const MyApp());
 }
 
@@ -44,44 +48,42 @@ class MyApp extends StatelessWidget {
         child: MaterialApp(
           title: 'Flipsy',
           theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.deepPurple,
-              brightness: Brightness.light,
-            ),
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
             useMaterial3: true,
           ),
-          darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.deepPurple,
-              brightness: Brightness.dark,
-            ),
-            useMaterial3: true,
-          ),
-          themeMode: ThemeMode.system,
           home: BlocBuilder<AuthBloc, AuthState>(
             builder: (context, state) {
-              if (state is AuthInitial || state is AuthLoading) {
+              if (state is AuthLoading) {
                 return const Scaffold(
                   body: Center(
                     child: CircularProgressIndicator(),
                   ),
                 );
               }
+
               if (state is Authenticated) {
-                // TODO: Return the main app screen (feed)
-                return const Scaffold(
-                  body: Center(
+                return Scaffold(
+                  appBar: AppBar(
+                    title: const Text('Flipsy'),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.logout),
+                        onPressed: () {
+                          context.read<AuthBloc>().add(SignOutRequested());
+                        },
+                        tooltip: 'Logout',
+                      ),
+                    ],
+                  ),
+                  body: const Center(
                     child: Text('Authenticated! Main app coming soon...'),
                   ),
                 );
               }
+
               return const LoginScreen();
             },
           ),
-          routes: {
-            '/login': (context) => const LoginScreen(),
-            '/signup': (context) => const SignupScreen(),
-          },
         ),
       ),
     );

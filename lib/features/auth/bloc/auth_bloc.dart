@@ -84,9 +84,44 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SignOutRequested>(_onSignOutRequested);
 
     // Listen to auth state changes
-    _authStateSubscription = _authService.authStateChanges.listen((user) {
+    _authStateSubscription = _authService.authStateChanges.listen((user) async {
       if (user != null) {
-        _loadUserProfile(user.uid);
+        try {
+          print('AuthBloc: User authenticated with uid: ${user.uid}');
+
+          // Only load profile if we're not already authenticated
+          if (state is! Authenticated) {
+            // Add a delay to ensure Firestore has completed writing
+            await Future.delayed(const Duration(milliseconds: 1500));
+
+            // Try to get the user profile
+            final userProfile = await _authService.getUserProfile(user.uid);
+
+            if (userProfile != null) {
+              print('AuthBloc: User profile loaded successfully');
+              emit(Authenticated(userProfile));
+            } else {
+              print('AuthBloc: User profile not found for uid: ${user.uid}');
+              // If no profile exists, sign out and show error
+              await _authService.signOut();
+              emit(
+                  AuthError('Profile not found. Please try signing in again.'));
+            }
+          } else {
+            print('AuthBloc: Already authenticated, skipping profile load');
+          }
+        } catch (e) {
+          print('AuthBloc: Error loading user profile: $e');
+          // If there's an error loading the profile, sign out and show error
+          await _authService.signOut();
+          emit(
+              AuthError('Error loading profile. Please try signing in again.'));
+        }
+      } else {
+        print('AuthBloc: No authenticated user');
+        if (state is! AuthLoading) {
+          emit(Unauthenticated());
+        }
       }
     });
 
@@ -140,16 +175,32 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     SignUpRequested event,
     Emitter<AuthState> emit,
   ) async {
+    print('AuthBloc: Starting sign up request');
     emit(AuthLoading());
+
     try {
-      await _authService.signUpWithEmailAndPassword(
+      print('AuthBloc: Creating user with email: ${event.email}');
+      final userProfile = await _authService.signUpWithEmailAndPassword(
         email: event.email,
         password: event.password,
         displayName: event.displayName,
       );
-      // The auth state listener will handle the state update
+      print('AuthBloc: User created successfully');
+      emit(Authenticated(userProfile));
     } catch (e) {
-      emit(AuthError(e.toString()));
+      print('AuthBloc: Error in signup: $e');
+      String errorMessage = e.toString().toLowerCase();
+
+      if (errorMessage.contains('already in use') ||
+          errorMessage.contains('already-exists')) {
+        emit(AuthError('This email is already registered'));
+      } else if (errorMessage.contains('weak-password')) {
+        emit(AuthError('Please choose a stronger password'));
+      } else if (errorMessage.contains('invalid-email')) {
+        emit(AuthError('Please enter a valid email address'));
+      } else {
+        emit(AuthError('An error occurred during signup. Please try again.'));
+      }
     }
   }
 
