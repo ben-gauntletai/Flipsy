@@ -782,6 +782,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   bool _showLikeAnimation = false;
   final VideoService _videoService = VideoService();
   StreamSubscription<bool>? _likeStatusSubscription;
+  StreamSubscription<int>? _commentCountSubscription;
+  int _commentCount = 0;
 
   DateTime? _lastTapTime;
   Timer? _doubleTapTimer;
@@ -795,6 +797,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   // Track local state
   int _localLikesCount = 0;
   bool _localLikeState = false;
+
+  final CommentService _commentService = CommentService();
 
   @override
   void initState() {
@@ -816,6 +820,17 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
     _localLikesCount = widget.video.likesCount;
     print('VideoFeedItem: Initializing with like count: $_localLikesCount');
+
+    // Initialize comment count
+    _commentCount = widget.video.commentsCount;
+    _commentCountSubscription =
+        _commentService.watchCommentCount(widget.video.id).listen((count) {
+      if (mounted) {
+        setState(() {
+          _commentCount = count;
+        });
+      }
+    });
   }
 
   Future<void> _initializeLikeStatus() async {
@@ -943,6 +958,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     _likeAnimationController.dispose();
     _likeStatusSubscription?.cancel();
     _initializationRetryTimer?.cancel();
+    _commentCountSubscription?.cancel();
     super.dispose();
   }
 
@@ -1133,7 +1149,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     CommentBottomSheet.show(
       context,
       widget.video.id,
-      VideoService().watchVideoCommentCount(widget.video.id),
       widget.video.allowComments,
     ).then((_) {
       // Resume video when comments are closed
@@ -1288,7 +1303,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                 // Comment Button
                 _buildActionButton(
                   icon: FontAwesomeIcons.solidComment,
-                  label: widget.video.commentsCount.toString(),
+                  label: _commentCount.toString(),
                   iconSize: 28,
                   onTap: () => _showComments(context),
                 ),

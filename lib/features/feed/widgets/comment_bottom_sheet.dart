@@ -7,22 +7,20 @@ import '../../../widgets/user_avatar.dart';
 
 class CommentBottomSheet extends StatefulWidget {
   final String videoId;
-  final Stream<int> commentCountStream;
   final bool allowComments;
 
   const CommentBottomSheet({
     Key? key,
     required this.videoId,
-    required this.commentCountStream,
     required this.allowComments,
   }) : super(key: key);
 
-  static Future<void> show(BuildContext context, String videoId,
-      Stream<int> commentCountStream, bool allowComments) {
+  static Future<void> show(
+      BuildContext context, String videoId, bool allowComments) {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
     final bottomNavHeight = kBottomNavigationBarHeight;
     final screenHeight = MediaQuery.of(context).size.height;
-    final maxHeight = screenHeight * 0.7; // Reduced from 0.8 to 0.7
+    final maxHeight = screenHeight * 0.7;
 
     return showModalBottomSheet(
       context: context,
@@ -38,7 +36,6 @@ class CommentBottomSheet extends StatefulWidget {
           ),
           child: CommentBottomSheet(
             videoId: videoId,
-            commentCountStream: commentCountStream,
             allowComments: allowComments,
           ),
         ),
@@ -57,11 +54,24 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
   bool _isSubmitting = false;
   String? _replyToId;
   String? _replyToUsername;
+  late Stream<List<Comment>> _commentStream;
+  late Stream<int> _commentCountStream;
+
+  @override
+  void initState() {
+    super.initState();
+    print('CommentBottomSheet: Initializing for video ${widget.videoId}');
+    _commentStream = _commentService.watchComments(widget.videoId);
+    _commentCountStream = _commentService.watchCommentCount(widget.videoId);
+  }
 
   @override
   void dispose() {
+    print(
+        'CommentBottomSheet: Disposing resources for video ${widget.videoId}');
     _commentController.dispose();
     _focusNode.dispose();
+    _commentService.disposeVideo(widget.videoId);
     super.dispose();
   }
 
@@ -73,9 +83,15 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
     });
 
     try {
+      // Capitalize first letter of the comment
+      String commentText = _commentController.text.trim();
+      if (commentText.isNotEmpty) {
+        commentText = commentText[0].toUpperCase() + commentText.substring(1);
+      }
+
       await _commentService.addComment(
         widget.videoId,
-        _commentController.text.trim(),
+        commentText,
         replyToId: _replyToId,
       );
 
@@ -128,18 +144,19 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               StreamBuilder<int>(
-                  stream: widget.commentCountStream,
-                  builder: (context, snapshot) {
-                    final count = snapshot.data ?? 0;
-                    return Text(
-                      '$count ${count == 1 ? 'comment' : 'comments'}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    );
-                  }),
+                stream: _commentCountStream,
+                builder: (context, snapshot) {
+                  final count = snapshot.data ?? 0;
+                  return Text(
+                    '$count ${count == 1 ? 'comment' : 'comments'}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                },
+              ),
               IconButton(
                 icon: const Icon(Icons.close, color: Colors.white),
                 onPressed: () => Navigator.pop(context),
@@ -153,12 +170,13 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
         // Comments List
         Expanded(
           child: StreamBuilder<List<Comment>>(
-            stream: _commentService.watchComments(widget.videoId),
+            stream: _commentStream,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
+                print('CommentBottomSheet: Error in stream: ${snapshot.error}');
                 return Center(
                   child: Text(
-                    'Error: ${snapshot.error}',
+                    'Error loading comments: ${snapshot.error}',
                     style: const TextStyle(color: Colors.white),
                   ),
                 );
@@ -173,6 +191,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
               }
 
               final comments = snapshot.data!;
+              print(
+                  'CommentBottomSheet: Rendering ${comments.length} comments for video ${widget.videoId}');
+
               if (comments.isEmpty) {
                 return const Center(
                   child: Text(
@@ -240,6 +261,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                   child: TextField(
                     controller: _commentController,
                     focusNode: _focusNode,
+                    textCapitalization: TextCapitalization.sentences,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
                       hintText: 'Add a comment...',
