@@ -6,6 +6,7 @@ import '../../../services/user_service.dart';
 import '../../../models/video.dart';
 import 'dart:async';
 import '../../../widgets/user_avatar.dart';
+import '../../../features/profile/screens/profile_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -415,9 +416,21 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
               children: [
                 // Profile Picture
                 _buildCircleButton(
-                  child: UserAvatar(
-                    avatarURL: avatarURL,
-                    radius: 20,
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => ProfileScreen(
+                            userId: widget.video.userId,
+                          ),
+                        ),
+                      );
+                    },
+                    child: UserAvatar(
+                      avatarURL: avatarURL,
+                      radius: 20,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 25),
