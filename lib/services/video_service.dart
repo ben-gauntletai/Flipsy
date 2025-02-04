@@ -161,6 +161,7 @@ class VideoService {
   // Get videos for feed (with pagination)
   Stream<List<Video>> getVideoFeed(
       {int limit = 10, DocumentSnapshot? startAfter}) {
+    print('VideoService: Getting video feed with limit: $limit');
     Query query = _firestore
         .collection('videos')
         .where('status', isEqualTo: 'active')
@@ -172,8 +173,74 @@ class VideoService {
     }
 
     return query.snapshots().map((snapshot) {
-      return snapshot.docs.map((doc) => Video.fromFirestore(doc)).toList();
+      print('VideoService: Got ${snapshot.docs.length} videos from Firestore');
+      final videos = snapshot.docs
+          .map((doc) {
+            try {
+              return Video.fromFirestore(doc);
+            } catch (e) {
+              print('VideoService: Error parsing video doc ${doc.id}: $e');
+              return null;
+            }
+          })
+          .where((video) => video != null)
+          .cast<Video>()
+          .toList();
+
+      print('VideoService: Returning ${videos.length} valid videos');
+      return videos;
     });
+  }
+
+  // Get a batch of videos (non-stream version for pagination)
+  Future<List<Video>> getVideoFeedBatch({
+    int limit = 10,
+    DocumentSnapshot? startAfter,
+  }) async {
+    print('VideoService: Getting video feed batch with limit: $limit');
+    try {
+      Query query = _firestore
+          .collection('videos')
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true)
+          .limit(limit);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      final snapshot = await query.get();
+      print('VideoService: Got ${snapshot.docs.length} videos from Firestore');
+
+      final videos = snapshot.docs
+          .map((doc) {
+            try {
+              return Video.fromFirestore(doc);
+            } catch (e) {
+              print('VideoService: Error parsing video doc ${doc.id}: $e');
+              return null;
+            }
+          })
+          .where((video) => video != null)
+          .cast<Video>()
+          .toList();
+
+      print('VideoService: Returning ${videos.length} valid videos');
+      return videos;
+    } catch (e) {
+      print('VideoService: Error getting video feed batch: $e');
+      return [];
+    }
+  }
+
+  // Get the document snapshot for a video by ID
+  Future<DocumentSnapshot?> getLastDocument(String videoId) async {
+    try {
+      return await _firestore.collection('videos').doc(videoId).get();
+    } catch (e) {
+      print('Error getting last document: $e');
+      return null;
+    }
   }
 
   // Get videos by user

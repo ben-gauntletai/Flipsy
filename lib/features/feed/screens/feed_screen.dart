@@ -7,6 +7,7 @@ import '../../../models/video.dart';
 import 'dart:async';
 import '../../../widgets/user_avatar.dart';
 import '../../../features/profile/screens/profile_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -26,29 +27,49 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   final UserService _userService = UserService();
   List<Video> _videos = [];
   Map<String, Map<String, dynamic>> _usersData = {};
-  bool _isLoading = true;
+  bool _isLoading = false;
+  bool _isLoadingMore = false;
+  bool _hasMoreVideos = true;
+  DocumentSnapshot? _lastDocument;
+  StreamSubscription<List<Video>>? _videoSubscription;
   final List<VideoPlayerController> _videoControllers = [];
+  String? _error;
+  int _currentPage = 0;
 
   @override
   void initState() {
     super.initState();
+    print('FeedScreen: Initializing');
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController();
     _loadVideos();
+    _pageController.addListener(_onPageChanged);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _disposeControllers();
+    _pageController.removeListener(_onPageChanged);
     _pageController.dispose();
+    _videoSubscription?.cancel();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      _pauseAllVideos();
+  void _onPageChanged() {
+    if (_pageController.hasClients) {
+      final newPage = _pageController.page?.round() ?? 0;
+      if (newPage != _currentPage) {
+        setState(() {
+          _currentPage = newPage;
+          print('FeedScreen: Page changed to $_currentPage');
+        });
+      }
+
+      // Load more videos when user reaches the last 2 videos
+      if (newPage >= _videos.length - 2 && !_isLoadingMore && _hasMoreVideos) {
+        _loadMoreVideos();
+      }
     }
   }
 
@@ -102,68 +123,164 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadVideos() async {
+    print('FeedScreen: Starting to load videos');
     setState(() {
       _isLoading = true;
+      _error = null;
     });
 
     try {
-      // Listen to the video feed stream
-      _videoService.getVideoFeed().listen((videos) async {
-        // Pre-fetch user data for all videos
+      await _videoSubscription?.cancel();
+      print('FeedScreen: Cancelled existing subscription');
+
+      _videoSubscription =
+          _videoService.getVideoFeed(limit: 5).listen((videos) async {
+        print('FeedScreen: Received ${videos.length} videos from stream');
+
+        if (videos.isNotEmpty) {
+          _lastDocument = await _videoService.getLastDocument(videos.last.id);
+          print('FeedScreen: Got last document for pagination');
+        }
+
         await _loadUserData(videos);
+        print('FeedScreen: Loaded user data for videos');
 
         if (mounted) {
           setState(() {
             _videos = videos;
             _isLoading = false;
+            _hasMoreVideos = videos.length == 5;
+            print('FeedScreen: Updated state with ${_videos.length} videos');
           });
         }
       }, onError: (error) {
-        print('Error loading videos: $error');
-        setState(() {
-          _isLoading = false;
-        });
+        print('FeedScreen: Error loading videos: $error');
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _error = 'Error loading videos: $error';
+          });
+        }
       });
     } catch (e) {
-      print('Error setting up video stream: $e');
-      setState(() {
-        _isLoading = false;
-      });
+      print('FeedScreen: Error setting up video stream: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = 'Error loading videos: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMoreVideos() async {
+    if (_isLoadingMore || !_hasMoreVideos || _lastDocument == null) return;
+
+    setState(() {
+      _isLoadingMore = true;
+    });
+
+    try {
+      final newVideos = await _videoService.getVideoFeedBatch(
+        limit: 5,
+        startAfter: _lastDocument,
+      );
+
+      if (newVideos.isNotEmpty) {
+        _lastDocument = await _videoService.getLastDocument(newVideos.last.id);
+
+        // Pre-fetch user data for new videos
+        await _loadUserData(newVideos);
+
+        if (mounted) {
+          setState(() {
+            _videos.addAll(newVideos);
+            _isLoadingMore = false;
+            _hasMoreVideos = newVideos.length == 5;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _isLoadingMore = false;
+            _hasMoreVideos = false;
+          });
+        }
+      }
+    } catch (e) {
+      print('Error loading more videos: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingMore = false;
+          _error = 'Error loading more videos';
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    print(
+        'FeedScreen: Building with isLoading: $_isLoading, videos: ${_videos.length}, currentPage: $_currentPage');
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Video Feed
-          if (_isLoading)
+          if (_isLoading && _videos.isEmpty)
             const Center(
               child: CircularProgressIndicator(
                 color: Colors.white,
               ),
             )
-          else if (_videos.isEmpty)
-            const Center(
-              child: Text(
-                'No videos available',
-                style: TextStyle(color: Colors.white),
+          else if (_videos.isEmpty && !_isLoading)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'No videos available',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                  if (_error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
+                    ),
+                  TextButton(
+                    onPressed: _loadVideos,
+                    child: const Text('Retry'),
+                  ),
+                ],
               ),
             )
           else
             PageView.builder(
               controller: _pageController,
               scrollDirection: Axis.vertical,
-              itemCount: _videos.length,
+              itemCount: _videos.length + (_hasMoreVideos ? 1 : 0),
               itemBuilder: (context, index) {
+                if (index >= _videos.length) {
+                  return const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: CircularProgressIndicator(color: Colors.white),
+                    ),
+                  );
+                }
                 final video = _videos[index];
                 final userData = _usersData[video.userId];
+                print(
+                    'FeedScreen: Building video item at index $index, currentPage: $_currentPage');
                 return VideoFeedItem(
+                  key: ValueKey(video.id),
                   video: video,
                   userData: userData,
-                  isVisible: widget.isVisible,
+                  isVisible: widget.isVisible && index == _currentPage,
+                  index: index,
+                  currentPage: _currentPage,
                 );
               },
             ),
@@ -223,12 +340,16 @@ class VideoFeedItem extends StatefulWidget {
   final Video video;
   final Map<String, dynamic>? userData;
   final bool isVisible;
+  final int index;
+  final int currentPage;
 
   const VideoFeedItem({
     Key? key,
     required this.video,
     this.userData,
     this.isVisible = true,
+    required this.index,
+    required this.currentPage,
   }) : super(key: key);
 
   @override
@@ -237,44 +358,93 @@ class VideoFeedItem extends StatefulWidget {
 
 class _VideoFeedItemState extends State<VideoFeedItem> {
   late VideoPlayerController _videoController;
-  bool _isPlaying = true;
+  bool _isPlaying = false;
   bool _isMuted = false;
   bool _showMuteIcon = false;
-  bool _isHolding = false;
-  DateTime? _tapDownTime;
+  bool _isInitialized = false;
+  bool _hasError = false;
+  String? _errorMessage;
   _FeedScreenState? _feedScreenState;
+  DateTime? _tapDownTime;
 
   @override
   void initState() {
     super.initState();
+    print(
+        'VideoFeedItem: Initializing video ${widget.video.id} at index ${widget.index}');
     _initializeVideo();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Safely store reference to feed screen state
-    _feedScreenState = context.findAncestorStateOfType<_FeedScreenState>();
-    if (_feedScreenState != null) {
+    final feedState = context.findAncestorStateOfType<_FeedScreenState>();
+    if (feedState != null && feedState != _feedScreenState) {
+      _feedScreenState = feedState;
       _feedScreenState!._videoControllers.add(_videoController);
+      print(
+          'VideoFeedItem: Added controller to feed state for ${widget.video.id}');
+    }
+    _checkAndUpdatePlaybackState();
+  }
+
+  void _checkAndUpdatePlaybackState() {
+    if (!mounted || !_isInitialized) {
+      print(
+          'VideoFeedItem: Skipping playback check - mounted: $mounted, initialized: $_isInitialized');
+      return;
+    }
+
+    final shouldPlay = widget.isVisible && widget.index == widget.currentPage;
+    print(
+        'VideoFeedItem: Checking playback state for ${widget.video.id} - shouldPlay: $shouldPlay, isPlaying: $_isPlaying, index: ${widget.index}, currentPage: ${widget.currentPage}');
+
+    if (shouldPlay && !_isPlaying) {
+      print('VideoFeedItem: Starting playback for ${widget.video.id}');
+      _videoController.play();
+      _videoController.setLooping(true);
+      _isPlaying = true;
+    } else if (!shouldPlay && _isPlaying) {
+      print('VideoFeedItem: Pausing playback for ${widget.video.id}');
+      _videoController.pause();
+      _isPlaying = false;
     }
   }
 
   Future<void> _initializeVideo() async {
     try {
-      _videoController = VideoPlayerController.network(widget.video.videoURL)
-        ..initialize().then((_) {
-          if (mounted) {
-            setState(() {
-              if (widget.isVisible) {
-                _videoController.play();
-                _videoController.setLooping(true);
-              }
-            });
-          }
+      print('VideoFeedItem: Creating controller for ${widget.video.videoURL}');
+      _videoController = VideoPlayerController.network(widget.video.videoURL);
+
+      await _videoController.initialize();
+      print('VideoFeedItem: Controller initialized for ${widget.video.id}');
+
+      if (mounted) {
+        setState(() {
+          _isInitialized = true;
         });
+        _checkAndUpdatePlaybackState();
+      }
     } catch (e) {
-      print('Error initializing video: $e');
+      print('VideoFeedItem: Error initializing video ${widget.video.id}: $e');
+      if (mounted) {
+        setState(() {
+          _hasError = true;
+          _errorMessage = 'Error loading video: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  void didUpdateWidget(VideoFeedItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    print(
+        'VideoFeedItem: Widget updated for ${widget.video.id} - visible: ${widget.isVisible}, index: ${widget.index}, currentPage: ${widget.currentPage}');
+
+    if (oldWidget.isVisible != widget.isVisible ||
+        oldWidget.currentPage != widget.currentPage) {
+      _checkAndUpdatePlaybackState();
     }
   }
 
@@ -304,20 +474,6 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
         });
       }
     });
-  }
-
-  @override
-  void didUpdateWidget(VideoFeedItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.isVisible != widget.isVisible) {
-      if (!widget.isVisible) {
-        _videoController.pause();
-        _isPlaying = false;
-      } else if (_isPlaying) {
-        // Only resume if we're coming back to the feed and it was playing before
-        _videoController.play();
-      }
-    }
   }
 
   @override
@@ -361,7 +517,7 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
 
     return GestureDetector(
       onTapDown: (details) {
-        if (widget.isVisible) {
+        if (widget.isVisible && _isInitialized) {
           _tapDownTime = DateTime.now();
         }
       },
@@ -393,14 +549,26 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
       behavior: HitTestBehavior.opaque,
       child: Stack(
         children: [
-          // Video Player
           SizedBox.expand(
             child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
                 width: _videoController.value.size?.width ?? 0,
                 height: _videoController.value.size?.height ?? 0,
-                child: VideoPlayer(_videoController),
+                child: _hasError
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.error, color: Colors.white),
+                            Text(
+                              _errorMessage ?? 'Error loading video',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      )
+                    : VideoPlayer(_videoController),
               ),
             ),
           ),
