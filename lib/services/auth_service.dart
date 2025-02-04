@@ -117,10 +117,22 @@ class AuthService {
           return Exception('Email/password accounts are not enabled.');
         case 'weak-password':
           return Exception('The password is too weak.');
+        case 'invalid-credential':
+          return Exception('The email or password is incorrect.');
         default:
-          return Exception(e.message ?? 'An unknown error occurred.');
+          final message = e.message;
+          if (message != null && message.toLowerCase().contains('recaptcha')) {
+            return Exception('Invalid login attempt. Please try again.');
+          }
+          return Exception(message ?? 'An unknown error occurred.');
       }
     }
-    return Exception('An unknown error occurred.');
+    // Handle non-FirebaseAuthException errors
+    String errorMessage = e.toString().toLowerCase();
+    if (errorMessage.contains('recaptcha') ||
+        errorMessage.contains('credential')) {
+      return Exception('Invalid login attempt. Please try again.');
+    }
+    return Exception('An unknown error occurred. Please try again.');
   }
 }

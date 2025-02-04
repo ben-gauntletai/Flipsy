@@ -9,9 +9,16 @@ import 'package:flipsy/firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // If Firebase is already initialized, we can ignore this error
+    if (!e.toString().contains('duplicate-app')) {
+      rethrow;
+    }
+  }
   runApp(const MyApp());
 }
 
@@ -31,7 +38,7 @@ class MyApp extends StatelessWidget {
           BlocProvider<AuthBloc>(
             create: (context) => AuthBloc(
               authService: context.read<AuthService>(),
-            )..add(AuthCheckRequested()),
+            ),
           ),
         ],
         child: MaterialApp(
@@ -53,7 +60,7 @@ class MyApp extends StatelessWidget {
           themeMode: ThemeMode.system,
           home: BlocBuilder<AuthBloc, AuthState>(
             builder: (context, state) {
-              if (state is AuthLoading) {
+              if (state is AuthInitial || state is AuthLoading) {
                 return const Scaffold(
                   body: Center(
                     child: CircularProgressIndicator(),
@@ -73,7 +80,7 @@ class MyApp extends StatelessWidget {
           ),
           routes: {
             '/login': (context) => const LoginScreen(),
-            '/signup': (context) => const SignUpScreen(),
+            '/signup': (context) => const SignupScreen(),
           },
         ),
       ),

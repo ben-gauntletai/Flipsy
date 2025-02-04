@@ -2,29 +2,47 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flipsy/features/auth/bloc/auth_bloc.dart';
 
-class SignUpScreen extends StatefulWidget {
-  const SignUpScreen({super.key});
+class SignupScreen extends StatefulWidget {
+  const SignupScreen({super.key});
 
   @override
-  State<SignUpScreen> createState() => _SignUpScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> {
+class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _displayNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _displayNameController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
   bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
+  String? _displayNameError;
+  String? _emailError;
+  String? _passwordError;
+  String? _confirmPasswordError;
 
   @override
   void dispose() {
+    _displayNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _displayNameController.dispose();
+    _confirmPasswordController.dispose();
     super.dispose();
   }
 
-  void _onSignUpPressed() {
+  void _resetErrors() {
+    setState(() {
+      _displayNameError = null;
+      _emailError = null;
+      _passwordError = null;
+      _confirmPasswordError = null;
+    });
+  }
+
+  void _handleSignup() {
+    _resetErrors();
+
     if (_formKey.currentState?.validate() ?? false) {
       context.read<AuthBloc>().add(
             SignUpRequested(
@@ -36,6 +54,52 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
+  String? _validateDisplayName(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter your display name';
+    }
+    if (value.length < 3) {
+      return 'Display name must be at least 3 characters';
+    }
+    return null;
+  }
+
+  String? _validateEmail(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter your email';
+    }
+    if (!value.contains('@') || !value.contains('.')) {
+      return 'Please enter a valid email address';
+    }
+    return null;
+  }
+
+  String? _validatePassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please enter your password';
+    }
+    if (value.length < 6) {
+      return 'Password must be at least 6 characters';
+    }
+    if (!value.contains(RegExp(r'[A-Z]'))) {
+      return 'Password must contain at least one uppercase letter';
+    }
+    if (!value.contains(RegExp(r'[0-9]'))) {
+      return 'Password must contain at least one number';
+    }
+    return null;
+  }
+
+  String? _validateConfirmPassword(String? value) {
+    if (value == null || value.isEmpty) {
+      return 'Please confirm your password';
+    }
+    if (value != _passwordController.text) {
+      return 'Passwords do not match';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -45,12 +109,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is AuthError) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(state.message),
-                backgroundColor: Colors.red,
-              ),
-            );
+            String message = state.message.toLowerCase();
+            setState(() {
+              if (message.contains('email') && message.contains('use')) {
+                _emailError = 'This email is already registered';
+              } else if (message.contains('weak password')) {
+                _passwordError = 'Please choose a stronger password';
+              } else if (message.contains('invalid email')) {
+                _emailError = 'Please enter a valid email address';
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(state.message),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            });
           }
         },
         child: SafeArea(
@@ -63,59 +138,64 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
-                      'Join Flipsy',
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    const FlutterLogo(size: 100),
+                    const SizedBox(height: 48),
+                    Text(
+                      'Join Flipsy Today!',
+                      style: Theme.of(context).textTheme.headlineMedium,
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 48),
+                    const SizedBox(height: 32),
                     TextFormField(
                       controller: _displayNameController,
-                      decoration: const InputDecoration(
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
                         labelText: 'Display Name',
-                        prefixIcon: Icon(Icons.person_outline),
-                        border: OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.person_outline),
+                        border: const OutlineInputBorder(),
+                        errorText: _displayNameError,
+                        errorMaxLines: 2,
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter your display name';
+                      onChanged: (_) {
+                        if (_displayNameError != null) {
+                          setState(() => _displayNameError = null);
                         }
-                        if (value.length < 3) {
-                          return 'Display name must be at least 3 characters';
-                        }
-                        return null;
                       },
+                      validator: _validateDisplayName,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
                         labelText: 'Email',
-                        prefixIcon: Icon(Icons.email_outlined),
-                        border: OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        border: const OutlineInputBorder(),
+                        errorText: _emailError,
+                        errorMaxLines: 2,
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter your email';
+                      onChanged: (_) {
+                        if (_emailError != null) {
+                          setState(() => _emailError = null);
                         }
-                        if (!value.contains('@')) {
-                          return 'Please enter a valid email';
-                        }
-                        return null;
                       },
+                      validator: _validateEmail,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _passwordController,
                       obscureText: !_isPasswordVisible,
+                      textInputAction: TextInputAction.next,
                       decoration: InputDecoration(
                         labelText: 'Password',
                         prefixIcon: const Icon(Icons.lock_outline),
                         border: const OutlineInputBorder(),
+                        errorText: _passwordError,
+                        errorMaxLines: 3,
+                        helperText:
+                            'Must be at least 6 characters with 1 uppercase letter and 1 number',
+                        helperMaxLines: 2,
                         suffixIcon: IconButton(
                           icon: Icon(
                             _isPasswordVisible
@@ -129,22 +209,55 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           },
                         ),
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter your password';
+                      onChanged: (_) {
+                        if (_passwordError != null) {
+                          setState(() => _passwordError = null);
                         }
-                        if (value.length < 6) {
-                          return 'Password must be at least 6 characters';
+                        // Validate confirm password when password changes
+                        if (_confirmPasswordController.text.isNotEmpty) {
+                          _formKey.currentState?.validate();
                         }
-                        return null;
                       },
+                      validator: _validatePassword,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _confirmPasswordController,
+                      obscureText: !_isConfirmPasswordVisible,
+                      textInputAction: TextInputAction.done,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm Password',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        border: const OutlineInputBorder(),
+                        errorText: _confirmPasswordError,
+                        errorMaxLines: 2,
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _isConfirmPasswordVisible
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _isConfirmPasswordVisible =
+                                  !_isConfirmPasswordVisible;
+                            });
+                          },
+                        ),
+                      ),
+                      onChanged: (_) {
+                        if (_confirmPasswordError != null) {
+                          setState(() => _confirmPasswordError = null);
+                        }
+                      },
+                      validator: _validateConfirmPassword,
                     ),
                     const SizedBox(height: 24),
                     BlocBuilder<AuthBloc, AuthState>(
                       builder: (context, state) {
                         return ElevatedButton(
                           onPressed:
-                              state is AuthLoading ? null : _onSignUpPressed,
+                              state is AuthLoading ? null : _handleSignup,
                           style: ElevatedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 16),
                           ),
@@ -156,10 +269,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : const Text(
-                                  'Sign Up',
-                                  style: TextStyle(fontSize: 16),
-                                ),
+                              : const Text('Sign Up'),
                         );
                       },
                     ),
@@ -168,10 +278,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       onPressed: () {
                         Navigator.pop(context);
                       },
-                      child: const Text(
-                        'Already have an account? Login',
-                        style: TextStyle(fontSize: 16),
-                      ),
+                      child: const Text('Already have an account? Login'),
                     ),
                   ],
                 ),

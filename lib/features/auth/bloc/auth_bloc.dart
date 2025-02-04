@@ -87,16 +87,18 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     _authStateSubscription = _authService.authStateChanges.listen((user) {
       if (user != null) {
         _loadUserProfile(user.uid);
-      } else {
-        add(AuthCheckRequested());
       }
     });
+
+    // Check initial auth state
+    add(AuthCheckRequested());
   }
 
   Future<void> _onAuthCheckRequested(
     AuthCheckRequested event,
     Emitter<AuthState> emit,
   ) async {
+    emit(AuthLoading());
     final currentUser = _authService.currentUser;
     if (currentUser != null) {
       await _loadUserProfile(currentUser.uid);
@@ -109,15 +111,28 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     SignInRequested event,
     Emitter<AuthState> emit,
   ) async {
+    print('AuthBloc: Starting sign in request');
     emit(AuthLoading());
     try {
       await _authService.signInWithEmailAndPassword(
         email: event.email,
         password: event.password,
       );
+      print('AuthBloc: Sign in successful');
       // The auth state listener will handle the state update
     } catch (e) {
-      emit(AuthError(e.toString()));
+      print('AuthBloc: Sign in error caught: ${e.toString()}');
+      String errorMessage = e.toString().toLowerCase();
+      if (errorMessage.contains('recaptcha') ||
+          errorMessage.contains('incorrect') ||
+          errorMessage.contains('malformed') ||
+          errorMessage.contains('invalid')) {
+        print('AuthBloc: Emitting invalid credentials error');
+        emit(AuthError('Invalid email or password'));
+      } else {
+        print('AuthBloc: Emitting general error');
+        emit(AuthError(errorMessage));
+      }
     }
   }
 
