@@ -5,6 +5,7 @@ import '../../../services/video_service.dart';
 import '../../../services/user_service.dart';
 import '../../../models/video.dart';
 import 'dart:async';
+import '../../../widgets/user_avatar.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -433,37 +434,11 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Profile Picture
-                Stack(
-                  alignment: Alignment.bottomCenter,
-                  children: [
-                    _buildCircleButton(
-                      child: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: Colors.grey,
-                        backgroundImage:
-                            avatarURL != null ? NetworkImage(avatarURL) : null,
-                        child: avatarURL == null
-                            ? const Icon(Icons.person,
-                                color: Colors.white, size: 20)
-                            : null,
-                      ),
-                    ),
-                    Transform.translate(
-                      offset: const Offset(0, 10),
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          color: Colors.pink,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.add,
-                          color: Colors.white,
-                          size: 12,
-                        ),
-                      ),
-                    ),
-                  ],
+                _buildCircleButton(
+                  child: UserAvatar(
+                    avatarURL: avatarURL,
+                    radius: 20,
+                  ),
                 ),
                 const SizedBox(height: 25),
 

@@ -235,12 +235,25 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     Emitter<AuthState> emit,
   ) async {
     try {
+      print('AuthBloc: Handling profile update request');
+      print('AuthBloc: Update data: ${event.data}');
+
       await _authService.updateUserProfile(event.userId, event.data);
+      print('AuthBloc: Profile updated in Firestore');
+
       final updatedProfile = await _authService.getUserProfile(event.userId);
+      print('AuthBloc: Retrieved updated profile: $updatedProfile');
+
       if (updatedProfile != null) {
+        print(
+            'AuthBloc: Emitting new authenticated state with updated profile');
         emit(Authenticated(updatedProfile));
+      } else {
+        print('AuthBloc: Failed to retrieve updated profile');
+        emit(const AuthError('Failed to retrieve updated profile'));
       }
     } catch (e) {
+      print('AuthBloc: Error updating profile: $e');
       emit(AuthError(e.toString()));
     }
   }

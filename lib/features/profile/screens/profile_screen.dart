@@ -5,6 +5,7 @@ import '../../auth/bloc/auth_bloc.dart';
 import '../../../services/video_service.dart';
 import '../../../models/video.dart';
 import 'edit_profile_screen.dart';
+import '../../../widgets/user_avatar.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -43,15 +44,9 @@ class ProfileScreen extends StatelessWidget {
                 children: [
                   const SizedBox(height: 20),
                   // Profile Image
-                  CircleAvatar(
+                  UserAvatar(
+                    avatarURL: user.avatarURL,
                     radius: 50,
-                    backgroundColor: Colors.grey[300],
-                    backgroundImage: user.avatarURL != null
-                        ? CachedNetworkImageProvider(user.avatarURL!)
-                        : null,
-                    child: user.avatarURL == null
-                        ? const Icon(Icons.person, size: 50, color: Colors.grey)
-                        : null,
                   ),
                   const SizedBox(height: 16),
                   // Display Name

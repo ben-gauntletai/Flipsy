@@ -31,6 +31,7 @@ class UserModel extends Equatable {
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
     print('UserModel: Converting Firestore document to UserModel');
     final data = doc.data() as Map<String, dynamic>;
+    print('UserModel: Raw data from Firestore: $data');
 
     // Handle timestamps
     final createdAtTimestamp = data['createdAt'];
@@ -43,22 +44,22 @@ class UserModel extends Equatable {
       createdAt = createdAtTimestamp.toDate();
     } else {
       createdAt = DateTime.now();
-      print('UserModel: createdAt is not a Timestamp, using current time');
+      print(
+          'UserModel: Using current time for createdAt as timestamp was not found');
     }
 
     if (updatedAtTimestamp is Timestamp) {
       updatedAt = updatedAtTimestamp.toDate();
     } else {
       updatedAt = DateTime.now();
-      print('UserModel: updatedAt is not a Timestamp, using current time');
+      print(
+          'UserModel: Using current time for updatedAt as timestamp was not found');
     }
 
-    print('UserModel: Creating instance with data: ${data.toString()}');
-
-    return UserModel(
+    final userModel = UserModel(
       id: doc.id,
-      email: data['email'] as String? ?? '',
-      displayName: data['displayName'] as String? ?? '',
+      email: data['email'] as String,
+      displayName: data['displayName'] as String,
       avatarURL: data['avatarURL'] as String?,
       bio: data['bio'] as String?,
       createdAt: createdAt,
@@ -68,6 +69,10 @@ class UserModel extends Equatable {
       totalLikes: (data['totalLikes'] as num?)?.toInt() ?? 0,
       totalVideos: (data['totalVideos'] as num?)?.toInt() ?? 0,
     );
+
+    print(
+        'UserModel: Created UserModel with avatarURL: ${userModel.avatarURL}');
+    return userModel;
   }
 
   Map<String, dynamic> toMap() {
