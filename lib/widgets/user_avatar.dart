@@ -6,6 +6,7 @@ class UserAvatar extends StatelessWidget {
   final double radius;
   final Color? backgroundColor;
   final bool showBorder;
+  final bool forceRefresh;
 
   const UserAvatar({
     Key? key,
@@ -13,6 +14,7 @@ class UserAvatar extends StatelessWidget {
     this.radius = 20,
     this.backgroundColor,
     this.showBorder = false,
+    this.forceRefresh = false,
   }) : super(key: key);
 
   @override
@@ -37,6 +39,9 @@ class UserAvatar extends StatelessWidget {
                   width: radius * 2,
                   height: radius * 2,
                   fit: BoxFit.cover,
+                  cacheKey: forceRefresh
+                      ? '${avatarURL!}_${DateTime.now().millisecondsSinceEpoch}'
+                      : null,
                   placeholder: (context, url) => Center(
                     child: SizedBox(
                       width: radius,

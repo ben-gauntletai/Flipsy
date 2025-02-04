@@ -269,11 +269,22 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
   bool _showMuteIcon = false;
   bool _isHolding = false;
   DateTime? _tapDownTime;
+  _FeedScreenState? _feedScreenState;
 
   @override
   void initState() {
     super.initState();
     _initializeVideo();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Safely store reference to feed screen state
+    _feedScreenState = context.findAncestorStateOfType<_FeedScreenState>();
+    if (_feedScreenState != null) {
+      _feedScreenState!._videoControllers.add(_videoController);
+    }
   }
 
   Future<void> _initializeVideo() async {
@@ -289,10 +300,6 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
             });
           }
         });
-
-      // Add controller to parent's list
-      final feedState = context.findAncestorStateOfType<_FeedScreenState>();
-      feedState?._videoControllers.add(_videoController);
     } catch (e) {
       print('Error initializing video: $e');
     }
@@ -342,9 +349,10 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
 
   @override
   void dispose() {
-    // Remove controller from parent's list before disposing
-    final feedState = context.findAncestorStateOfType<_FeedScreenState>();
-    feedState?._videoControllers.remove(_videoController);
+    if (mounted && _feedScreenState != null) {
+      // Safely remove controller from parent's list
+      _feedScreenState!._videoControllers.remove(_videoController);
+    }
     _videoController.dispose();
     super.dispose();
   }

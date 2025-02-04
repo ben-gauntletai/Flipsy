@@ -48,6 +48,14 @@ class ProfileUpdateRequested extends AuthEvent {
   List<Object?> get props => [userId, data];
 }
 
+class ProfileUpdateProgress extends AuthEvent {
+  final double progress;
+  const ProfileUpdateProgress(this.progress);
+
+  @override
+  List<Object?> get props => [progress];
+}
+
 // States
 abstract class AuthState extends Equatable {
   const AuthState();
@@ -59,6 +67,16 @@ abstract class AuthState extends Equatable {
 class AuthInitial extends AuthState {}
 
 class AuthLoading extends AuthState {}
+
+class ProfileUpdating extends AuthState {
+  final UserModel user;
+  final double? progress;
+
+  const ProfileUpdating(this.user, {this.progress});
+
+  @override
+  List<Object?> get props => [user, progress];
+}
 
 class Authenticated extends AuthState {
   final UserModel user;
@@ -93,6 +111,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SignUpRequested>(_onSignUpRequested);
     on<SignOutRequested>(_onSignOutRequested);
     on<ProfileUpdateRequested>(_onProfileUpdateRequested);
+    on<ProfileUpdateProgress>(_onProfileUpdateProgress);
 
     // Listen to auth state changes
     _authStateSubscription = _authService.authStateChanges.listen((user) async {
@@ -238,16 +257,36 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       print('AuthBloc: Handling profile update request');
       print('AuthBloc: Update data: ${event.data}');
 
+      // Get the current user before update
+      final currentState = state;
+      final currentUser = currentState is Authenticated
+          ? currentState.user
+          : currentState is ProfileUpdating
+              ? currentState.user
+              : null;
+
+      if (currentUser == null) {
+        print('AuthBloc: No authenticated user found');
+        emit(const AuthError('No authenticated user found'));
+        return;
+      }
+
+      // Emit updating state without progress to show we're updating Firestore
+      emit(ProfileUpdating(currentUser));
+
+      // Update the profile
       await _authService.updateUserProfile(event.userId, event.data);
       print('AuthBloc: Profile updated in Firestore');
 
+      // Get the updated profile
       final updatedProfile = await _authService.getUserProfile(event.userId);
       print('AuthBloc: Retrieved updated profile: $updatedProfile');
 
       if (updatedProfile != null) {
         print(
             'AuthBloc: Emitting new authenticated state with updated profile');
-        emit(Authenticated(updatedProfile));
+        // Ensure we're on the main thread when emitting the state
+        await Future.microtask(() => emit(Authenticated(updatedProfile)));
       } else {
         print('AuthBloc: Failed to retrieve updated profile');
         emit(const AuthError('Failed to retrieve updated profile'));
@@ -255,6 +294,24 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     } catch (e) {
       print('AuthBloc: Error updating profile: $e');
       emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> _onProfileUpdateProgress(
+    ProfileUpdateProgress event,
+    Emitter<AuthState> emit,
+  ) async {
+    final currentState = state;
+    if (currentState is Authenticated || currentState is ProfileUpdating) {
+      final user = currentState is Authenticated
+          ? currentState.user
+          : (currentState as ProfileUpdating).user;
+
+      // Only emit progress state if we're not at 100% or already in progress
+      if (event.progress < 1.0 ||
+          (currentState is ProfileUpdating && currentState.progress != null)) {
+        emit(ProfileUpdating(user, progress: event.progress));
+      }
     }
   }
 

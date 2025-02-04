@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../../services/auth_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../widgets/user_avatar.dart';
+import '../../../widgets/loading_overlay.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({Key? key}) : super(key: key);
@@ -130,6 +132,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     try {
       String? avatarURL;
+      bool uploadComplete = false;
 
       // Upload new avatar if selected
       if (_imageFile != null) {
@@ -138,14 +141,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           final ref = FirebaseStorage.instance.ref().child(
               'avatars/${state.user.id}/${DateTime.now().millisecondsSinceEpoch}.jpg');
 
-          // Create metadata
           final metadata = SettableMetadata(
             contentType: 'image/jpeg',
           );
 
-          print('EditProfileScreen: Created metadata');
-
-          // Upload file with metadata
           final uploadTask = ref.putData(
             await _imageFile!.readAsBytes(),
             metadata,
@@ -156,22 +155,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           // Show upload progress
           uploadTask.snapshotEvents.listen(
             (TaskSnapshot snapshot) {
-              final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-              print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
+              if (!uploadComplete && mounted) {
+                final progress =
+                    snapshot.bytesTransferred / snapshot.totalBytes;
+                print(
+                    'Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
+                context.read<AuthBloc>().add(ProfileUpdateProgress(progress));
+              }
             },
             onError: (error) {
               print('EditProfileScreen: Error during upload progress: $error');
             },
+            cancelOnError: true,
           );
 
           // Wait for the upload to complete
           final snapshot = await uploadTask;
+          uploadComplete = true;
           print(
               'EditProfileScreen: Upload completed with state: ${snapshot.state}');
 
           // Get the download URL
           avatarURL = await snapshot.ref.getDownloadURL();
           print('EditProfileScreen: Got download URL: $avatarURL');
+
+          // Clear the cached image
+          if (avatarURL != null) {
+            await CachedNetworkImage.evictFromCache(avatarURL);
+          }
         } catch (e) {
           print('EditProfileScreen: Error uploading avatar: $e');
           rethrow;
@@ -183,13 +194,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _nameController.text.trim() != state.user.displayName ||
           _bioController.text.trim() != state.user.bio) {
         print('EditProfileScreen: Sending profile update request');
-        print(
-            'EditProfileScreen: Current display name: ${state.user.displayName}');
-        print(
-            'EditProfileScreen: New display name: ${_nameController.text.trim()}');
-        print('EditProfileScreen: Current bio: ${state.user.bio}');
-        print('EditProfileScreen: New bio: ${_bioController.text.trim()}');
-        print('EditProfileScreen: New avatar URL: $avatarURL');
 
         final updateData = {
           'displayName': _nameController.text.trim(),
@@ -198,189 +202,273 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         };
         print('EditProfileScreen: Update data: $updateData');
 
-        context.read<AuthBloc>().add(
-              ProfileUpdateRequested(
-                state.user.id,
-                updateData,
-              ),
-            );
+        // Add a small delay to show the 100% progress
+        if (uploadComplete && mounted) {
+          context.read<AuthBloc>().add(const ProfileUpdateProgress(1.0));
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
 
+        // Send the update request
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Profile updated successfully!')),
-          );
-          Navigator.pop(context);
+          context.read<AuthBloc>().add(
+                ProfileUpdateRequested(
+                  state.user.id,
+                  updateData,
+                ),
+              );
         }
       } else {
         print('EditProfileScreen: No changes detected, skipping update');
+        setState(() => _isLoading = false);
+      }
+
+      // Reset the image file after successful update
+      if (mounted) {
+        setState(() {
+          _imageFile = null;
+        });
       }
     } catch (e) {
       print('EditProfileScreen: Error updating profile: $e');
-      setState(() {
-        _error = 'Error updating profile: $e';
-      });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error updating profile: $e')),
-        );
+        setState(() {
+          _isLoading = false;
+          _error = 'Error updating profile: $e';
+        });
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Error updating profile: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
       }
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
+  }
+
+  void _showSuccessMessage() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('Profile updated successfully!'),
+          duration: Duration(seconds: 2),
+        ),
+      );
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AuthBloc>().state;
-    if (state is! Authenticated) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
+    return PopScope(
+      canPop: !_isLoading,
+      child: BlocConsumer<AuthBloc, AuthState>(
+        listenWhen: (previous, current) {
+          if (previous is ProfileUpdating && current is Authenticated) {
+            return true;
+          }
+          if (current is AuthError) {
+            return true;
+          }
+          return false;
+        },
+        listener: (context, state) async {
+          if (!mounted) return;
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Edit profile',
-          style: TextStyle(
-            color: Colors.black87,
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        centerTitle: true,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(
-            color: Colors.grey[200],
-            height: 1,
-          ),
-        ),
-      ),
-      body: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
+          if (state is Authenticated) {
+            setState(() => _isLoading = false);
+            _showSuccessMessage();
+          } else if (state is AuthError) {
+            setState(() {
+              _isLoading = false;
+              _error = state.message;
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context)
+                ..hideCurrentSnackBar()
+                ..showSnackBar(
+                  SnackBar(
+                    content: Text(state.message),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+            }
+          }
+        },
+        builder: (context, state) {
+          final isUpdating = state is ProfileUpdating;
+          final uploadProgress = isUpdating ? state.progress : null;
+
+          final user = state is Authenticated
+              ? state.user
+              : state is ProfileUpdating
+                  ? state.user
+                  : null;
+
+          if (user == null) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+
+          return Stack(
             children: [
-              const SizedBox(height: 15),
-              // Photo Options Row
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Change Photo Button
-                  Column(
-                    children: [
-                      GestureDetector(
-                        onTap: _pickImage,
-                        child: Stack(
+              Scaffold(
+                backgroundColor: Colors.white,
+                appBar: AppBar(
+                  backgroundColor: Colors.white,
+                  elevation: 0,
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back, color: Colors.black87),
+                    onPressed: isUpdating ? null : () => Navigator.pop(context),
+                  ),
+                  title: const Text(
+                    'Edit profile',
+                    style: TextStyle(
+                      color: Colors.black87,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  centerTitle: true,
+                  bottom: PreferredSize(
+                    preferredSize: const Size.fromHeight(1),
+                    child: Container(
+                      color: Colors.grey[200],
+                      height: 1,
+                    ),
+                  ),
+                ),
+                body: Form(
+                  key: _formKey,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 15),
+                        // Photo Options Row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            if (_imageFile != null)
-                              ClipOval(
-                                child: Image.file(
-                                  _imageFile!,
-                                  width: 95,
-                                  height: 95,
-                                  fit: BoxFit.cover,
-                                ),
-                              )
-                            else
-                              UserAvatar(
-                                avatarURL: state.user.avatarURL,
-                                radius: 47.5,
-                                backgroundColor: state.user.avatarURL != null
-                                    ? null
-                                    : Colors.green[700],
-                                showBorder: true,
-                              ),
-                            Positioned(
-                              bottom: 0,
-                              right: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: BoxDecoration(
-                                  color: Colors.green[700],
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 2,
+                            // Change Photo Button
+                            Column(
+                              children: [
+                                GestureDetector(
+                                  onTap: _pickImage,
+                                  child: Stack(
+                                    children: [
+                                      if (_imageFile != null)
+                                        ClipOval(
+                                          child: Image.file(
+                                            _imageFile!,
+                                            width: 95,
+                                            height: 95,
+                                            fit: BoxFit.cover,
+                                          ),
+                                        )
+                                      else
+                                        UserAvatar(
+                                          avatarURL: user.avatarURL,
+                                          radius: 47.5,
+                                          backgroundColor:
+                                              user.avatarURL != null
+                                                  ? null
+                                                  : Colors.green[700],
+                                          showBorder: true,
+                                        ),
+                                      Positioned(
+                                        bottom: 0,
+                                        right: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.green[700],
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: Colors.white,
+                                              width: 2,
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.camera_alt,
+                                            color: Colors.white,
+                                            size: 16,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                child: const Icon(
-                                  Icons.camera_alt,
-                                  color: Colors.white,
-                                  size: 16,
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Change photo',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.black87,
+                                  ),
                                 ),
-                              ),
+                              ],
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Change photo',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
 
-              const SizedBox(height: 25),
-              // Form Fields
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    _buildTextField(
-                      label: 'Name',
-                      controller: _nameController,
+                        const SizedBox(height: 25),
+                        // Form Fields
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Column(
+                            children: [
+                              _buildTextField(
+                                label: 'Name',
+                                controller: _nameController,
+                              ),
+                              _buildTextField(
+                                label: 'Username',
+                                controller: _usernameController,
+                                enabled: false,
+                                hintText: user.displayName.toLowerCase(),
+                              ),
+                              _buildTextField(
+                                label: 'Bio',
+                                controller: _bioController,
+                                showArrow: true,
+                                hintText: 'Add a bio to your profile',
+                                showBottomDivider: false,
+                                showBottomSpace: false,
+                              ),
+                              const Divider(height: 1, color: Colors.black12),
+                              _buildTextField(
+                                label: 'Instagram',
+                                controller: _instagramController,
+                                showArrow: true,
+                                hintText: 'Add Instagram to your profile',
+                                showTopSpace: true,
+                              ),
+                              _buildTextField(
+                                label: 'YouTube',
+                                controller: _youtubeController,
+                                showArrow: true,
+                                hintText: 'Add YouTube to your profile',
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    _buildTextField(
-                      label: 'Username',
-                      controller: _usernameController,
-                      enabled: false,
-                      hintText: state.user.displayName.toLowerCase(),
-                    ),
-                    _buildTextField(
-                      label: 'Bio',
-                      controller: _bioController,
-                      showArrow: true,
-                      hintText: 'Add a bio to your profile',
-                      showBottomDivider: false,
-                      showBottomSpace: false,
-                    ),
-                    const Divider(height: 1, color: Colors.black12),
-                    _buildTextField(
-                      label: 'Instagram',
-                      controller: _instagramController,
-                      showArrow: true,
-                      hintText: 'Add Instagram to your profile',
-                      showTopSpace: true,
-                    ),
-                    _buildTextField(
-                      label: 'YouTube',
-                      controller: _youtubeController,
-                      showArrow: true,
-                      hintText: 'Add YouTube to your profile',
-                    ),
-                  ],
+                  ),
                 ),
               ),
+              if (isUpdating)
+                LoadingOverlay(
+                  isLoading: true,
+                  progress: uploadProgress,
+                  message: uploadProgress != null && uploadProgress < 1.0
+                      ? 'Uploading profile picture...'
+                      : 'Updating profile...',
+                ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -442,19 +530,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         if (showBottomDivider) Divider(height: 1, color: Colors.grey[300]),
         if (showBottomSpace) const SizedBox(height: 20),
       ],
-    );
-  }
-
-  // Show loading overlay
-  Widget _buildLoadingOverlay() {
-    if (!_isLoading) return const SizedBox.shrink();
-    return Container(
-      color: Colors.black54,
-      child: const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-        ),
-      ),
     );
   }
 }
