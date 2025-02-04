@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../video/screens/video_upload_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../feed/screens/feed_screen.dart';
+import '../../discover/screens/discover_screen.dart';
 import '../../auth/bloc/auth_bloc.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -53,7 +54,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         index: _selectedIndex,
         children: [
           FeedScreen(key: _feedKey, isVisible: _selectedIndex == 0), // Home
-          const Center(child: Text('Discover')), // Discover
+          const DiscoverScreen(), // Discover
           const SizedBox.shrink(), // Upload (placeholder)
           const Center(child: Text('Inbox')), // Inbox
           if (currentUser != null)
