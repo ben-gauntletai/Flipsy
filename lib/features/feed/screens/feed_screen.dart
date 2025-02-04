@@ -837,64 +837,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     }
   }
 
-  Future<void> _processLikeActionQueue() async {
-    if (_isProcessingQueue) return;
-
-    _isProcessingQueue = true;
-
-    while (_likeActionQueue.isNotEmpty) {
-      final action = _likeActionQueue.first;
-      print(
-          'VideoFeedItem: Processing like action: ${action.isLike ? 'like' : 'unlike'}');
-
-      try {
-        final success = action.isLike
-            ? await _videoService.likeVideo(widget.video.id)
-            : await _videoService.unlikeVideo(widget.video.id);
-
-        if (!success && mounted) {
-          print('VideoFeedItem: Action failed, reverting optimistic update');
-          // Revert the specific action that failed
-          setState(() {
-            _localLikesCount += action.isLike ? -1 : 1;
-            _localLikeState = !action.isLike;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to update like status'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      } catch (e) {
-        print('VideoFeedItem: Error processing like action: $e');
-        if (mounted) {
-          // Revert the specific action that failed
-          setState(() {
-            _localLikesCount += action.isLike ? -1 : 1;
-            _localLikeState = !action.isLike;
-          });
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Error updating like status'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      } finally {
-        _likeActionQueue.removeFirst();
-      }
-    }
-
-    _isProcessingQueue = false;
-  }
-
   Future<void> _handleLikeAction() async {
-    if (_isLiking) return;
-    _isLiking = true;
-
+    // Don't block new actions, just add them to queue
     final newLikeState = !_localLikeState;
     final action = _LikeAction(isLike: newLikeState);
 
@@ -909,9 +853,68 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
     // Add to queue and process
     _likeActionQueue.add(action);
-    await _processLikeActionQueue();
 
-    _isLiking = false;
+    // Start processing if not already processing
+    if (!_isProcessingQueue) {
+      await _processLikeActionQueue();
+    }
+  }
+
+  Future<void> _processLikeActionQueue() async {
+    if (_isProcessingQueue) return;
+
+    _isProcessingQueue = true;
+
+    try {
+      while (_likeActionQueue.isNotEmpty) {
+        final action = _likeActionQueue.first;
+        print(
+            'VideoFeedItem: Processing like action: ${action.isLike ? 'like' : 'unlike'}');
+
+        try {
+          final success = action.isLike
+              ? await _videoService.likeVideo(widget.video.id)
+              : await _videoService.unlikeVideo(widget.video.id);
+
+          if (!success && mounted) {
+            print('VideoFeedItem: Action failed, reverting optimistic update');
+            setState(() {
+              _localLikesCount += action.isLike ? -1 : 1;
+              _localLikeState = !action.isLike;
+            });
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to update like status'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        } catch (e) {
+          print('VideoFeedItem: Error processing like action: $e');
+          if (mounted) {
+            setState(() {
+              _localLikesCount += action.isLike ? -1 : 1;
+              _localLikeState = !action.isLike;
+            });
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Error updating like status'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        }
+
+        // Remove the processed action
+        if (_likeActionQueue.isNotEmpty) {
+          _likeActionQueue.removeFirst();
+        }
+      }
+    } finally {
+      _isProcessingQueue = false;
+    }
   }
 
   void _showHeartAnimation() {
@@ -1093,9 +1096,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
     print(
         'VideoFeedItem: Double tap detected, current like status: $_localLikeState');
-    if (!_localLikeState) {
-      _handleLikeAction();
-    }
+    _handleLikeAction();
   }
 
   void _handleLongPressStart(LongPressStartDetails details) {
