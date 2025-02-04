@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flipsy/features/auth/bloc/auth_bloc.dart';
 import 'package:flipsy/features/auth/screens/login_screen.dart';
-import 'package:flipsy/features/auth/screens/signup_screen.dart';
 import 'package:flipsy/services/auth_service.dart';
 import 'package:flipsy/firebase_options.dart';
+import 'package:flipsy/features/navigation/screens/main_navigation_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,23 +62,7 @@ class MyApp extends StatelessWidget {
               }
 
               if (state is Authenticated) {
-                return Scaffold(
-                  appBar: AppBar(
-                    title: const Text('Flipsy'),
-                    actions: [
-                      IconButton(
-                        icon: const Icon(Icons.logout),
-                        onPressed: () {
-                          context.read<AuthBloc>().add(SignOutRequested());
-                        },
-                        tooltip: 'Logout',
-                      ),
-                    ],
-                  ),
-                  body: const Center(
-                    child: Text('Authenticated! Main app coming soon...'),
-                  ),
-                );
+                return const MainNavigationScreen();
               }
 
               return const LoginScreen();

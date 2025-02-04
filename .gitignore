@@ -137,3 +137,5 @@ app.*.map.json
 !**/ios/**/default.mode2v3
 !**/ios/**/default.pbxuser
 !**/ios/**/default.perspectivev3
+profile_view.png
+front_page_tiktok.png

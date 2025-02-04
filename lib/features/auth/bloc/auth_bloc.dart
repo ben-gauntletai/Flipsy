@@ -38,6 +38,16 @@ class SignUpRequested extends AuthEvent {
 
 class SignOutRequested extends AuthEvent {}
 
+class ProfileUpdateRequested extends AuthEvent {
+  final String userId;
+  final Map<String, dynamic> data;
+
+  const ProfileUpdateRequested(this.userId, this.data);
+
+  @override
+  List<Object?> get props => [userId, data];
+}
+
 // States
 abstract class AuthState extends Equatable {
   const AuthState();
@@ -82,6 +92,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SignInRequested>(_onSignInRequested);
     on<SignUpRequested>(_onSignUpRequested);
     on<SignOutRequested>(_onSignOutRequested);
+    on<ProfileUpdateRequested>(_onProfileUpdateRequested);
 
     // Listen to auth state changes
     _authStateSubscription = _authService.authStateChanges.listen((user) async {
@@ -101,8 +112,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
               print('AuthBloc: User profile not found for uid: ${user.uid}');
               // If no profile exists, sign out and show error
               await _authService.signOut();
-              emit(
-                  AuthError('Profile not found. Please try signing in again.'));
+              emit(const AuthError(
+                  'Profile not found. Please try signing in again.'));
             }
           } else {
             print('AuthBloc: Already authenticated, skipping profile load');
@@ -111,8 +122,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           print('AuthBloc: Error loading user profile: $e');
           // If there's an error loading the profile, sign out and show error
           await _authService.signOut();
-          emit(
-              AuthError('Error loading profile. Please try signing in again.'));
+          emit(const AuthError(
+              'Error loading profile. Please try signing in again.'));
         }
       } else {
         print('AuthBloc: No authenticated user');
@@ -160,7 +171,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           errorMessage.contains('malformed') ||
           errorMessage.contains('invalid')) {
         print('AuthBloc: Emitting invalid credentials error');
-        emit(AuthError('Invalid email or password'));
+        emit(const AuthError('Invalid email or password'));
       } else {
         print('AuthBloc: Emitting general error');
         emit(AuthError(errorMessage));
@@ -190,17 +201,18 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
       if (errorMessage.contains('already in use') ||
           errorMessage.contains('already-exists')) {
-        emit(AuthError('This email is already registered'));
+        emit(const AuthError('This email is already registered'));
       } else if (errorMessage.contains('weak-password')) {
-        emit(AuthError('Please choose a stronger password'));
+        emit(const AuthError('Please choose a stronger password'));
       } else if (errorMessage.contains('invalid-email')) {
-        emit(AuthError('Please enter a valid email address'));
+        emit(const AuthError('Please enter a valid email address'));
       } else if (errorMessage.contains('display name') ||
           errorMessage.contains('already taken')) {
         // Pass through the original error message for display name issues
         emit(AuthError(e.toString().replaceAll('Exception: ', '')));
       } else {
-        emit(AuthError('An error occurred during signup. Please try again.'));
+        emit(const AuthError(
+            'An error occurred during signup. Please try again.'));
       }
     }
   }
@@ -213,6 +225,21 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       await _authService.signOut();
       emit(Unauthenticated());
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> _onProfileUpdateRequested(
+    ProfileUpdateRequested event,
+    Emitter<AuthState> emit,
+  ) async {
+    try {
+      await _authService.updateUserProfile(event.userId, event.data);
+      final updatedProfile = await _authService.getUserProfile(event.userId);
+      if (updatedProfile != null) {
+        emit(Authenticated(updatedProfile));
+      }
     } catch (e) {
       emit(AuthError(e.toString()));
     }

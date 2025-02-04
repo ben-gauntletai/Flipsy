@@ -109,7 +109,9 @@ class _SignupScreenState extends State<SignupScreen> {
       body: BlocListener<AuthBloc, AuthState>(
         listener: (context, state) {
           if (state is Authenticated) {
-            Navigator.of(context).pop();
+            if (mounted) {
+              Navigator.of(context).pop();
+            }
           } else if (state is AuthError) {
             String message = state.message.toLowerCase();
             setState(() {
@@ -129,12 +131,14 @@ class _SignupScreenState extends State<SignupScreen> {
                 _displayNameError = 'This display name is already taken';
               } else if (!message.contains('recaptcha') &&
                   !message.contains('appcheck')) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(state.message),
-                    backgroundColor: Colors.red,
-                  ),
-                );
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(state.message),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               }
             });
           }

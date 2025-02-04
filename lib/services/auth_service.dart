@@ -59,8 +59,10 @@ class AuthService {
     print('AuthService: Starting user creation via Cloud Function');
     try {
       // Check if display name is available first
+      print('AuthService: Checking display name availability: $displayName');
       final isAvailable = await isDisplayNameAvailable(displayName);
       if (!isAvailable) {
+        print('AuthService: Display name is already taken: $displayName');
         throw Exception('This display name is already taken');
       }
 
@@ -78,9 +80,12 @@ class AuthService {
 
       // Extract the UID from the Cloud Function result
       final uid = (result.data as Map<String, dynamic>)['uid'] as String;
+      print('AuthService: Extracted UID from result: $uid');
 
       // Wait for the user profile to be available in Firestore
+      print('AuthService: Waiting for user profile to be created in Firestore');
       final userProfile = await _waitForUserProfile(uid);
+      print('AuthService: User profile retrieved successfully');
 
       // Now attempt to sign in
       try {
@@ -106,12 +111,13 @@ class AuthService {
     }
   }
 
-  // Wait for user profile to be available in Firestore
+  // Wait for user profile to be available in Firestore with better error handling
   Future<UserModel> _waitForUserProfile(String uid) async {
     print('AuthService: Waiting for user profile to be available');
     final completer = Completer<UserModel>();
     int attempts = 0;
     const maxAttempts = 10;
+    const delayMs = 500; // 500ms delay between attempts
 
     Future<void> checkProfile() async {
       try {
@@ -124,24 +130,25 @@ class AuthService {
           completer.complete(profile);
         } else if (attempts >= maxAttempts) {
           print('AuthService: Max attempts reached, profile not found');
-          completer.completeError(Exception(
-              'Failed to create user profile after maximum attempts'));
+          completer.completeError(
+              Exception('Failed to create user profile. Please try again.'));
         } else {
-          print('AuthService: Profile not found, retrying in 200ms');
-          await Future.delayed(const Duration(milliseconds: 200));
+          print(
+              'AuthService: Profile not found, waiting ${delayMs}ms before next attempt');
+          await Future.delayed(const Duration(milliseconds: delayMs));
           await checkProfile();
         }
       } catch (e) {
+        print('AuthService: Error checking profile: $e');
         if (attempts >= maxAttempts) {
           completer.completeError(e);
         } else {
-          await Future.delayed(const Duration(milliseconds: 200));
+          await Future.delayed(const Duration(milliseconds: delayMs));
           await checkProfile();
         }
       }
     }
 
-    // Start checking for the profile
     await checkProfile();
     return completer.future;
   }
