@@ -89,6 +89,8 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
         commentText = commentText[0].toUpperCase() + commentText.substring(1);
       }
 
+      print(
+          'CommentBottomSheet: Submitting comment with replyToId: $_replyToId');
       await _commentService.addComment(
         widget.videoId,
         commentText,
@@ -126,13 +128,46 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
     _focusNode.unfocus();
   }
 
+  Widget _buildCommentsList(List<Comment> comments) {
+    // Filter to get only top-level comments
+    final topLevelComments =
+        comments.where((c) => c.replyToId == null).toList();
+
+    if (topLevelComments.isEmpty) {
+      return const Center(
+        child: Text(
+          'No comments yet',
+          style: TextStyle(color: Colors.white54),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: comments.length,
+      itemBuilder: (context, index) {
+        final comment = comments[index];
+        return _CommentItem(
+          comment: comment,
+          onReply: (username, commentId) {
+            setState(() {
+              _replyToId = commentId;
+              _replyToUsername = username;
+            });
+            _focusNode.requestFocus();
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
 
     return Column(
       children: [
-        // Header
+        // Header with comment count
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
@@ -143,12 +178,14 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              StreamBuilder<int>(
-                stream: _commentCountStream,
+              StreamBuilder<List<Comment>>(
+                stream: _commentStream,
                 builder: (context, snapshot) {
-                  final count = snapshot.data ?? 0;
+                  final comments = snapshot.data ?? [];
+                  final topLevelCount =
+                      comments.where((c) => c.replyToId == null).length;
                   return Text(
-                    '$count ${count == 1 ? 'comment' : 'comments'}',
+                    '$topLevelCount ${topLevelCount == 1 ? 'comment' : 'comments'}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -190,63 +227,36 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                 );
               }
 
-              final comments = snapshot.data!;
-              print(
-                  'CommentBottomSheet: Rendering ${comments.length} comments for video ${widget.videoId}');
-
-              if (comments.isEmpty) {
-                return const Center(
-                  child: Text(
-                    'No comments yet',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                );
-              }
-
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: comments.length,
-                itemBuilder: (context, index) {
-                  final comment = comments[index];
-                  return _CommentItem(
-                    comment: comment,
-                    onReply: (username) {
-                      setState(() {
-                        _replyToId = comment.id;
-                        _replyToUsername = username;
-                      });
-                      _focusNode.requestFocus();
-                    },
-                  );
-                },
-              );
+              return _buildCommentsList(snapshot.data!);
             },
           ),
         ),
 
-        // Input Section
-        if (widget.allowComments) ...[
-          if (_replyToUsername != null)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Colors.grey[900],
-              child: Row(
-                children: [
-                  Text(
-                    'Replying to @$_replyToUsername',
-                    style: const TextStyle(color: Colors.white54),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close,
-                        size: 16, color: Colors.white54),
-                    onPressed: _cancelReply,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                  ),
-                ],
-              ),
+        // Reply indicator
+        if (_replyToUsername != null)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            color: Colors.grey[900],
+            child: Row(
+              children: [
+                Text(
+                  'Replying to @$_replyToUsername',
+                  style: const TextStyle(color: Colors.white54),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon:
+                      const Icon(Icons.close, size: 16, color: Colors.white54),
+                  onPressed: _cancelReply,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
             ),
+          ),
+
+        // Comment input
+        if (widget.allowComments)
           Container(
             padding: EdgeInsets.fromLTRB(16, 8, 16, 8 + bottomPadding),
             decoration: BoxDecoration(
@@ -264,7 +274,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                     textCapitalization: TextCapitalization.sentences,
                     style: const TextStyle(color: Colors.white),
                     decoration: InputDecoration(
-                      hintText: 'Add a comment...',
+                      hintText: _replyToUsername != null
+                          ? 'Reply to @$_replyToUsername...'
+                          : 'Add a comment...',
                       hintStyle: const TextStyle(color: Colors.white54),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(20),
@@ -296,7 +308,6 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
               ],
             ),
           ),
-        ],
       ],
     );
   }
@@ -304,7 +315,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
 
 class _CommentItem extends StatelessWidget {
   final Comment comment;
-  final Function(String username) onReply;
+  final Function(String username, String commentId) onReply;
 
   const _CommentItem({
     Key? key,
@@ -323,7 +334,7 @@ class _CommentItem extends StatelessWidget {
 
         return Padding(
           padding: EdgeInsets.only(
-            left: 16 + (comment.depth * 20), // Indent replies
+            left: 16 + (comment.depth * 20),
             right: 16,
             top: 8,
             bottom: 8,
@@ -366,18 +377,34 @@ class _CommentItem extends StatelessWidget {
                             fontSize: 12,
                           ),
                         ),
-                        const SizedBox(width: 16),
-                        GestureDetector(
-                          onTap: () => onReply(username),
-                          child: const Text(
-                            'Reply',
-                            style: TextStyle(
+                        // Only show reply button for top-level comments
+                        if (comment.replyToId == null) ...[
+                          const SizedBox(width: 16),
+                          GestureDetector(
+                            onTap: () => onReply(username, comment.id),
+                            child: const Text(
+                              'Reply',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                        // Only show reply count for parent comments
+                        if (comment.replyToId == null &&
+                            comment.replyCount > 0) ...[
+                          const SizedBox(width: 16),
+                          Text(
+                            '${comment.replyCount} ${comment.replyCount == 1 ? 'reply' : 'replies'}',
+                            style: const TextStyle(
                               color: Colors.white54,
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ],
@@ -412,38 +439,58 @@ class _CommentLikeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final commentService = CommentService();
 
-    return StreamBuilder<bool>(
-      stream: commentService.watchCommentLikeStatus(videoId, commentId),
+    return StreamBuilder<Map<String, dynamic>>(
+      stream: commentService.watchCommentLikeInfo(videoId, commentId),
       builder: (context, snapshot) {
-        final isLiked = snapshot.data ?? false;
+        if (!snapshot.hasData) {
+          return const SizedBox(
+            width: 24,
+            child: Center(
+              child: SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              ),
+            ),
+          );
+        }
 
-        return Column(
-          children: [
-            IconButton(
-              icon: Icon(
-                isLiked ? Icons.favorite : Icons.favorite_border,
-                size: 16,
-                color: isLiked ? Colors.red : Colors.white54,
-              ),
-              onPressed: () {
-                if (isLiked) {
-                  commentService.unlikeComment(videoId, commentId);
-                } else {
-                  commentService.likeComment(videoId, commentId);
-                }
-              },
-              constraints: const BoxConstraints(),
-              padding: EdgeInsets.zero,
+        final isLiked = snapshot.data!['isLiked'] as bool;
+        final likesCount = snapshot.data!['likesCount'] as int;
+
+        return GestureDetector(
+          onTap: () async {
+            if (isLiked) {
+              await commentService.unlikeComment(videoId, commentId);
+            } else {
+              await commentService.likeComment(videoId, commentId);
+            }
+          },
+          child: SizedBox(
+            width: 24,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isLiked ? Icons.favorite : Icons.favorite_border,
+                  color: isLiked ? Colors.red : Colors.white,
+                  size: 20,
+                ),
+                if (likesCount > 0) const SizedBox(height: 1),
+                if (likesCount > 0)
+                  Text(
+                    '$likesCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      height: 1,
+                    ),
+                  ),
+              ],
             ),
-            const SizedBox(height: 2),
-            Text(
-              likesCount.toString(),
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.white54,
-              ),
-            ),
-          ],
+          ),
         );
       },
     );

@@ -9,6 +9,7 @@ class Comment {
   final int likesCount;
   final String? replyToId;
   final int depth;
+  final int replyCount;
 
   Comment({
     required this.id,
@@ -19,6 +20,7 @@ class Comment {
     required this.likesCount,
     this.replyToId,
     this.depth = 0,
+    this.replyCount = 0,
   });
 
   factory Comment.fromMap(String id, Map<String, dynamic> data) {
@@ -31,6 +33,7 @@ class Comment {
       likesCount: data['likesCount'] as int? ?? 0,
       replyToId: data['replyToId'] as String?,
       depth: data['depth'] as int? ?? 0,
+      replyCount: data['replyCount'] as int? ?? 0,
     );
   }
 
@@ -43,6 +46,7 @@ class Comment {
       'likesCount': likesCount,
       'replyToId': replyToId,
       'depth': depth,
+      'replyCount': replyCount,
     };
   }
 
@@ -55,6 +59,7 @@ class Comment {
     int? likesCount,
     String? replyToId,
     int? depth,
+    int? replyCount,
   }) {
     return Comment(
       id: id ?? this.id,
@@ -65,6 +70,7 @@ class Comment {
       likesCount: likesCount ?? this.likesCount,
       replyToId: replyToId ?? this.replyToId,
       depth: depth ?? this.depth,
+      replyCount: replyCount ?? this.replyCount,
     );
   }
 }

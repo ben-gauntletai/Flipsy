@@ -828,8 +828,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       if (mounted) {
         setState(() {
           _commentCount = count;
+          print(
+              'VideoFeedItem: Updated comment count to $_commentCount for video ${widget.video.id}');
         });
       }
+    }, onError: (error) {
+      print('VideoFeedItem: Error watching comment count: $error');
     });
   }
 
@@ -954,11 +958,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   @override
   void dispose() {
+    print('VideoFeedItem: Disposing video ${widget.video.id}');
+    _commentCountSubscription?.cancel();
     _doubleTapTimer?.cancel();
     _likeAnimationController.dispose();
     _likeStatusSubscription?.cancel();
     _initializationRetryTimer?.cancel();
-    _commentCountSubscription?.cancel();
     super.dispose();
   }
 

@@ -44,7 +44,8 @@ class CommentService {
   }
 
   Stream<List<Comment>> watchComments(String videoId) {
-    // Return existing subject if it exists and isn't closed
+    print('CommentService: Starting to watch comments for video $videoId');
+
     if (_commentSubjects.containsKey(videoId) &&
         !_commentSubjects[videoId]!.isClosed) {
       print('CommentService: Returning existing subject for video $videoId');
@@ -52,12 +53,9 @@ class CommentService {
     }
 
     print('CommentService: Creating new subject for video $videoId');
-
-    // Create a new BehaviorSubject
     final subject = BehaviorSubject<List<Comment>>();
     _commentSubjects[videoId] = subject;
 
-    // Set up the Firestore stream
     final subscription = _firestore
         .collection('videos')
         .doc(videoId)
@@ -65,58 +63,75 @@ class CommentService {
         .orderBy('createdAt', descending: true)
         .snapshots()
         .listen(
-      (snapshot) {
-        if (subject.isClosed) return; // Skip if subject is closed
+      (snapshot) async {
+        if (subject.isClosed) return;
 
         print(
-            'CommentService: Processing snapshot with ${snapshot.docs.length} comments for video $videoId');
+            'CommentService: Processing ${snapshot.docs.length} comments for video $videoId');
 
-        final List<Comment> comments = [];
-        final Set<String> processedIds = {};
+        try {
+          // First, create a map of all comments
+          final Map<String, Comment> commentsMap = {};
+          final Map<String, List<Comment>> repliesMap = {};
 
-        for (var doc in snapshot.docs) {
-          if (!processedIds.contains(doc.id)) {
-            processedIds.add(doc.id);
-            comments.add(Comment.fromMap(doc.id, doc.data()));
+          // Process all comments first
+          for (var doc in snapshot.docs) {
+            final comment = Comment.fromMap(doc.id, doc.data());
+            commentsMap[doc.id] = comment;
+
+            // Initialize replies list for parent comments
+            if (comment.replyToId == null) {
+              repliesMap[comment.id] = [];
+            }
+          }
+
+          // Organize replies under their parent comments
+          for (var comment in commentsMap.values) {
+            if (comment.replyToId != null &&
+                repliesMap.containsKey(comment.replyToId)) {
+              repliesMap[comment.replyToId]!.add(comment);
+            }
+          }
+
+          // Create final sorted list
+          final List<Comment> organizedComments = [];
+
+          // Add parent comments first
+          final parentComments = commentsMap.values
+              .where((c) => c.replyToId == null)
+              .toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+          // For each parent comment, add it and its replies
+          for (var parent in parentComments) {
+            organizedComments.add(parent);
+
+            // Sort replies by creation time and add them
+            final replies = repliesMap[parent.id] ?? [];
+            replies.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            organizedComments.addAll(replies);
+          }
+
+          print(
+              'CommentService: Emitting ${organizedComments.length} organized comments');
+          subject.add(organizedComments);
+        } catch (e) {
+          print('CommentService: Error processing comments: $e');
+          if (!subject.isClosed) {
+            subject.addError(e);
           }
         }
-
-        // Sort comments
-        comments.sort((a, b) {
-          if ((a.replyToId == null) != (b.replyToId == null)) {
-            return a.replyToId == null ? -1 : 1;
-          }
-
-          if (a.replyToId == b.replyToId) {
-            return b.createdAt.compareTo(a.createdAt);
-          }
-
-          return a.depth.compareTo(b.depth);
-        });
-
-        print(
-            'CommentService: Adding ${comments.length} comments to subject for video $videoId');
-        subject.add(comments);
       },
       onError: (error) {
-        print('CommentService: Error in stream for video $videoId: $error');
+        print('CommentService: Error in comment stream: $error');
         if (!subject.isClosed) {
           subject.addError(error);
         }
       },
     );
 
-    // Store the subscription
     _subscriptions[videoId] = subscription;
-
-    // Return the subject's stream with distinct operator
-    return subject.stream.distinct((previous, next) {
-      if (previous.length != next.length) return false;
-      for (int i = 0; i < previous.length; i++) {
-        if (previous[i].id != next[i].id) return false;
-      }
-      return true;
-    });
+    return subject.stream;
   }
 
   void disposeVideo(String videoId) {
@@ -262,9 +277,6 @@ class CommentService {
     if (_currentUserId.isEmpty) return false;
 
     try {
-      final batch = _firestore.batch();
-
-      // Add to comment's likes subcollection
       final likeRef = _firestore
           .collection('videos')
           .doc(videoId)
@@ -273,22 +285,17 @@ class CommentService {
           .collection('likes')
           .doc(_currentUserId);
 
-      batch.set(likeRef, {
+      final likeDoc = await likeRef.get();
+      if (likeDoc.exists) {
+        print('CommentService: User has already liked this comment');
+        return false;
+      }
+
+      await likeRef.set({
         'userId': _currentUserId,
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Increment comment's like count
-      final commentRef = _firestore
-          .collection('videos')
-          .doc(videoId)
-          .collection('comments')
-          .doc(commentId);
-      batch.update(commentRef, {
-        'likesCount': FieldValue.increment(1),
-      });
-
-      await batch.commit();
       return true;
     } catch (e) {
       print('CommentService: Error liking comment: $e');
@@ -301,9 +308,6 @@ class CommentService {
     if (_currentUserId.isEmpty) return false;
 
     try {
-      final batch = _firestore.batch();
-
-      // Remove from comment's likes subcollection
       final likeRef = _firestore
           .collection('videos')
           .doc(videoId)
@@ -312,19 +316,13 @@ class CommentService {
           .collection('likes')
           .doc(_currentUserId);
 
-      batch.delete(likeRef);
+      final likeDoc = await likeRef.get();
+      if (!likeDoc.exists) {
+        print('CommentService: User has not liked this comment');
+        return false;
+      }
 
-      // Decrement comment's like count
-      final commentRef = _firestore
-          .collection('videos')
-          .doc(videoId)
-          .collection('comments')
-          .doc(commentId);
-      batch.update(commentRef, {
-        'likesCount': FieldValue.increment(-1),
-      });
-
-      await batch.commit();
+      await likeRef.delete();
       return true;
     } catch (e) {
       print('CommentService: Error unliking comment: $e');
@@ -332,61 +330,42 @@ class CommentService {
     }
   }
 
-  // Check if user has liked a comment
-  Stream<bool> watchCommentLikeStatus(String videoId, String commentId) {
+  // Check if user has liked a comment and get like count
+  Stream<Map<String, dynamic>> watchCommentLikeInfo(
+      String videoId, String commentId) {
     if (_currentUserId.isEmpty) {
-      return Stream.value(false);
+      return Stream.value({'isLiked': false, 'likesCount': 0});
     }
 
-    return _firestore
+    final likesCollection = _firestore
         .collection('videos')
         .doc(videoId)
         .collection('comments')
         .doc(commentId)
-        .collection('likes')
-        .doc(_currentUserId)
-        .snapshots()
-        .map((doc) => doc.exists);
+        .collection('likes');
+
+    return likesCollection.snapshots().map((snapshot) {
+      final likesCount = snapshot.docs.length;
+      final isLiked = snapshot.docs.any((doc) => doc.id == _currentUserId);
+
+      // Update the comment's likesCount in Firestore
+      _firestore
+          .collection('videos')
+          .doc(videoId)
+          .collection('comments')
+          .doc(commentId)
+          .update({'likesCount': likesCount});
+
+      return {
+        'isLiked': isLiked,
+        'likesCount': likesCount,
+      };
+    });
   }
 
   Stream<int> watchCommentCount(String videoId) {
-    // Return existing subject if it exists and isn't closed
-    if (_commentCountSubjects.containsKey(videoId) &&
-        !_commentCountSubjects[videoId]!.isClosed) {
-      print(
-          'CommentService: Returning existing comment count subject for video $videoId');
-      return _commentCountSubjects[videoId]!.stream;
-    }
-
-    print(
-        'CommentService: Creating new comment count subject for video $videoId');
-
-    // Create a new BehaviorSubject for comment count
-    final subject = BehaviorSubject<int>();
-    _commentCountSubjects[videoId] = subject;
-
-    // Watch the comments collection for this video
-    _firestore
-        .collection('videos')
-        .doc(videoId)
-        .collection('comments')
-        .snapshots()
-        .listen(
-      (snapshot) {
-        if (!subject.isClosed) {
-          print(
-              'CommentService: Updating comment count for video $videoId: ${snapshot.docs.length}');
-          subject.add(snapshot.docs.length);
-        }
-      },
-      onError: (error) {
-        print('CommentService: Error watching comment count: $error');
-        if (!subject.isClosed) {
-          subject.addError(error);
-        }
-      },
-    );
-
-    return subject.stream.distinct();
+    return watchComments(videoId).map((comments) {
+      return comments.where((c) => c.replyToId == null).length;
+    });
   }
 }
