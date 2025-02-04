@@ -139,3 +139,5 @@ app.*.map.json
 !**/ios/**/default.perspectivev3
 profile_view.png
 front_page_tiktok.png
+post_tiktok.png
+tiktok_icons.png

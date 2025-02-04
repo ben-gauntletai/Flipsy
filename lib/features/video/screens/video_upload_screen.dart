@@ -17,6 +17,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   final TextEditingController _descriptionController = TextEditingController();
   File? _videoFile;
   bool _isUploading = false;
+  double _uploadProgress = 0.0;
   VideoPlayerController? _videoController;
   String? _error;
 
@@ -29,18 +30,34 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
 
   Future<void> _pickVideo() async {
     try {
+      print('Opening video picker');
       final ImagePicker picker = ImagePicker();
-      final XFile? video = await picker.pickVideo(source: ImageSource.gallery);
+      final XFile? video = await picker.pickVideo(
+        source: ImageSource.gallery,
+        maxDuration: const Duration(minutes: 10), // Limit video duration
+      );
 
       if (video != null) {
+        print('Video selected: ${video.path}');
+        final videoFile = File(video.path);
+
+        // Check file size (limit to 500MB)
+        final fileSize = await videoFile.length();
+        if (fileSize > 500 * 1024 * 1024) {
+          setState(() {
+            _error = 'Video file size must be less than 500MB';
+          });
+          return;
+        }
+
         setState(() {
-          _videoFile = File(video.path);
+          _videoFile = videoFile;
           _error = null;
         });
 
         // Initialize video player
         _videoController?.dispose();
-        _videoController = VideoPlayerController.file(_videoFile!)
+        _videoController = VideoPlayerController.file(videoFile)
           ..initialize().then((_) {
             setState(() {});
             _videoController?.play();
@@ -48,6 +65,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
           });
       }
     } catch (e) {
+      print('Error picking video: $e');
       setState(() {
         _error = 'Error picking video: $e';
       });
@@ -64,33 +82,37 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
 
     setState(() {
       _isUploading = true;
+      _uploadProgress = 0.0;
       _error = null;
     });
 
     try {
+      print('Starting video upload process');
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) throw Exception('User not logged in');
 
       // Get video metadata
+      print('Getting video metadata');
       final metadata = await _videoService.getVideoMetadata(_videoFile!);
+      print('Video metadata: $metadata');
 
       // Upload video file
+      print('Uploading video');
       final videoURL = await _videoService.uploadVideo(user.uid, _videoFile!);
-
-      // For now, we'll use a frame from the video as thumbnail
-      // In a production app, you'd want to generate a proper thumbnail
-      final thumbnailURL = videoURL; // Temporary solution
+      print('Video uploaded: $videoURL');
 
       // Create video document
+      print('Creating video document');
       await _videoService.createVideo(
         userId: user.uid,
         videoURL: videoURL,
-        thumbnailURL: thumbnailURL,
+        thumbnailURL: videoURL, // Using video URL as thumbnail for now
         duration: metadata['duration'],
         width: metadata['width'],
         height: metadata['height'],
         description: _descriptionController.text.trim(),
       );
+      print('Video document created successfully');
 
       // Navigate back or to feed
       if (mounted) {
@@ -100,12 +122,14 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         );
       }
     } catch (e) {
+      print('Error in upload process: $e');
       setState(() {
         _error = 'Error uploading video: $e';
       });
     } finally {
       setState(() {
         _isUploading = false;
+        _uploadProgress = 0.0;
       });
     }
   }
@@ -116,10 +140,10 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       appBar: AppBar(
         title: const Text('Upload Video'),
         actions: [
-          if (_videoFile != null)
+          if (_videoFile != null && !_isUploading)
             IconButton(
               icon: const Icon(Icons.check),
-              onPressed: _isUploading ? null : _uploadVideo,
+              onPressed: _uploadVideo,
             ),
         ],
       ),
@@ -162,11 +186,15 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   enabled: !_isUploading,
                 ),
               ],
-              if (_isUploading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16.0),
-                  child: Center(child: CircularProgressIndicator()),
+              if (_isUploading) ...[
+                const SizedBox(height: 16),
+                LinearProgressIndicator(value: _uploadProgress),
+                const SizedBox(height: 8),
+                const Center(
+                  child: Text('Uploading video...',
+                      style: TextStyle(fontStyle: FontStyle.italic)),
                 ),
+              ],
             ],
           ),
         ),
