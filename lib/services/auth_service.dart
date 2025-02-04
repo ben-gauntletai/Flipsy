@@ -31,6 +31,25 @@ class AuthService {
     }
   }
 
+  // Check if display name is available
+  Future<bool> isDisplayNameAvailable(String displayName) async {
+    try {
+      print('AuthService: Checking if display name is available: $displayName');
+      final querySnapshot = await _firestore
+          .collection('users')
+          .where('displayName', isEqualTo: displayName)
+          .get();
+
+      final isAvailable = querySnapshot.docs.isEmpty;
+      print(
+          'AuthService: Display name ${isAvailable ? 'is' : 'is not'} available');
+      return isAvailable;
+    } catch (e) {
+      print('AuthService: Error checking display name availability: $e');
+      throw Exception('Failed to check display name availability: $e');
+    }
+  }
+
   // Sign up with email and password using Cloud Function
   Future<UserModel> signUpWithEmailAndPassword({
     required String email,
@@ -39,6 +58,12 @@ class AuthService {
   }) async {
     print('AuthService: Starting user creation via Cloud Function');
     try {
+      // Check if display name is available first
+      final isAvailable = await isDisplayNameAvailable(displayName);
+      if (!isAvailable) {
+        throw Exception('This display name is already taken');
+      }
+
       print('AuthService: Getting Firebase Functions instance');
       final callable = _functions.httpsCallable('createUser');
       print('AuthService: Calling createUser function with email: $email');
@@ -168,9 +193,20 @@ class AuthService {
   Exception _handleAuthException(dynamic e) {
     print('AuthService: Handling auth exception: $e');
 
+    // If it's already our custom display name error, return it as is
+    if (e is Exception &&
+        (e.toString().contains('display name') ||
+            e.toString().contains('already taken'))) {
+      return e;
+    }
+
     if (e is FirebaseFunctionsException) {
       switch (e.code) {
         case 'already-exists':
+          final message = e.message?.toLowerCase() ?? '';
+          if (message.contains('display name')) {
+            return Exception('This display name is already taken');
+          }
           return Exception('The email address is already in use.');
         case 'invalid-argument':
           return Exception(e.message ?? 'Invalid input provided.');
@@ -198,6 +234,11 @@ class AuthService {
         default:
           return Exception(e.message ?? 'An unknown error occurred.');
       }
+    }
+
+    // If it's already an Exception, return it as is
+    if (e is Exception) {
+      return e;
     }
 
     return Exception('An unknown error occurred. Please try again.');

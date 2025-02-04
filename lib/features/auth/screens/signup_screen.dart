@@ -119,6 +119,14 @@ class _SignupScreenState extends State<SignupScreen> {
                 _passwordError = 'Please choose a stronger password';
               } else if (message.contains('invalid email')) {
                 _emailError = 'Please enter a valid email address';
+              } else if (message.contains('display name') &&
+                  message.contains('taken')) {
+                _displayNameError = 'This display name is already taken';
+              } else if (message.contains('username') &&
+                  message.contains('taken')) {
+                _displayNameError = 'This display name is already taken';
+              } else if (message.contains('already taken')) {
+                _displayNameError = 'This display name is already taken';
               } else if (!message.contains('recaptcha') &&
                   !message.contains('appcheck')) {
                 ScaffoldMessenger.of(context).showSnackBar(

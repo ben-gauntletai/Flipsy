@@ -26,7 +26,7 @@ interface SignUpData {
   displayName: string;
 }
 
-export const createUser = functions.https.onCall(async (request: functions.https.CallableRequest) => {
+export const createUser = functions.https.onCall(async (request) => {
   try {
     const data = request.data as SignUpData;
 
@@ -35,6 +35,20 @@ export const createUser = functions.https.onCall(async (request: functions.https
       throw new functions.https.HttpsError(
         "invalid-argument",
         "Email, password, and display name are required.",
+      );
+    }
+
+    // Check if display name is already taken
+    const displayNameQuery = await admin
+      .firestore()
+      .collection("users")
+      .where("displayName", "==", data.displayName)
+      .get();
+
+    if (!displayNameQuery.empty) {
+      throw new functions.https.HttpsError(
+        "already-exists",
+        "This display name is already taken.",
       );
     }
 

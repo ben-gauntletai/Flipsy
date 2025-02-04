@@ -195,6 +195,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         emit(AuthError('Please choose a stronger password'));
       } else if (errorMessage.contains('invalid-email')) {
         emit(AuthError('Please enter a valid email address'));
+      } else if (errorMessage.contains('display name') ||
+          errorMessage.contains('already taken')) {
+        // Pass through the original error message for display name issues
+        emit(AuthError(e.toString().replaceAll('Exception: ', '')));
       } else {
         emit(AuthError('An error occurred during signup. Please try again.'));
       }
