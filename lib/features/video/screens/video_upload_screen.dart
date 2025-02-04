@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/video_service.dart';
 import 'package:video_player/video_player.dart';
+import '../widgets/upload_progress_dialog.dart';
 
 class VideoUploadScreen extends StatefulWidget {
   const VideoUploadScreen({super.key});
@@ -16,18 +17,20 @@ class VideoUploadScreen extends StatefulWidget {
 class _VideoUploadScreenState extends State<VideoUploadScreen> {
   final VideoService _videoService = VideoService();
   final TextEditingController _descriptionController = TextEditingController();
+  final ValueNotifier<double> _progressNotifier = ValueNotifier<double>(0.0);
   File? _videoFile;
   bool _isUploading = false;
-  double _uploadProgress = 0.0;
   VideoPlayerController? _videoController;
   String? _error;
   bool _allowComments = true;
   String _privacy = 'Everyone';
+  bool _isCompleting = false;
 
   @override
   void dispose() {
     _descriptionController.dispose();
     _videoController?.dispose();
+    _progressNotifier.dispose();
     super.dispose();
   }
 
@@ -81,11 +84,14 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       return;
     }
 
+    // Pause the video during upload
+    _videoController?.pause();
+
     setState(() {
       _isUploading = true;
-      _uploadProgress = 0.0;
       _error = null;
     });
+    _progressNotifier.value = 0.0;
 
     try {
       print('Starting upload process');
@@ -96,38 +102,105 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       final metadata = await _videoService.getVideoMetadata(_videoFile!);
       print('Video metadata: $metadata');
 
+      // Show upload progress dialog
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return ValueListenableBuilder<double>(
+            valueListenable: _progressNotifier,
+            builder: (context, progress, _) {
+              return UploadProgressDialog(
+                progress: progress,
+                isCompleting: _isCompleting,
+                onCancel: () {
+                  Navigator.of(context).pop();
+                  _cancelUpload();
+                },
+              );
+            },
+          );
+        },
+      );
+
       print('Uploading video');
-      final videoURL = await _videoService.uploadVideo(user.uid, _videoFile!);
+      final videoURL = await _videoService.uploadVideo(
+        user.uid,
+        _videoFile!,
+        onProgress: (progress) {
+          print('Progress callback received: $progress');
+          _progressNotifier.value = progress;
+          print(
+              'Upload progress updated: ${(progress * 100).toStringAsFixed(2)}%');
+        },
+        onCanceled: () {
+          if (mounted) {
+            Navigator.of(context).pop(); // Close progress dialog
+            Navigator.of(context).pop(); // Return to previous screen
+          }
+        },
+      );
       print('Video uploaded: $videoURL');
+
+      // Update completing state
+      if (mounted) {
+        setState(() {
+          _isCompleting = true;
+        });
+      }
 
       print('Creating video document');
       await _videoService.createVideo(
         userId: user.uid,
         videoURL: videoURL,
-        thumbnailURL: videoURL,
         duration: metadata['duration'],
         width: metadata['width'],
         height: metadata['height'],
         description: _descriptionController.text.trim(),
+        videoFile: _videoFile,
       );
       print('Video document created successfully');
 
       if (mounted) {
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(); // Close progress dialog
+        Navigator.of(context).pop(); // Return to previous screen
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video uploaded successfully!')),
         );
       }
     } catch (e) {
       print('Error in upload process: $e');
-      setState(() {
-        _error = 'Error uploading video: $e';
-      });
+      if (mounted) {
+        Navigator.of(context).pop(); // Close progress dialog
+        setState(() {
+          _error = 'Error uploading video: $e';
+        });
+      }
     } finally {
-      setState(() {
-        _isUploading = false;
-        _uploadProgress = 0.0;
-      });
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _isCompleting = false;
+        });
+      }
+      // Resume video playback if upload was canceled
+      if (_videoController?.value.isInitialized ?? false) {
+        _videoController?.play();
+      }
+    }
+  }
+
+  void _cancelUpload() {
+    // The upload will be canceled in the VideoService
+    setState(() {
+      _isUploading = false;
+      _error = 'Upload canceled';
+    });
+    _progressNotifier.value = 0.0;
+    // Resume video playback
+    if (_videoController?.value.isInitialized ?? false) {
+      _videoController?.play();
     }
   }
 

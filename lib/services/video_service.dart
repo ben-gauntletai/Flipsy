@@ -1,27 +1,68 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/video.dart';
+import 'package:uuid/uuid.dart';
 
 class VideoService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
   // Upload a video file to Firebase Storage
-  Future<String> uploadVideo(String userId, File videoFile) async {
+  Future<String> uploadVideo(
+    String userId,
+    File videoFile, {
+    Function(double)? onProgress,
+    Function()? onCanceled,
+  }) async {
+    UploadTask? uploadTask;
     try {
-      final String fileName =
-          '${DateTime.now().millisecondsSinceEpoch}_$userId.mp4';
-      final Reference ref = _storage.ref().child('videos/$userId/$fileName');
+      final fileName = '${const Uuid().v4()}.mp4';
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('users/$userId/videos/$fileName');
 
-      final UploadTask uploadTask = ref.putFile(videoFile);
-      final TaskSnapshot snapshot = await uploadTask;
+      // Create metadata
+      final metadata = SettableMetadata(
+        contentType: 'video/mp4',
+        customMetadata: {'userId': userId},
+      );
 
-      return await snapshot.ref.getDownloadURL();
+      // Upload with metadata
+      uploadTask = storageRef.putFile(videoFile, metadata);
+
+      // Monitor upload progress
+      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+        final progress = snapshot.bytesTransferred / snapshot.totalBytes;
+        onProgress?.call(progress);
+        print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
+      }, onError: (error) {
+        print('Error in upload stream: $error');
+        if (error.toString().contains('canceled')) {
+          onCanceled?.call();
+        }
+      });
+
+      // Wait for upload to complete and get download URL
+      final snapshot = await uploadTask;
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      print('Video uploaded successfully: $downloadUrl');
+      return downloadUrl;
     } catch (e) {
       print('Error uploading video: $e');
-      throw Exception('Failed to upload video');
+      // Check if the error is due to cancellation
+      if (e.toString().contains('canceled')) {
+        uploadTask?.cancel();
+        onCanceled?.call();
+        throw Exception('Upload canceled');
+      }
+      throw Exception('Failed to upload video: $e');
     }
   }
 
@@ -43,17 +84,71 @@ class VideoService {
     }
   }
 
+  // Generate a thumbnail from the first frame of the video
+  Future<String> generateAndUploadThumbnail(
+      String userId, File videoFile) async {
+    try {
+      // Generate thumbnail using video_thumbnail package
+      final tempDir = await getTemporaryDirectory();
+      final thumbnailPath = '${tempDir.path}/${const Uuid().v4()}.jpg';
+
+      // Generate the thumbnail
+      final thumbnailFile = await VideoThumbnail.thumbnailFile(
+        video: videoFile.path,
+        thumbnailPath: thumbnailPath,
+        imageFormat: ImageFormat.JPEG,
+        maxHeight: 720,
+        quality: 75,
+      );
+
+      if (thumbnailFile == null) {
+        throw Exception('Failed to generate thumbnail');
+      }
+
+      // Upload the thumbnail
+      final fileName = '${const Uuid().v4()}.jpg';
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('users/$userId/thumbnails/$fileName');
+
+      final metadata = SettableMetadata(
+        contentType: 'image/jpeg',
+        customMetadata: {'userId': userId},
+      );
+
+      await storageRef.putFile(File(thumbnailFile), metadata);
+      final thumbnailUrl = await storageRef.getDownloadURL();
+
+      // Clean up
+      await File(thumbnailFile).delete();
+
+      return thumbnailUrl;
+    } catch (e) {
+      print('Error generating thumbnail: $e');
+      throw Exception('Failed to generate thumbnail: $e');
+    }
+  }
+
   // Create a new video document in Firestore
   Future<Video> createVideo({
     required String userId,
     required String videoURL,
-    required String thumbnailURL,
     required double duration,
     required int width,
     required int height,
     String? description,
+    File? videoFile,
   }) async {
     try {
+      // Generate and upload thumbnail if video file is provided
+      String thumbnailURL;
+      if (videoFile != null) {
+        thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
+      } else {
+        // Fallback to video URL if no file provided
+        thumbnailURL = videoURL;
+      }
+
       final videoData = {
         'userId': userId,
         'videoURL': videoURL,
@@ -77,7 +172,7 @@ class VideoService {
       return Video.fromFirestore(doc);
     } catch (e) {
       print('Error creating video document: $e');
-      throw Exception('Failed to create video document');
+      throw Exception('Failed to create video document: $e');
     }
   }
 
