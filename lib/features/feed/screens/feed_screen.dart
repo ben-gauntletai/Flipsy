@@ -18,10 +18,16 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
+  final String? initialVideoId;
+  final bool showBackButton;
+  final VoidCallback? onBack;
 
   const FeedScreen({
     Key? key,
     this.isVisible = true,
+    this.initialVideoId,
+    this.showBackButton = false,
+    this.onBack,
   }) : super(key: key);
 
   @override
@@ -313,6 +319,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   int _currentPage = 0;
   Set<String> _processedVideoIds = {}; // Track processed video IDs
   String? _targetVideoId; // Add this property to track target video
+  bool _hasInitializedControllers = false;
 
   @override
   void initState() {
@@ -321,8 +328,73 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _pageController = PageController();
     _controllerManager = VideoControllerManager();
+    if (widget.initialVideoId != null) {
+      _targetVideoId = widget.initialVideoId;
+    }
     _loadVideos();
     _pageController.addListener(_onPageChanged);
+
+    // Add post-frame callback to handle initialization
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeAfterBuild();
+    });
+  }
+
+  Future<void> _initializeAfterBuild() async {
+    if (_videos.isEmpty || _hasInitializedControllers) return;
+
+    try {
+      print('FeedScreen: Starting post-build initialization');
+      await _controllerManager.updateCurrentIndex(_currentPage, _videos);
+      print('FeedScreen: Post-build controller initialization completed');
+
+      if (mounted) {
+        setState(() {
+          _hasInitializedControllers = true;
+        });
+
+        if (_targetVideoId != null) {
+          final targetIndex = _videos.indexWhere((v) => v.id == _targetVideoId);
+          if (targetIndex != -1) {
+            print('FeedScreen: Jumping to target video at index $targetIndex');
+            await Future.delayed(const Duration(milliseconds: 100));
+            if (mounted) {
+              _pageController.jumpToPage(targetIndex);
+              _targetVideoId = null;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('FeedScreen: Error in post-build initialization: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Error initializing video: $e';
+        });
+      }
+    }
+  }
+
+  Future<void> _initializeControllers() async {
+    if (_videos.isNotEmpty && !_hasInitializedControllers) {
+      try {
+        print('FeedScreen: Starting initial controller initialization');
+        await _controllerManager.updateCurrentIndex(_currentPage, _videos);
+        print('FeedScreen: Controller initialization completed successfully');
+        if (mounted) {
+          setState(() {
+            _hasInitializedControllers = true;
+          });
+        }
+      } catch (e) {
+        print('FeedScreen: Error initializing controllers: $e');
+        if (mounted) {
+          setState(() {
+            _error = 'Error initializing video: $e';
+          });
+        }
+      }
+    }
   }
 
   @override
@@ -429,11 +501,6 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           _videoService.getVideoFeed(limit: 5).listen((videos) async {
         print('FeedScreen: Received ${videos.length} videos from stream');
 
-        // Debug current state
-        print(
-            'FeedScreen: Current video IDs: ${_videos.map((v) => v.id).toList()}');
-        print('FeedScreen: New video IDs: ${videos.map((v) => v.id).toList()}');
-
         if (videos.isNotEmpty) {
           _lastDocument = await _videoService.getLastDocument(videos.last.id);
           print('FeedScreen: Got last document for pagination');
@@ -483,37 +550,10 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             print('FeedScreen: Updated state with ${_videos.length} videos');
             print(
                 'FeedScreen: Final video IDs: ${_videos.map((v) => v.id).toList()}');
-
-            // Check if we need to jump to a specific video
-            if (_targetVideoId != null) {
-              final targetIndex =
-                  _videos.indexWhere((v) => v.id == _targetVideoId);
-              if (targetIndex != -1) {
-                print(
-                    'FeedScreen: Found target video at index $targetIndex, jumping to it');
-                _pageController.jumpToPage(targetIndex);
-                _targetVideoId = null; // Clear the target
-              }
-            }
           });
 
-          // Pre-initialize controllers for the first few videos
-          if (_videos.isNotEmpty) {
-            try {
-              print('FeedScreen: Starting controller initialization');
-              await _controllerManager.updateCurrentIndex(
-                  _currentPage, _videos);
-              print(
-                  'FeedScreen: Controller initialization completed successfully');
-            } catch (e) {
-              print('FeedScreen: Error initializing controllers: $e');
-              if (mounted) {
-                setState(() {
-                  _error = 'Error initializing video: $e';
-                });
-              }
-            }
-          }
+          // Initialize controllers
+          await _initializeControllers();
         }
       }, onError: (error) {
         print('FeedScreen: Error loading videos: $error');
@@ -666,6 +706,18 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   getController: _controllerManager.getController,
                 );
               },
+            ),
+          if (widget.showBackButton)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              left: 8,
+              child: IconButton(
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: Colors.white,
+                ),
+                onPressed: widget.onBack,
+              ),
             ),
 
           // Top Navigation (Following/For You)

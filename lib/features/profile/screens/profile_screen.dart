@@ -7,6 +7,7 @@ import '../../../models/video.dart';
 import 'edit_profile_screen.dart';
 import '../../../widgets/user_avatar.dart';
 import '../../../services/user_service.dart';
+import '../../feed/screens/feed_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String? userId; // If null, show current user's profile
@@ -242,7 +243,17 @@ class ProfileScreen extends StatelessWidget {
                             final video = videos[index];
                             return GestureDetector(
                               onTap: () {
-                                // TODO: Implement video playback
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (context) => FeedScreen(
+                                      initialVideoId: video.id,
+                                      showBackButton: true,
+                                      onBack: () {
+                                        Navigator.of(context).pop();
+                                      },
+                                    ),
+                                  ),
+                                );
                               },
                               child: Stack(
                                 fit: StackFit.expand,
