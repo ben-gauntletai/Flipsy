@@ -14,13 +14,6 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
 
-  static const List<Widget> _screens = [
-    FeedScreen(), // Feed screen
-    Center(child: Text('Search')), // Placeholder for Search screen
-    Center(child: Text('Upload')), // Placeholder for Upload screen
-    ProfileScreen(), // Profile screen
-  ];
-
   void _onItemTapped(int index) {
     if (index == 2) {
       // If upload button is tapped, show upload screen
@@ -46,10 +39,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          FeedScreen(isVisible: _selectedIndex == 0), // Feed screen
-          const Center(child: Text('Search')), // Placeholder for Search screen
-          const Center(child: Text('Upload')), // Placeholder for Upload screen
-          const ProfileScreen(), // Profile screen
+          FeedScreen(isVisible: _selectedIndex == 0), // Home
+          const Center(child: Text('Search')), // Discover
+          const Center(child: Text('Upload')), // Upload
+          const Center(child: Text('Inbox')), // Inbox
+          const ProfileScreen(), // Profile
         ],
       ),
       bottomNavigationBar: Container(
