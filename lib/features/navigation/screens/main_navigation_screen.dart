@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../video/screens/video_upload_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../feed/screens/feed_screen.dart';
+import '../../auth/bloc/auth_bloc.dart';
 
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
@@ -47,6 +49,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final authState = context.watch<AuthBloc>().state;
+    final currentUser = authState is Authenticated ? authState.user : null;
+
     return Scaffold(
       body: IndexedStack(
         index: _selectedIndex,
@@ -55,7 +60,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           const Center(child: Text('Discover')), // Discover
           const SizedBox.shrink(), // Upload (placeholder)
           const Center(child: Text('Inbox')), // Inbox
-          const Center(child: Text('Profile')), // Profile
+          if (currentUser != null)
+            ProfileScreen() // Current user's profile
+          else
+            const Center(child: CircularProgressIndicator()),
         ],
       ),
       bottomNavigationBar: Theme(

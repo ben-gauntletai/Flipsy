@@ -159,6 +159,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         height: metadata['height'],
         description: _descriptionController.text.trim(),
         videoFile: _videoFile,
+        allowComments: _allowComments,
       );
       print('Video document created successfully with ID: ${video.id}');
 
@@ -441,8 +442,11 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   const Divider(height: 1),
                   SwitchListTile(
                     value: _allowComments,
-                    onChanged: (value) =>
-                        setState(() => _allowComments = value),
+                    onChanged: (bool value) {
+                      setState(() {
+                        _allowComments = value;
+                      });
+                    },
                     title: const Text('Allow comments'),
                     contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 12),

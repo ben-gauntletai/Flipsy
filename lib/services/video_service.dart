@@ -110,6 +110,7 @@ class VideoService {
     required int height,
     String? description,
     File? videoFile,
+    required bool allowComments,
   }) async {
     try {
       print('VideoService: Creating new video document');
@@ -142,6 +143,7 @@ class VideoService {
         'width': width,
         'height': height,
         'status': 'active',
+        'allowComments': allowComments,
       };
 
       print('VideoService: Creating document with data: $videoData');
@@ -525,5 +527,13 @@ class VideoService {
         .doc(videoId)
         .snapshots()
         .map((doc) => doc.exists);
+  }
+
+  Stream<int> watchVideoCommentCount(String videoId) {
+    return _firestore
+        .collection('videos')
+        .doc(videoId)
+        .snapshots()
+        .map((snapshot) => (snapshot.data()?['commentsCount'] as int?) ?? 0);
   }
 }

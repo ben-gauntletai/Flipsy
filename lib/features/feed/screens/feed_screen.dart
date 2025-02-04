@@ -11,6 +11,10 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:collection';
 import 'dart:math' as math;
 import '../../../features/video/screens/video_upload_screen.dart';
+import '../widgets/comment_bottom_sheet.dart';
+import '../../../services/comment_service.dart';
+import '../../../features/auth/bloc/auth_bloc.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -296,6 +300,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   late PageController _pageController;
   final VideoService _videoService = VideoService();
   final UserService _userService = UserService();
+  final CommentService _commentService = CommentService();
   List<Video> _videos = [];
   Map<String, Map<String, dynamic>> _usersData = {};
   bool _isLoading = false;
@@ -1065,20 +1070,21 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   // Profile Picture Navigation
   void _navigateToProfile(BuildContext context) {
     // Pause video before navigating
-    _videoController?.pause();
-    _isPlaying = false;
+    if (_videoController != null && _isPlaying) {
+      _videoController!.pause();
+      _isPlaying = false;
+    }
 
-    Navigator.push(
-      context,
+    Navigator.of(context)
+        .push(
       MaterialPageRoute(
-        builder: (context) => ProfileScreen(
-          userId: widget.video.userId,
-        ),
+        builder: (context) => ProfileScreen(userId: widget.video.userId),
       ),
-    ).then((_) {
+    )
+        .then((_) {
       // Resume video if the feed is still visible when returning
-      if (widget.isVisible && mounted) {
-        _videoController?.play();
+      if (widget.isVisible && mounted && _videoController != null) {
+        _videoController!.play();
         _isPlaying = true;
       }
     });
@@ -1114,6 +1120,27 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     }
     Future.delayed(const Duration(milliseconds: 200), () {
       _isLongPressing = false;
+    });
+  }
+
+  void _showComments(BuildContext context) {
+    // Pause video while comments are shown
+    if (_videoController != null && _isPlaying) {
+      _videoController!.pause();
+      _isPlaying = false;
+    }
+
+    CommentBottomSheet.show(
+      context,
+      widget.video.id,
+      VideoService().watchVideoCommentCount(widget.video.id),
+      widget.video.allowComments,
+    ).then((_) {
+      // Resume video when comments are closed
+      if (widget.isVisible && mounted && _videoController != null) {
+        _videoController!.play();
+        _isPlaying = true;
+      }
     });
   }
 
@@ -1263,6 +1290,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   icon: FontAwesomeIcons.solidComment,
                   label: widget.video.commentsCount.toString(),
                   iconSize: 28,
+                  onTap: () => _showComments(context),
                 ),
                 const SizedBox(height: 15),
 

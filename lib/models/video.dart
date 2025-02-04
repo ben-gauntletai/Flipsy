@@ -16,6 +16,7 @@ class Video {
   final int height;
   final String status;
   final Map<String, dynamic>? aiEnhancements;
+  final bool allowComments;
 
   Video({
     required this.id,
@@ -33,6 +34,7 @@ class Video {
     required this.height,
     required this.status,
     this.aiEnhancements,
+    this.allowComments = true,
   });
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
@@ -41,21 +43,25 @@ class Video {
     print('Video.fromFirestore: Raw createdAt: ${data['createdAt']}');
     print('Video.fromFirestore: Raw updatedAt: ${data['updatedAt']}');
 
-    // Handle timestamps
-    DateTime createdAt;
-    DateTime updatedAt;
+    final createdAtTimestamp = data['createdAt'];
+    final updatedAtTimestamp = data['updatedAt'];
 
-    try {
-      createdAt = (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now();
-      updatedAt = (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now();
-    } catch (e) {
-      print('Video.fromFirestore: Error converting timestamps: $e');
+    final DateTime createdAt;
+    final DateTime updatedAt;
+
+    if (createdAtTimestamp is Timestamp) {
+      createdAt = createdAtTimestamp.toDate();
+    } else {
       createdAt = DateTime.now();
-      updatedAt = DateTime.now();
+      print('Video.fromFirestore: Using current time for createdAt');
     }
 
-    print('Video.fromFirestore: Converted createdAt: $createdAt');
-    print('Video.fromFirestore: Converted updatedAt: $updatedAt');
+    if (updatedAtTimestamp is Timestamp) {
+      updatedAt = updatedAtTimestamp.toDate();
+    } else {
+      updatedAt = DateTime.now();
+      print('Video.fromFirestore: Using current time for updatedAt');
+    }
 
     return Video(
       id: doc.id,
@@ -73,6 +79,7 @@ class Video {
       height: (data['height'] as num?)?.toInt() ?? 0,
       status: data['status'] as String? ?? 'active',
       aiEnhancements: data['aiEnhancements'] as Map<String, dynamic>?,
+      allowComments: data['allowComments'] as bool? ?? true,
     );
   }
 
@@ -96,6 +103,7 @@ class Video {
       'height': height,
       'status': status,
       'aiEnhancements': aiEnhancements,
+      'allowComments': allowComments,
     };
   }
 
@@ -115,6 +123,7 @@ class Video {
     int? height,
     String? status,
     Map<String, dynamic>? aiEnhancements,
+    bool? allowComments,
   }) {
     return Video(
       id: id ?? this.id,
@@ -132,6 +141,7 @@ class Video {
       height: height ?? this.height,
       status: status ?? this.status,
       aiEnhancements: aiEnhancements ?? this.aiEnhancements,
+      allowComments: allowComments ?? this.allowComments,
     );
   }
 }

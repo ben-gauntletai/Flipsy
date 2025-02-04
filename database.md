@@ -17,6 +17,7 @@ Collection of all videos in the application.
 - **commentsCount**: number
 - **shareCount**: number
 - **views**: number
+- **allowComments**: boolean (default: true)
 
 ### users
 Collection of all users in the application.
@@ -59,10 +60,25 @@ Subcollection of videos to store user comments.
 ```typescript
 {
   userId: string;         // Reference to users/{userId}
-  text: string;
-  createdAt: timestamp;
-  updatedAt: timestamp;
-  likesCount: number;
+  text: string;          // Comment text content
+  createdAt: timestamp;  // When the comment was created
+  updatedAt: timestamp;  // When the comment was last updated
+  likesCount: number;    // Number of likes on this comment
+  replyToId: string;     // ID of parent comment if this is a reply (optional)
+  replyCount: number;    // Number of replies to this comment
+  mentions: string[];    // Array of mentioned user IDs
+  depth: number;         // Nesting level (0 for top-level comments)
+}
+```
+
+### commentLikes
+Subcollection of comments to track user likes on comments.
+
+**Path:** `videos/{videoId}/comments/{commentId}/likes/{userId}`
+```typescript
+{
+  userId: string;         // Reference to users/{userId}
+  createdAt: timestamp;  // When the like was created
 }
 ```
 

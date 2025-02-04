@@ -42,4 +42,12 @@ class UserService {
   void clearCache() {
     _userCache.clear();
   }
+
+  Stream<Map<String, dynamic>> watchUserData(String userId) {
+    return _firestore
+        .collection('users')
+        .doc(userId)
+        .snapshots()
+        .map((snapshot) => snapshot.data() as Map<String, dynamic>? ?? {});
+  }
 }

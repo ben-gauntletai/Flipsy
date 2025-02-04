@@ -67,6 +67,10 @@ dependencies:
   path: ^1.8.3
   uuid: ^4.2.2
 
+  # Comment system
+  flutter_mentions: ^2.0.1
+  timeago: ^3.6.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
