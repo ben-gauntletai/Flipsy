@@ -4,6 +4,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/video_service.dart';
 import '../../../services/user_service.dart';
 import '../../../models/video.dart';
+import 'dart:async';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -265,6 +266,8 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
   bool _isPlaying = true;
   bool _isMuted = false;
   bool _showMuteIcon = false;
+  bool _isHolding = false;
+  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -352,16 +355,37 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     final String? avatarURL = widget.userData?['avatarURL'];
 
     return GestureDetector(
-      onTap: () {
+      onTapDown: (details) {
         if (widget.isVisible) {
-          _toggleMute();
+          _tapDownTime = DateTime.now();
         }
       },
-      onDoubleTap: () {
-        if (widget.isVisible) {
-          _togglePlay();
+      onTapUp: (details) {
+        if (widget.isVisible && _tapDownTime != null) {
+          final tapDuration = DateTime.now().difference(_tapDownTime!);
+          if (tapDuration.inMilliseconds < 200) {
+            // Short tap - toggle mute
+            _toggleMute();
+          }
+          _tapDownTime = null;
         }
       },
+      onLongPressDown: (details) {
+        if (widget.isVisible) {
+          _videoController.pause();
+        }
+      },
+      onLongPressUp: () {
+        if (widget.isVisible) {
+          _videoController.play();
+        }
+      },
+      onLongPressCancel: () {
+        if (widget.isVisible) {
+          _videoController.play();
+        }
+      },
+      behavior: HitTestBehavior.opaque,
       child: Stack(
         children: [
           // Video Player
