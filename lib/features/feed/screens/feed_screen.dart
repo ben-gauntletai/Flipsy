@@ -209,34 +209,6 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-                // Live indicator
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.red,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.live_tv,
-                        color: Colors.white,
-                        size: 12,
-                      ),
-                      SizedBox(width: 4),
-                      Text(
-                        'LIVE',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
@@ -437,7 +409,7 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
           // Right Side Action Buttons
           Positioned(
             right: 8,
-            bottom: 100,
+            bottom: 20,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -475,17 +447,18 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
                 const SizedBox(height: 15),
 
                 // More Button
-                Container(
-                  width: 45,
-                  height: 45,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(
-                    Icons.more_horiz,
-                    color: Colors.white,
-                    size: 20,
+                GestureDetector(
+                  onTap: () {
+                    // Add your more options logic here
+                  },
+                  child: const SizedBox(
+                    width: 45,
+                    height: 45,
+                    child: Icon(
+                      Icons.more_horiz,
+                      color: Colors.white,
+                      size: 20,
+                    ),
                   ),
                 ),
               ],
