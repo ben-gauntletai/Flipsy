@@ -19,32 +19,28 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   void _onItemTapped(int index) {
     if (index == 2) {
-      // If upload button is tapped, show upload screen
-      _onUploadTapped();
-    } else {
-      setState(() {
-        _selectedIndex = index;
+      // More/Upload button
+      Navigator.push<String>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const VideoUploadScreen(),
+        ),
+      ).then((videoId) {
+        // If we got a video ID back, ensure we're on the feed screen and jump to the video
+        if (videoId != null && mounted) {
+          setState(() {
+            _selectedIndex = 0; // Switch to feed screen
+          });
+          // Use the GlobalKey to access the FeedScreen state
+          _feedKey.currentState?.jumpToVideo(videoId);
+        }
       });
+      return;
     }
-  }
 
-  void _onUploadTapped() async {
-    // Navigate to upload screen and wait for result
-    final videoId = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (context) => const VideoUploadScreen(),
-      ),
-    );
-
-    // If we got a video ID back, ensure we're on the feed screen and jump to the video
-    if (videoId != null && mounted) {
-      setState(() {
-        _selectedIndex = 0; // Switch to feed screen
-      });
-
-      // Use the GlobalKey to access the FeedScreen state
-      _feedKey.currentState?.jumpToVideo(videoId);
-    }
+    setState(() {
+      _selectedIndex = index;
+    });
   }
 
   @override
@@ -92,9 +88,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               label: 'Discover',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.add_box_outlined),
-              activeIcon: Icon(Icons.add_box),
-              label: 'Upload',
+              icon: Icon(Icons.more_horiz),
+              activeIcon: Icon(Icons.more_horiz),
+              label: 'More',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.inbox_outlined),

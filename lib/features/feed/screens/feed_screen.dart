@@ -715,25 +715,6 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          // Navigate to upload screen and wait for result
-          final videoId = await Navigator.push<String>(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const VideoUploadScreen(),
-            ),
-          );
-
-          // If we got a video ID back, jump to that video
-          if (videoId != null && mounted) {
-            print('FeedScreen: Received uploaded video ID: $videoId');
-            jumpToVideo(videoId);
-          }
-        },
-        backgroundColor: const Color(0xFFFF2B55),
-        child: const Icon(Icons.add),
-      ),
     );
   }
 }
@@ -870,9 +851,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     setState(() {
       _localLikeState = newLikeState;
       _localLikesCount += newLikeState ? 1 : -1;
-      if (newLikeState) {
-        _showHeartAnimation();
-      }
+      _showHeartAnimation(isLike: newLikeState);
     });
 
     // Add to queue and process
@@ -941,7 +920,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     }
   }
 
-  void _showHeartAnimation() {
+  void _showHeartAnimation({required bool isLike}) {
     setState(() {
       _showLikeAnimation = true;
     });
@@ -1266,9 +1245,9 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                     curve: Curves.elasticOut,
                   ),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.favorite,
-                  color: Colors.white,
+                  color: _localLikeState ? Colors.red : Colors.white,
                   size: 100,
                 ),
               ),
