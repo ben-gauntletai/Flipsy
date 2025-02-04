@@ -91,10 +91,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
           // Only load profile if we're not already authenticated
           if (state is! Authenticated) {
-            // Add a delay to ensure Firestore has completed writing
-            await Future.delayed(const Duration(milliseconds: 1500));
-
-            // Try to get the user profile
+            print('AuthBloc: Loading user profile');
             final userProfile = await _authService.getUserProfile(user.uid);
 
             if (userProfile != null) {

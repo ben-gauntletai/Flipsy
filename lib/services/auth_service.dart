@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flipsy/features/auth/models/user_model.dart';
+import 'dart:async';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -53,14 +54,8 @@ class AuthService {
       // Extract the UID from the Cloud Function result
       final uid = (result.data as Map<String, dynamic>)['uid'] as String;
 
-      // Wait for Firestore to complete writing
-      await Future.delayed(const Duration(milliseconds: 2000));
-
-      // Get the user profile directly
-      final userProfile = await getUserProfile(uid);
-      if (userProfile == null) {
-        throw Exception('Failed to create user profile');
-      }
+      // Wait for the user profile to be available in Firestore
+      final userProfile = await _waitForUserProfile(uid);
 
       // Now attempt to sign in
       try {
@@ -70,12 +65,12 @@ class AuthService {
           password: password,
         );
         print('AuthService: Sign in successful');
-        return userProfile;
       } catch (signInError) {
         print('AuthService: Error signing in after creation: $signInError');
-        // Even if sign in fails, return the profile since we know it exists
-        return userProfile;
+        // Even if sign in fails, we continue since we have the profile
       }
+
+      return userProfile;
     } catch (e) {
       print('AuthService: Error in signUpWithEmailAndPassword: $e');
       if (e is FirebaseFunctionsException) {
@@ -84,6 +79,46 @@ class AuthService {
       }
       throw _handleAuthException(e);
     }
+  }
+
+  // Wait for user profile to be available in Firestore
+  Future<UserModel> _waitForUserProfile(String uid) async {
+    print('AuthService: Waiting for user profile to be available');
+    final completer = Completer<UserModel>();
+    int attempts = 0;
+    const maxAttempts = 10;
+
+    Future<void> checkProfile() async {
+      try {
+        attempts++;
+        print('AuthService: Checking for profile attempt $attempts');
+        final profile = await getUserProfile(uid);
+
+        if (profile != null) {
+          print('AuthService: Profile found after $attempts attempts');
+          completer.complete(profile);
+        } else if (attempts >= maxAttempts) {
+          print('AuthService: Max attempts reached, profile not found');
+          completer.completeError(Exception(
+              'Failed to create user profile after maximum attempts'));
+        } else {
+          print('AuthService: Profile not found, retrying in 200ms');
+          await Future.delayed(const Duration(milliseconds: 200));
+          await checkProfile();
+        }
+      } catch (e) {
+        if (attempts >= maxAttempts) {
+          completer.completeError(e);
+        } else {
+          await Future.delayed(const Duration(milliseconds: 200));
+          await checkProfile();
+        }
+      }
+    }
+
+    // Start checking for the profile
+    await checkProfile();
+    return completer.future;
   }
 
   // Sign out
