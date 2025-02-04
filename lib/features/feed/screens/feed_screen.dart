@@ -62,9 +62,20 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     }
   }
 
+  void _resumeCurrentVideo() {
+    if (_videoControllers.isNotEmpty && _pageController.hasClients) {
+      final currentPage = _pageController.page?.round() ?? 0;
+      if (currentPage >= 0 && currentPage < _videoControllers.length) {
+        _videoControllers[currentPage].play();
+      }
+    }
+  }
+
   void _handleVisibilityChanged() {
     if (!widget.isVisible) {
       _pauseAllVideos();
+    } else {
+      _resumeCurrentVideo();
     }
   }
 
@@ -252,6 +263,8 @@ class VideoFeedItem extends StatefulWidget {
 class _VideoFeedItemState extends State<VideoFeedItem> {
   late VideoPlayerController _videoController;
   bool _isPlaying = true;
+  bool _isMuted = false;
+  bool _showMuteIcon = false;
 
   @override
   void initState() {
@@ -281,6 +294,34 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     }
   }
 
+  void _togglePlay() {
+    setState(() {
+      _isPlaying = !_isPlaying;
+      if (_isPlaying) {
+        _videoController.play();
+      } else {
+        _videoController.pause();
+      }
+    });
+  }
+
+  void _toggleMute() {
+    setState(() {
+      _isMuted = !_isMuted;
+      _showMuteIcon = true;
+      _videoController.setVolume(_isMuted ? 0 : 1);
+    });
+
+    // Hide the mute icon after 1 second
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) {
+        setState(() {
+          _showMuteIcon = false;
+        });
+      }
+    });
+  }
+
   @override
   void didUpdateWidget(VideoFeedItem oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -288,6 +329,9 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
       if (!widget.isVisible) {
         _videoController.pause();
         _isPlaying = false;
+      } else if (_isPlaying) {
+        // Resume playing if it was playing before
+        _videoController.play();
       }
     }
   }
@@ -301,17 +345,6 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
     super.dispose();
   }
 
-  void _togglePlay() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-      if (_isPlaying) {
-        _videoController.play();
-      } else {
-        _videoController.pause();
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final String displayName =
@@ -320,6 +353,11 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
 
     return GestureDetector(
       onTap: () {
+        if (widget.isVisible) {
+          _toggleMute();
+        }
+      },
+      onDoubleTap: () {
         if (widget.isVisible) {
           _togglePlay();
         }
@@ -343,6 +381,23 @@ class _VideoFeedItemState extends State<VideoFeedItem> {
             const Center(
               child: CircularProgressIndicator(
                 color: Colors.white,
+              ),
+            ),
+
+          // Mute Icon Overlay
+          if (_showMuteIcon)
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.5),
+                  borderRadius: BorderRadius.circular(50),
+                ),
+                child: Icon(
+                  _isMuted ? Icons.volume_off : Icons.volume_up,
+                  color: Colors.white,
+                  size: 30,
+                ),
               ),
             ),
 
