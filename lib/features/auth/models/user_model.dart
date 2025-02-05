@@ -7,6 +7,8 @@ class UserModel extends Equatable {
   final String displayName; // User's chosen display name
   final String? avatarURL;
   final String? bio;
+  final String? instagramLink;
+  final String? youtubeLink;
   final DateTime createdAt;
   final DateTime updatedAt;
   final int followersCount;
@@ -20,6 +22,8 @@ class UserModel extends Equatable {
     required this.displayName,
     this.avatarURL,
     this.bio,
+    this.instagramLink,
+    this.youtubeLink,
     required this.createdAt,
     required this.updatedAt,
     this.followersCount = 0,
@@ -63,6 +67,8 @@ class UserModel extends Equatable {
         displayName: data['displayName'] as String,
         avatarURL: data['avatarURL'] as String?,
         bio: data['bio'] as String?,
+        instagramLink: data['instagramLink'] as String?,
+        youtubeLink: data['youtubeLink'] as String?,
         createdAt: createdAt,
         updatedAt: updatedAt,
         followersCount: (data['followersCount'] as num?)?.toInt() ?? 0,
@@ -87,6 +93,8 @@ class UserModel extends Equatable {
       'displayName': displayName,
       'avatarURL': avatarURL,
       'bio': bio,
+      'instagramLink': instagramLink,
+      'youtubeLink': youtubeLink,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
       'followersCount': followersCount,
@@ -102,6 +110,8 @@ class UserModel extends Equatable {
     String? displayName,
     String? avatarURL,
     String? bio,
+    String? instagramLink,
+    String? youtubeLink,
     DateTime? createdAt,
     DateTime? updatedAt,
     int? followersCount,
@@ -115,6 +125,8 @@ class UserModel extends Equatable {
       displayName: displayName ?? this.displayName,
       avatarURL: avatarURL ?? this.avatarURL,
       bio: bio ?? this.bio,
+      instagramLink: instagramLink ?? this.instagramLink,
+      youtubeLink: youtubeLink ?? this.youtubeLink,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       followersCount: followersCount ?? this.followersCount,
@@ -131,6 +143,8 @@ class UserModel extends Equatable {
         displayName,
         avatarURL,
         bio,
+        instagramLink,
+        youtubeLink,
         createdAt,
         updatedAt,
         followersCount,

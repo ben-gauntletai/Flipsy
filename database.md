@@ -27,6 +27,8 @@ Collection of all users in the application.
 - **displayName**: string
 - **avatarURL**: string
 - **bio**: string
+- **instagramLink**: string (optional)
+- **youtubeLink**: string (optional)
 - **createdAt**: timestamp
 - **updatedAt**: timestamp
 - **totalVideos**: number

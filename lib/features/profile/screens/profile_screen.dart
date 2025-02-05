@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../../services/video_service.dart';
 import '../../../models/video.dart';
@@ -113,6 +115,96 @@ class _ProfileScreenState extends State<ProfileScreen> {
         });
       }
     }
+  }
+
+  Future<void> _launchURL(String url,
+      {bool isInstagram = false, bool isYoutube = false}) async {
+    try {
+      // Clean and validate the input URL
+      String cleanUrl = url.trim();
+      if (cleanUrl.isEmpty) return;
+
+      Uri? uri;
+      if (isInstagram) {
+        // Remove any URL parts and get just the username
+        final username = cleanUrl
+            .replaceAll(RegExp(r'https?://(www\.)?instagram\.com/'), '')
+            .replaceAll('@', '')
+            .replaceAll('/', '');
+
+        if (username.isEmpty) return;
+
+        // First try to open in Instagram app
+        uri = Uri.parse('instagram://user?username=$username');
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+
+        // Fallback to web URL
+        uri = Uri.parse('https://instagram.com/$username');
+      } else if (isYoutube) {
+        // Handle various YouTube URL formats
+        String channelId = cleanUrl
+            .replaceAll(
+                RegExp(r'https?://(www\.)?youtube\.com/(@|channel/|c/)?'), '')
+            .replaceAll('/', '');
+
+        if (channelId.isEmpty) return;
+
+        // First try to open in YouTube app
+        uri = Uri.parse('vnd.youtube://www.youtube.com/$channelId');
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+
+        // Fallback to web URL
+        uri = Uri.parse('https://youtube.com/$channelId');
+      }
+
+      if (uri != null && await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        throw 'Could not launch URL';
+      }
+    } catch (e) {
+      print('Error launching URL: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not open link: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Widget _buildSocialLinks(String? instagramLink, String? youtubeLink) {
+    if ((instagramLink?.isEmpty ?? true) && (youtubeLink?.isEmpty ?? true)) {
+      return const SizedBox.shrink();
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        if (instagramLink?.isNotEmpty ?? false)
+          IconButton(
+            onPressed: () => _launchURL(instagramLink!, isInstagram: true),
+            icon: const FaIcon(FontAwesomeIcons.instagram),
+            color: Colors.grey[700],
+            tooltip: 'Instagram',
+          ),
+        if (youtubeLink?.isNotEmpty ?? false)
+          IconButton(
+            onPressed: () => _launchURL(youtubeLink!, isYoutube: true),
+            icon: const FaIcon(FontAwesomeIcons.youtube),
+            color: Colors.red,
+            tooltip: 'YouTube',
+          ),
+      ],
+    );
   }
 
   @override
@@ -238,6 +330,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                             ),
+                          // Social Media Links
+                          _buildSocialLinks(
+                            userData['instagramLink'] as String?,
+                            userData['youtubeLink'] as String?,
+                          ),
                           // Stats Row
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceEvenly,

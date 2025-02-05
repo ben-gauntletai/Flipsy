@@ -35,6 +35,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (state is Authenticated) {
       _displayNameController.text = state.user.displayName;
       _bioController.text = state.user.bio ?? '';
+      _instagramController.text = state.user.instagramLink ?? '';
+      _youtubeController.text = state.user.youtubeLink ?? '';
     }
   }
 
@@ -189,13 +191,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
       // Check if there are any changes to update
       final hasBioChange = _bioController.text.trim() != state.user.bio;
+      final hasInstagramChange =
+          _instagramController.text.trim() != state.user.instagramLink;
+      final hasYoutubeChange =
+          _youtubeController.text.trim() != state.user.youtubeLink;
 
-      if (avatarURL != null || hasBioChange) {
+      if (avatarURL != null ||
+          hasBioChange ||
+          hasInstagramChange ||
+          hasYoutubeChange) {
         print('EditProfileScreen: Sending profile update request');
 
         final updateData = {
           if (hasBioChange) 'bio': _bioController.text.trim(),
           if (avatarURL != null) 'avatarURL': avatarURL,
+          if (hasInstagramChange)
+            'instagramLink': _instagramController.text.trim(),
+          if (hasYoutubeChange) 'youtubeLink': _youtubeController.text.trim(),
         };
         print('EditProfileScreen: Update data: $updateData');
 
@@ -261,7 +273,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (state is! Authenticated) return false;
 
     return _bioController.text.trim() != (state.user.bio ?? '') ||
-        _imageFile != null;
+        _imageFile != null ||
+        _instagramController.text.trim() != (state.user.instagramLink ?? '') ||
+        _youtubeController.text.trim() != (state.user.youtubeLink ?? '');
   }
 
   @override
@@ -475,14 +489,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 label: 'Instagram',
                                 controller: _instagramController,
                                 showArrow: true,
-                                hintText: 'Add Instagram to your profile',
+                                hintText: 'Add your Instagram username',
                                 showTopSpace: true,
+                                prefixIcon: Icon(
+                                  FontAwesomeIcons.instagram,
+                                  size: 20,
+                                  color: Colors.grey[600],
+                                ),
                               ),
                               _buildTextField(
                                 label: 'YouTube',
                                 controller: _youtubeController,
                                 showArrow: true,
-                                hintText: 'Add YouTube to your profile',
+                                hintText: 'Add your YouTube channel',
+                                prefixIcon: Icon(
+                                  FontAwesomeIcons.youtube,
+                                  size: 20,
+                                  color: Colors.grey[600],
+                                ),
                               ),
                               const SizedBox(height: 30),
                               SizedBox(
@@ -543,6 +567,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     bool showBottomSpace = true,
     bool showTopSpace = false,
     TextCapitalization textCapitalization = TextCapitalization.none,
+    Widget? prefixIcon,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -559,6 +584,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         const SizedBox(height: 6),
         Row(
           children: [
+            if (prefixIcon != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: SizedBox(
+                  width: 24,
+                  child: Center(child: prefixIcon),
+                ),
+              ),
             Expanded(
               child: TextField(
                 controller: controller,
