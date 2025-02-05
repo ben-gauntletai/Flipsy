@@ -408,54 +408,70 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  void _onPageChanged() {
-    if (_pageController.hasClients) {
-      final newPage = _pageController.page?.round() ?? 0;
-      if (newPage != _currentPage) {
-        setState(() {
-          _currentPage = newPage;
-          print('FeedScreen: Page changed to $_currentPage');
-        });
+  @override
+  void didUpdateWidget(FeedScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    print('FeedScreen: Widget updated, isVisible: ${widget.isVisible}');
 
-        // Update controller manager with new index and handle playback
-        _controllerManager.updateCurrentIndex(newPage, _videos).then((_) async {
-          // Ensure the current video plays and others are paused
-          final currentController =
-              await _controllerManager.getController(newPage);
-          if (currentController != null) {
-            print('FeedScreen: Playing video at index $newPage');
-            currentController.play();
-            currentController.setLooping(true);
-          }
-          _controllerManager.pauseAllExcept(newPage);
-        });
-
-        // Load more videos when user reaches the last 2 videos
-        if (newPage >= _videos.length - 2 &&
-            !_isLoadingMore &&
-            _hasMoreVideos) {
-          _loadMoreVideos();
+    if (!widget.isVisible) {
+      // Pause all videos when feed is not visible
+      _controllerManager.pauseAllExcept(-1);
+    } else if (widget.isVisible && _currentPage >= 0) {
+      // Resume current video if feed becomes visible
+      _controllerManager.getController(_currentPage).then((controller) {
+        if (controller != null) {
+          controller.play();
+          controller.setLooping(true);
         }
+      });
+    }
+  }
+
+  void _onPageChanged() {
+    if (!mounted || !widget.isVisible) return;
+
+    final page = _pageController.page?.round() ?? 0;
+    if (page != _currentPage) {
+      setState(() => _currentPage = page);
+      _controllerManager.updateCurrentIndex(page, _videos);
+
+      // Only play the video if the feed is visible
+      if (widget.isVisible) {
+        _controllerManager.getController(page).then((controller) {
+          if (controller != null) {
+            controller.play();
+            controller.setLooping(true);
+          }
+        });
       }
+    }
+
+    // Load more videos if we're near the end
+    if (page >= _videos.length - 2) {
+      _loadMoreVideos();
     }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.paused) {
+    print('FeedScreen: App lifecycle state changed to $state');
+
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
       _controllerManager.pauseAllExcept(-1); // Pause all videos
     } else if (state == AppLifecycleState.resumed && mounted) {
-      // Resume playback of current video when app is resumed
-      final currentController =
-          _controllerManager.getController(_currentPage).then((controller) {
-        if (controller != null && widget.isVisible) {
-          print(
-              'FeedScreen: Resuming video at index $_currentPage after app resume');
-          controller.play();
-          controller.setLooping(true);
-        }
-      });
+      // Only resume playback if the feed is visible
+      if (widget.isVisible && _currentPage >= 0) {
+        _controllerManager.getController(_currentPage).then((controller) {
+          if (controller != null) {
+            print(
+                'FeedScreen: Resuming video at index $_currentPage after app resume');
+            controller.play();
+            controller.setLooping(true);
+          }
+        });
+      }
     }
   }
 

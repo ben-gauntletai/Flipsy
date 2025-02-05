@@ -4,7 +4,8 @@ import 'package:equatable/equatable.dart';
 class UserModel extends Equatable {
   final String id;
   final String email;
-  final String displayName;
+  final String displayName; // User's chosen display name
+  final String username; // Unique username (cannot be changed)
   final String? avatarURL;
   final String? bio;
   final DateTime createdAt;
@@ -18,6 +19,7 @@ class UserModel extends Equatable {
     required this.id,
     required this.email,
     required this.displayName,
+    required this.username,
     this.avatarURL,
     this.bio,
     required this.createdAt,
@@ -56,10 +58,17 @@ class UserModel extends Equatable {
           'UserModel: Using current time for updatedAt as timestamp was not found');
     }
 
+    // For existing users who don't have a separate username field yet,
+    // use displayName as username. For new users, these will be properly set.
+    final username =
+        (data['username'] as String?) ?? data['displayName'] as String;
+    final displayName = data['displayName'] as String;
+
     final userModel = UserModel(
       id: doc.id,
       email: data['email'] as String,
-      displayName: data['displayName'] as String,
+      displayName: displayName,
+      username: username,
       avatarURL: data['avatarURL'] as String?,
       bio: data['bio'] as String?,
       createdAt: createdAt,
@@ -71,7 +80,7 @@ class UserModel extends Equatable {
     );
 
     print(
-        'UserModel: Created UserModel with avatarURL: ${userModel.avatarURL}');
+        'UserModel: Created UserModel with displayName: ${userModel.displayName}, username: ${userModel.username}');
     return userModel;
   }
 
@@ -79,6 +88,7 @@ class UserModel extends Equatable {
     return {
       'email': email,
       'displayName': displayName,
+      'username': username,
       'avatarURL': avatarURL,
       'bio': bio,
       'createdAt': Timestamp.fromDate(createdAt),
@@ -94,6 +104,7 @@ class UserModel extends Equatable {
     String? id,
     String? email,
     String? displayName,
+    String? username,
     String? avatarURL,
     String? bio,
     DateTime? createdAt,
@@ -107,6 +118,7 @@ class UserModel extends Equatable {
       id: id ?? this.id,
       email: email ?? this.email,
       displayName: displayName ?? this.displayName,
+      username: username ?? this.username,
       avatarURL: avatarURL ?? this.avatarURL,
       bio: bio ?? this.bio,
       createdAt: createdAt ?? this.createdAt,
@@ -123,6 +135,7 @@ class UserModel extends Equatable {
         id,
         email,
         displayName,
+        username,
         avatarURL,
         bio,
         createdAt,

@@ -187,10 +187,19 @@ class AuthService {
   Future<void> updateUserProfile(
       String userId, Map<String, dynamic> data) async {
     try {
-      await _firestore.collection('users').doc(userId).update({
+      // Get current user data
+      final doc = await _firestore.collection('users').doc(userId).get();
+      if (!doc.exists) {
+        throw Exception('User profile not found');
+      }
+
+      // Create update data
+      final updateData = {
         ...data,
         'updatedAt': FieldValue.serverTimestamp(),
-      });
+      };
+
+      await _firestore.collection('users').doc(userId).update(updateData);
     } catch (e) {
       throw Exception('Failed to update user profile: $e');
     }
@@ -200,20 +209,9 @@ class AuthService {
   Exception _handleAuthException(dynamic e) {
     print('AuthService: Handling auth exception: $e');
 
-    // If it's already our custom display name error, return it as is
-    if (e is Exception &&
-        (e.toString().contains('display name') ||
-            e.toString().contains('already taken'))) {
-      return e;
-    }
-
     if (e is FirebaseFunctionsException) {
       switch (e.code) {
         case 'already-exists':
-          final message = e.message?.toLowerCase() ?? '';
-          if (message.contains('display name')) {
-            return Exception('This display name is already taken');
-          }
           return Exception('The email address is already in use.');
         case 'invalid-argument':
           return Exception(e.message ?? 'Invalid input provided.');

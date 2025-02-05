@@ -8,7 +8,12 @@ class UserService {
     try {
       final doc = await _firestore.collection('users').doc(userId).get();
       if (doc.exists) {
-        return doc.data() as Map<String, dynamic>;
+        final data = doc.data() as Map<String, dynamic>;
+        // Ensure displayName exists
+        if (!data.containsKey('displayName')) {
+          data['displayName'] = 'Unknown User';
+        }
+        return data;
       } else {
         return {
           'displayName': 'Unknown User',

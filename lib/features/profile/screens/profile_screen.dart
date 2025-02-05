@@ -81,6 +81,7 @@ class ProfileScreen extends StatelessWidget {
           final Map<String, dynamic> userData = isCurrentUser
               ? {
                   'displayName': currentUser!.displayName,
+                  'username': currentUser!.username,
                   'avatarURL': currentUser!.avatarURL,
                   'followingCount': currentUser!.followingCount,
                   'followersCount': currentUser!.followersCount,
@@ -91,6 +92,9 @@ class ProfileScreen extends StatelessWidget {
           final displayName = isCurrentUser
               ? currentUser!.displayName
               : (userData['displayName'] as String?) ?? 'User';
+          final username = isCurrentUser
+              ? currentUser!.username
+              : (userData['username'] as String?) ?? displayName;
           final avatarURL = isCurrentUser
               ? currentUser!.avatarURL
               : userData['avatarURL'] as String?;
@@ -120,10 +124,24 @@ class ProfileScreen extends StatelessWidget {
                         radius: 50,
                       ),
                       const SizedBox(height: 16),
-                      // Display Name
-                      Text(
-                        '@$displayName',
-                        style: Theme.of(context).textTheme.titleLarge,
+                      // Display Name and Username
+                      Column(
+                        children: [
+                          Text(
+                            displayName,
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '@$username',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 20),
                       // Stats Row

@@ -18,8 +18,7 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _bioController = TextEditingController();
   final TextEditingController _instagramController = TextEditingController();
   final TextEditingController _youtubeController = TextEditingController();
@@ -34,15 +33,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.initState();
     final state = context.read<AuthBloc>().state;
     if (state is Authenticated) {
-      _nameController.text = state.user.displayName;
+      _displayNameController.text = state.user.displayName;
       _bioController.text = state.user.bio ?? '';
     }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _usernameController.dispose();
+    _displayNameController.dispose();
     _bioController.dispose();
     _instagramController.dispose();
     _youtubeController.dispose();
@@ -189,15 +187,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         }
       }
 
-      // Update profile using AuthBloc
-      if (avatarURL != null ||
-          _nameController.text.trim() != state.user.displayName ||
-          _bioController.text.trim() != state.user.bio) {
+      // Check if there are any changes to update
+      final hasBioChange = _bioController.text.trim() != state.user.bio;
+
+      if (avatarURL != null || hasBioChange) {
         print('EditProfileScreen: Sending profile update request');
 
         final updateData = {
-          'displayName': _nameController.text.trim(),
-          'bio': _bioController.text.trim(),
+          if (hasBioChange) 'bio': _bioController.text.trim(),
           if (avatarURL != null) 'avatarURL': avatarURL,
         };
         print('EditProfileScreen: Update data: $updateData');
@@ -257,6 +254,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           duration: Duration(seconds: 2),
         ),
       );
+  }
+
+  bool _hasUnsavedChanges() {
+    final state = context.read<AuthBloc>().state;
+    if (state is! Authenticated) return false;
+
+    return _bioController.text.trim() != (state.user.bio ?? '') ||
+        _imageFile != null;
   }
 
   @override
@@ -321,7 +326,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   elevation: 0,
                   leading: IconButton(
                     icon: const Icon(Icons.arrow_back, color: Colors.black87),
-                    onPressed: isUpdating ? null : () => Navigator.pop(context),
+                    onPressed: isUpdating
+                        ? null
+                        : () {
+                            if (_hasUnsavedChanges()) {
+                              showDialog(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Discard Changes?'),
+                                  content: const Text(
+                                      'You have unsaved changes. Are you sure you want to discard them?'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context),
+                                      child: const Text('CANCEL'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(context); // Close dialog
+                                        Navigator.pop(
+                                            context); // Go back to profile
+                                      },
+                                      child: const Text('DISCARD'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            } else {
+                              Navigator.pop(context);
+                            }
+                          },
                   ),
                   title: const Text(
                     'Edit profile',
@@ -419,14 +453,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: Column(
                             children: [
                               _buildTextField(
-                                label: 'Name',
-                                controller: _nameController,
-                              ),
-                              _buildTextField(
-                                label: 'Username',
-                                controller: _usernameController,
+                                label: 'Display Name',
+                                controller: _displayNameController,
+                                textCapitalization: TextCapitalization.words,
+                                hintText: 'Enter your display name',
                                 enabled: false,
-                                hintText: user.displayName.toLowerCase(),
+                                showArrow: false,
                               ),
                               _buildTextField(
                                 label: 'Bio',
@@ -435,6 +467,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 hintText: 'Add a bio to your profile',
                                 showBottomDivider: false,
                                 showBottomSpace: false,
+                                textCapitalization:
+                                    TextCapitalization.sentences,
                               ),
                               const Divider(height: 1, color: Colors.black12),
                               _buildTextField(
@@ -450,6 +484,31 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                 showArrow: true,
                                 hintText: 'Add YouTube to your profile',
                               ),
+                              const SizedBox(height: 30),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: isUpdating ? null : _updateProfile,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green[700],
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 16),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    disabledBackgroundColor: Colors.grey,
+                                  ),
+                                  child: Text(
+                                    isUpdating ? 'Saving...' : 'Save Changes',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 30),
                             ],
                           ),
                         ),
@@ -479,9 +538,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     bool enabled = true,
     bool showArrow = false,
     String? hintText,
+    String? helperText,
     bool showBottomDivider = true,
     bool showBottomSpace = true,
     bool showTopSpace = false,
+    TextCapitalization textCapitalization = TextCapitalization.none,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -502,6 +563,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               child: TextField(
                 controller: controller,
                 enabled: enabled,
+                textCapitalization: textCapitalization,
                 style: const TextStyle(
                   fontSize: 15,
                   color: Colors.black87,
@@ -514,6 +576,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   hintStyle: TextStyle(
                     color: Colors.grey[400],
                     fontSize: 15,
+                  ),
+                  helperText: helperText,
+                  helperStyle: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 12,
                   ),
                 ),
               ),
