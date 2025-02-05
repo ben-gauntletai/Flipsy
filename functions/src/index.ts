@@ -9,8 +9,13 @@
 
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
-import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from "firebase-functions/v2/firestore";
-import { CallableRequest } from "firebase-functions/v2/https";
+import {
+  onDocumentCreated,
+  onDocumentDeleted,
+  onDocumentWritten,
+  onDocumentUpdated,
+} from "firebase-functions/v2/firestore";
+import { CallableRequest, onCall } from "firebase-functions/v2/https";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -598,3 +603,100 @@ export const onFollowChange = onDocumentWritten(
     }
   }
 );
+
+// Function to handle video like count changes and update user total likes
+export const onVideoLikeCountChange = onDocumentUpdated(
+  "videos/{videoId}",
+  async (event) => {
+    const beforeData = event.data?.before.data();
+    const afterData = event.data?.after.data();
+
+    // Only proceed if likesCount has changed
+    if (beforeData?.likesCount === afterData?.likesCount) {
+      return;
+    }
+
+    console.log(`Video ${event.params.videoId} likes changed:`, {
+      before: beforeData?.likesCount,
+      after: afterData?.likesCount,
+    });
+
+    try {
+      const db = admin.firestore();
+      // Use uploaderId from either field
+      const uploaderId = afterData?.userId || afterData?.uploaderId;
+
+      if (!uploaderId) {
+        console.error("No uploaderId found for video", event.params.videoId);
+        return;
+      }
+
+      // Calculate the difference in likes
+      const likeDiff = (afterData?.likesCount || 0) - (beforeData?.likesCount || 0);
+      console.log(`Updating user ${uploaderId} totalLikes by ${likeDiff}`);
+
+      // Update user's totalLikes using a transaction for consistency
+      const userRef = db.collection("users").doc(uploaderId);
+      await db.runTransaction(async (transaction) => {
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          console.error(`User document ${uploaderId} not found`);
+          return;
+        }
+
+        const currentTotalLikes = userDoc.data()?.totalLikes || 0;
+        const newTotalLikes = Math.max(0, currentTotalLikes + likeDiff);
+
+        transaction.update(userRef, { totalLikes: newTotalLikes });
+        console.log(`Successfully updated user ${uploaderId} totalLikes to ${newTotalLikes}`);
+      });
+    } catch (error) {
+      console.error("Error in onVideoLikeCountChange:", error);
+    }
+  },
+);
+
+// Utility function to recalculate user's total likes
+export const recalculateUserTotalLikes = onCall(async (request: CallableRequest) => {
+  const userId = request.data.userId;
+  if (!userId) {
+    throw new Error("userId is required");
+  }
+  console.log(`Recalculating total likes for user ${userId}`);
+  try {
+    const db = admin.firestore();
+    // Query videos where either 'userId' or 'uploaderId' equals the given userId (no status filter)
+    const [query1, query2] = await Promise.all([
+      db.collection("videos")
+        .where("userId", "==", userId)
+        .get(),
+      db.collection("videos")
+        .where("uploaderId", "==", userId)
+        .get(),
+    ]);
+    // Use a map to avoid duplicate documents if both fields exist
+    const videosMap = new Map<string, number>();
+    query1.forEach((doc) => {
+      videosMap.set(doc.id, doc.data().likesCount || 0);
+    });
+    query2.forEach((doc) => {
+      if (!videosMap.has(doc.id)) {
+        videosMap.set(doc.id, doc.data().likesCount || 0);
+      }
+    });
+    let totalLikes = 0;
+    videosMap.forEach((val) => {
+      totalLikes += val;
+    });
+
+    // Update user document
+    await db.collection("users").doc(userId).update({
+      totalLikes: totalLikes,
+    });
+    console.log(`Successfully recalculated total likes for user ${userId}: ${totalLikes}`);
+    return { success: true, totalLikes };
+  } catch (error) {
+    console.error("Error in recalculateUserTotalLikes:", error);
+    throw new Error("Failed to recalculate total likes");
+  }
+});
