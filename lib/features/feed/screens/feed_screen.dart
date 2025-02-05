@@ -15,6 +15,7 @@ import '../widgets/comment_bottom_sheet.dart';
 import '../../../services/comment_service.dart';
 import '../../../features/auth/bloc/auth_bloc.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../../features/navigation/screens/main_navigation_screen.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1127,19 +1128,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       _isPlaying = false;
     }
 
-    Navigator.of(context)
-        .push(
-      MaterialPageRoute(
-        builder: (context) => ProfileScreen(userId: widget.video.userId),
-      ),
-    )
-        .then((_) {
-      // Resume video if the feed is still visible when returning
-      if (widget.isVisible && mounted && _videoController != null) {
-        _videoController!.play();
-        _isPlaying = true;
-      }
-    });
+    MainNavigationScreen.showUserProfile(context, widget.video.userId);
   }
 
   void _handleTap() {

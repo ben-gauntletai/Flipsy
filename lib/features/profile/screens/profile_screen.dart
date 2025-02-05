@@ -12,10 +12,14 @@ import '../../navigation/screens/main_navigation_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   final String? userId; // If null, show current user's profile
+  final bool showBackButton;
+  final VoidCallback? onBack;
 
   const ProfileScreen({
     super.key,
     this.userId,
+    this.showBackButton = false,
+    this.onBack,
   });
 
   @override
@@ -37,6 +41,12 @@ class ProfileScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        leading: showBackButton
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: onBack,
+              )
+            : null,
         title: isCurrentUser
             ? Text(currentUser!.displayName)
             : FutureBuilder<Map<String, dynamic>>(

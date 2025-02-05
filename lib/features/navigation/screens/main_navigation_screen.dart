@@ -16,16 +16,39 @@ class MainNavigationScreen extends StatefulWidget {
     state?.jumpToVideo(videoId, showBackButton: showBackButton);
   }
 
+  static void showUserProfile(BuildContext context, String userId) {
+    final state = context.findAncestorStateOfType<_MainNavigationScreenState>();
+    state?.showUserProfile(userId);
+  }
+
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
+}
+
+class NavigationHistoryEntry {
+  final int screenIndex;
+  final String? profileUserId;
+
+  NavigationHistoryEntry({
+    required this.screenIndex,
+    this.profileUserId,
+  });
 }
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
   final GlobalKey<FeedScreenState> _feedKey = GlobalKey<FeedScreenState>();
-  int? _previousIndex;
+  String? _currentProfileUserId;
+  final List<NavigationHistoryEntry> _navigationHistory = [];
+
+  bool get canGoBack => _navigationHistory.isNotEmpty;
 
   void _onItemTapped(int index) {
+    if (index == 4) {
+      // Profile tab - clear history when directly navigating to own profile
+      _navigationHistory.clear();
+      _currentProfileUserId = null; // Reset to show current user's profile
+    }
     setState(() {
       _selectedIndex = index;
     });
@@ -39,9 +62,18 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _feedKey.currentState?.jumpToVideo(videoId);
   }
 
+  void _addToHistory() {
+    _navigationHistory.add(
+      NavigationHistoryEntry(
+        screenIndex: _selectedIndex,
+        profileUserId: _currentProfileUserId,
+      ),
+    );
+  }
+
   void jumpToVideo(String videoId, {bool showBackButton = false}) {
     if (showBackButton) {
-      _previousIndex = _selectedIndex;
+      _addToHistory();
     }
     setState(() {
       _selectedIndex = 0; // Switch to feed screen
@@ -49,13 +81,28 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _feedKey.currentState?.jumpToVideo(videoId);
   }
 
+  void showUserProfile(String userId) {
+    _addToHistory();
+    setState(() {
+      _currentProfileUserId = userId;
+      _selectedIndex = 4; // Switch to profile tab
+    });
+  }
+
   void goBack() {
-    if (_previousIndex != null) {
+    if (!canGoBack) {
       setState(() {
-        _selectedIndex = _previousIndex!;
-        _previousIndex = null;
+        // If we can't go back, clear any stale state
+        _currentProfileUserId = null;
       });
+      return;
     }
+
+    final previousEntry = _navigationHistory.removeLast();
+    setState(() {
+      _selectedIndex = previousEntry.screenIndex;
+      _currentProfileUserId = previousEntry.profileUserId;
+    });
   }
 
   @override
@@ -70,7 +117,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           FeedScreen(
             key: _feedKey,
             isVisible: _selectedIndex == 0,
-            showBackButton: _previousIndex != null,
+            showBackButton: canGoBack,
             onBack: goBack,
           ), // Home
           const DiscoverScreen(), // Discover
@@ -78,7 +125,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               onVideoUploaded: _onVideoUploaded), // Upload screen with callback
           const Center(child: Text('Inbox')), // Inbox
           if (currentUser != null)
-            ProfileScreen() // Current user's profile
+            ProfileScreen(
+              userId: _currentProfileUserId,
+              showBackButton: _currentProfileUserId != null && canGoBack,
+              onBack: goBack,
+            ) // Profile screen (current user or other user)
           else
             const Center(child: CircularProgressIndicator()),
         ],
