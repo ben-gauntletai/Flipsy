@@ -5,6 +5,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 class UserService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  // Helper method to get follow document ID
+  String _getFollowDocId(String followerId, String followingId) {
+    return '${followerId}_$followingId';
+  }
+
   // Get user data by ID
   Future<Map<String, dynamic>> getUserData(String userId) async {
     try {
@@ -195,7 +200,7 @@ class UserService {
       print('Checking follow status: ${currentUser.uid} -> $userId');
       final followDoc = await FirebaseFirestore.instance
           .collection('follows')
-          .doc('${currentUser.uid}_$userId')
+          .doc(_getFollowDocId(currentUser.uid, userId))
           .get();
 
       final exists = followDoc.exists;
@@ -205,5 +210,97 @@ class UserService {
       print('Error checking follow status: $e');
       return false;
     }
+  }
+
+  // Add real-time follow status stream
+  Stream<bool> watchFollowStatus(String userId) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return Stream.value(false);
+
+    print('Watching follow status: ${currentUser.uid} -> $userId');
+    return FirebaseFirestore.instance
+        .collection('follows')
+        .doc(_getFollowDocId(currentUser.uid, userId))
+        .snapshots()
+        .map((doc) {
+      final exists = doc.exists;
+      print('Follow status update - exists: $exists');
+      return exists;
+    });
+  }
+
+  // Add method to watch follows list
+  Stream<List<String>> watchFollowsList(String userId,
+      {required bool isFollowers}) {
+    print('\n========== FOLLOWS LIST DEBUG ==========');
+    print(
+        'Watching ${isFollowers ? 'followers' : 'following'} list for user: $userId');
+
+    // Get current user for logging
+    final currentUser = FirebaseAuth.instance.currentUser;
+    print('Current user: ${currentUser?.uid}');
+
+    // Log the query we're about to make
+    final queryField = isFollowers ? 'followingId' : 'followerId';
+    final returnField = isFollowers ? 'followerId' : 'followingId';
+
+    print('\nQuery setup:');
+    print('- Collection: follows');
+    print('- Where $queryField = $userId');
+    print('- Will return $returnField values');
+    print('- Ordered by createdAt descending');
+
+    final query =
+        _firestore.collection('follows').where(queryField, isEqualTo: userId);
+
+    return query.snapshots().map((snapshot) {
+      print('\nSnapshot received at ${DateTime.now()}:');
+      print('- Number of documents: ${snapshot.docs.length}');
+
+      if (snapshot.docs.isEmpty) {
+        print('- No documents found in snapshot');
+        return <String>[];
+      }
+
+      print('\nProcessing documents:');
+      final follows = snapshot.docs.map((doc) {
+        final data = doc.data();
+        print('\nDocument ${doc.id}:');
+        print('- followerId: ${data['followerId']}');
+        print('- followingId: ${data['followingId']}');
+        print('- createdAt: ${data['createdAt']}');
+
+        final returnId = data[returnField] as String;
+        print('- Will return: $returnId');
+        return returnId;
+      }).toList();
+
+      // Sort by createdAt if available
+      follows.sort((a, b) {
+        final docA =
+            snapshot.docs.firstWhere((doc) => doc.data()[returnField] == a);
+        final docB =
+            snapshot.docs.firstWhere((doc) => doc.data()[returnField] == b);
+        final timeA =
+            (docA.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ??
+                0;
+        final timeB =
+            (docB.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ??
+                0;
+        return timeB.compareTo(timeA); // Descending order
+      });
+
+      print('\nFinal result:');
+      print('- Number of IDs: ${follows.length}');
+      print('- IDs in order: $follows');
+      print('=======================================\n');
+
+      return follows;
+    }).handleError((error) {
+      print('\nERROR in watchFollowsList:');
+      print('- Error details: $error');
+      print('=======================================\n');
+      return <String>[];
+    });
   }
 }

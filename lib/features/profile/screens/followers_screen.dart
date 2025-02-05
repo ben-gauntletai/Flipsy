@@ -28,12 +28,8 @@ class FollowersScreen extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('follows')
-            .where(isFollowers ? 'followingId' : 'followerId',
-                isEqualTo: userId)
-            .snapshots(),
+      body: StreamBuilder<List<String>>(
+        stream: userService.watchFollowsList(userId, isFollowers: isFollowers),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -45,9 +41,9 @@ class FollowersScreen extends StatelessWidget {
             );
           }
 
-          final follows = snapshot.data?.docs ?? [];
+          final userIds = snapshot.data ?? [];
 
-          if (follows.isEmpty) {
+          if (userIds.isEmpty) {
             return Center(
               child: Text(
                 isFollowers ? 'No followers yet' : 'Not following anyone',
@@ -57,13 +53,9 @@ class FollowersScreen extends StatelessWidget {
           }
 
           return ListView.builder(
-            itemCount: follows.length,
+            itemCount: userIds.length,
             itemBuilder: (context, index) {
-              final followDoc = follows[index];
-              final followData = followDoc.data() as Map<String, dynamic>;
-              final otherUserId = isFollowers
-                  ? followData['followerId'] as String
-                  : followData['followingId'] as String;
+              final otherUserId = userIds[index];
 
               return FutureBuilder<Map<String, dynamic>>(
                 future: userService.getCachedUserData(otherUserId),

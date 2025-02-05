@@ -28,29 +28,15 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  bool _isFollowing = false;
   bool _isLoading = false;
   final _userService = UserService();
 
   @override
   void initState() {
     super.initState();
-    if (widget.userId != null) {
-      _checkFollowStatus();
-    }
   }
 
-  Future<void> _checkFollowStatus() async {
-    if (widget.userId == null) return;
-    final isFollowing = await _userService.isFollowing(widget.userId!);
-    if (mounted) {
-      setState(() {
-        _isFollowing = isFollowing;
-      });
-    }
-  }
-
-  Future<void> _handleFollowAction() async {
+  Future<void> _handleFollowAction(bool isFollowing) async {
     if (widget.userId == null) return;
 
     setState(() {
@@ -58,12 +44,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      if (_isFollowing) {
+      final currentUser = context.read<AuthBloc>().state;
+      if (currentUser is! Authenticated) {
+        throw 'You must be logged in to follow users';
+      }
+
+      if (isFollowing) {
         // Get user display name for the dialog
         final userData = await _userService.getCachedUserData(widget.userId!);
         final displayName = userData['displayName'] as String? ?? 'User';
 
-        // Show unfollow confirmation dialog
         final shouldUnfollow = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -86,19 +76,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           final success = await _userService.unfollowUser(widget.userId!);
           if (success && mounted) {
             setState(() {
-              _isFollowing = false;
+              _isLoading = false;
             });
-            // Clear the cache to force a refresh of the user data
             _userService.clearCache();
+          }
+        } else {
+          // If user cancels unfollow, reset loading state
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
           }
         }
       } else {
         final success = await _userService.followUser(widget.userId!);
         if (success && mounted) {
           setState(() {
-            _isFollowing = true;
+            _isLoading = false;
           });
-          // Clear the cache to force a refresh of the user data
           _userService.clearCache();
         }
       }
@@ -132,9 +127,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    // Determine if this is the current user's profile
+    // Determine if this is the current user's profile and get the correct userId
     final isCurrentUser =
         widget.userId == null || (currentUser?.id == widget.userId);
+    final targetUserId = isCurrentUser ? currentUser!.id : widget.userId!;
     final videoService = VideoService();
 
     return Scaffold(
@@ -145,17 +141,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onPressed: widget.onBack,
               )
             : null,
-        title: isCurrentUser
-            ? Text(currentUser!.displayName)
-            : FutureBuilder<Map<String, dynamic>>(
-                future: _userService.getCachedUserData(widget.userId!),
-                builder: (context, snapshot) {
-                  if (snapshot.hasData) {
-                    return Text(snapshot.data!['displayName'] ?? 'Profile');
-                  }
-                  return const Text('Profile');
-                },
-              ),
+        title: StreamBuilder<Map<String, dynamic>>(
+          stream: _userService.watchUserData(targetUserId),
+          builder: (context, snapshot) {
+            if (snapshot.hasData) {
+              return Text(snapshot.data!['displayName'] ?? 'Profile');
+            }
+            return const Text('Profile');
+          },
+        ),
         actions: [
           if (isCurrentUser)
             IconButton(
@@ -167,140 +161,121 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
         ],
       ),
-      body: FutureBuilder<Map<String, dynamic>>(
-        future: isCurrentUser
-            ? null
-            : _userService.getCachedUserData(widget.userId!),
-        builder: (context, userSnapshot) {
-          // Show loading while fetching user data
-          if (!isCurrentUser && !userSnapshot.hasData) {
+      body: StreamBuilder<Map<String, dynamic>>(
+        stream: _userService.watchUserData(targetUserId),
+        initialData: isCurrentUser
+            ? {
+                'displayName': currentUser!.displayName,
+                'username': currentUser!.username,
+                'avatarURL': currentUser!.avatarURL,
+                'followingCount': currentUser!.followingCount,
+                'followersCount': currentUser!.followersCount,
+                'totalLikes': currentUser!.totalLikes,
+              }
+            : null,
+        builder: (context, userStreamSnapshot) {
+          if (!userStreamSnapshot.hasData) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          // Use current user data or fetched user data
-          final Map<String, dynamic> initialUserData = isCurrentUser
-              ? {
-                  'displayName': currentUser!.displayName,
-                  'username': currentUser!.username,
-                  'avatarURL': currentUser!.avatarURL,
-                  'followingCount': currentUser!.followingCount,
-                  'followersCount': currentUser!.followersCount,
-                  'totalLikes': currentUser!.totalLikes,
-                }
-              : (userSnapshot.data! as Map<String, dynamic>);
+          final userData = userStreamSnapshot.data!;
+          final displayName = userData['displayName'] as String? ?? 'User';
+          final username = userData['username'] as String? ?? displayName;
+          final avatarURL = userData['avatarURL'] as String?;
+          final followingCount = userData['followingCount'] as int? ?? 0;
+          final followersCount = userData['followersCount'] as int? ?? 0;
+          final totalLikes = userData['totalLikes'] as int? ?? 0;
 
-          return StreamBuilder<Map<String, dynamic>>(
-            stream: _userService.watchUserData(
-              isCurrentUser ? currentUser!.id : widget.userId!,
-            ),
-            initialData: initialUserData,
-            builder: (context, userStreamSnapshot) {
-              final userData = userStreamSnapshot.data!;
-
-              final displayName = isCurrentUser
-                  ? currentUser!.displayName
-                  : (userData['displayName'] as String?) ?? 'User';
-              final username = isCurrentUser
-                  ? currentUser!.username
-                  : (userData['username'] as String?) ?? displayName;
-              final avatarURL = isCurrentUser
-                  ? currentUser!.avatarURL
-                  : userData['avatarURL'] as String?;
-              final followingCount = isCurrentUser
-                  ? currentUser!.followingCount
-                  : (userData['followingCount'] as int?) ?? 0;
-              final followersCount = isCurrentUser
-                  ? currentUser!.followersCount
-                  : (userData['followersCount'] as int?) ?? 0;
-              final totalLikes = isCurrentUser
-                  ? currentUser!.totalLikes
-                  : (userData['totalLikes'] as int?) ?? 0;
-
-              return RefreshIndicator(
-                onRefresh: () async {
-                  // Implement refresh logic here
-                },
-                child: CustomScrollView(
-                  slivers: [
-                    SliverToBoxAdapter(
-                      child: Column(
+          return RefreshIndicator(
+            onRefresh: () async {
+              // Implement refresh logic here
+            },
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 20),
+                      // Profile Image
+                      UserAvatar(
+                        avatarURL: avatarURL,
+                        radius: 50,
+                      ),
+                      const SizedBox(height: 16),
+                      // Display Name and Username
+                      Column(
                         children: [
-                          const SizedBox(height: 20),
-                          // Profile Image
-                          UserAvatar(
-                            avatarURL: avatarURL,
-                            radius: 50,
+                          Text(
+                            displayName,
+                            style: Theme.of(context).textTheme.titleLarge,
                           ),
-                          const SizedBox(height: 16),
-                          // Display Name and Username
-                          Column(
-                            children: [
-                              Text(
-                                displayName,
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                '@$username',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      color: Colors.grey[600],
-                                    ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          // Stats Row
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              _buildStatColumn(context,
-                                  followingCount.toString(), 'Following'),
-                              _buildStatColumn(context,
-                                  followersCount.toString(), 'Followers'),
-                              _buildStatColumn(
-                                  context, totalLikes.toString(), 'Likes'),
-                            ],
-                          ),
-                          const SizedBox(height: 20),
-                          // Edit Profile Button or Follow Button
-                          if (isCurrentUser)
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 20),
-                              child: OutlinedButton(
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          const EditProfileScreen(),
-                                    ),
-                                  );
-                                },
-                                style: OutlinedButton.styleFrom(
-                                  minimumSize: const Size.fromHeight(40),
+                          const SizedBox(height: 4),
+                          Text(
+                            '@$username',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
+                                  color: Colors.grey[600],
                                 ),
-                                child: const Text('Edit Profile'),
-                              ),
-                            )
-                          else
-                            Padding(
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      // Stats Row
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          _buildStatColumn(
+                              context, followingCount.toString(), 'Following'),
+                          _buildStatColumn(
+                              context, followersCount.toString(), 'Followers'),
+                          _buildStatColumn(
+                              context, totalLikes.toString(), 'Likes'),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      // Edit Profile Button or Follow Button
+                      if (isCurrentUser)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EditProfileScreen(),
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(40),
+                            ),
+                            child: const Text('Edit Profile'),
+                          ),
+                        )
+                      else
+                        StreamBuilder<bool>(
+                          stream:
+                              _userService.watchFollowStatus(widget.userId!),
+                          builder: (context, followSnapshot) {
+                            final isFollowing = followSnapshot.data ?? false;
+
+                            return Padding(
                               padding:
                                   const EdgeInsets.symmetric(horizontal: 20),
                               child: ElevatedButton(
-                                onPressed:
-                                    _isLoading ? null : _handleFollowAction,
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => _handleFollowAction(isFollowing),
                                 style: ElevatedButton.styleFrom(
                                   minimumSize: const Size.fromHeight(40),
-                                  backgroundColor: _isFollowing
+                                  backgroundColor: isFollowing
                                       ? Colors.grey[200]
                                       : Theme.of(context).primaryColor,
-                                  foregroundColor: _isFollowing
-                                      ? Colors.black
-                                      : Colors.white,
+                                  foregroundColor:
+                                      isFollowing ? Colors.black : Colors.white,
                                 ),
                                 child: _isLoading
                                     ? const SizedBox(
@@ -311,188 +286,181 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         ),
                                       )
                                     : Text(
-                                        _isFollowing ? 'Following' : 'Follow'),
+                                        isFollowing ? 'Following' : 'Follow'),
                               ),
-                            ),
-                          const SizedBox(height: 20),
-                          // Divider before videos
-                          const Divider(height: 1),
-                        ],
-                      ),
-                    ),
-                    // Videos Grid
-                    StreamBuilder<List<Video>>(
-                      stream: videoService.getUserVideos(
-                          isCurrentUser ? currentUser!.id : widget.userId!),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const SliverFillRemaining(
-                            child: Center(
-                              child: CircularProgressIndicator(),
-                            ),
-                          );
-                        }
+                            );
+                          },
+                        ),
+                      const SizedBox(height: 20),
+                      // Divider before videos
+                      const Divider(height: 1),
+                    ],
+                  ),
+                ),
+                // Videos Grid
+                StreamBuilder<List<Video>>(
+                  stream: videoService.getUserVideos(targetUserId),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const SliverFillRemaining(
+                        child: Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+                    }
 
-                        if (snapshot.hasError) {
-                          return SliverFillRemaining(
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(
-                                    Icons.error_outline,
-                                    size: 48,
-                                    color: Colors.grey,
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'Something went wrong',
-                                    style:
-                                        Theme.of(context).textTheme.titleMedium,
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    'Please try again later',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(
-                                          color: Colors.grey[600],
-                                        ),
-                                  ),
-                                ],
+                    if (snapshot.hasError) {
+                      return SliverFillRemaining(
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.error_outline,
+                                size: 48,
+                                color: Colors.grey,
                               ),
-                            ),
-                          );
-                        }
-
-                        final videos = snapshot.data ?? [];
-
-                        if (videos.isEmpty) {
-                          return SliverFillRemaining(
-                            child: Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.videocam_off,
-                                    size: 48,
-                                    color: Colors.grey[400],
-                                  ),
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    'No flips found',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(
-                                          color: Colors.grey[600],
-                                        ),
-                                  ),
-                                ],
+                              const SizedBox(height: 16),
+                              Text(
+                                'Something went wrong',
+                                style: Theme.of(context).textTheme.titleMedium,
                               ),
-                            ),
-                          );
-                        }
+                              const SizedBox(height: 8),
+                              Text(
+                                'Please try again later',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
 
-                        return SliverPadding(
-                          padding: const EdgeInsets.all(1),
-                          sliver: SliverGrid(
-                            gridDelegate:
-                                const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 3,
-                              mainAxisSpacing: 1,
-                              crossAxisSpacing: 1,
-                              childAspectRatio: 0.8,
-                            ),
-                            delegate: SliverChildBuilderDelegate(
-                              (context, index) {
-                                final video = videos[index];
-                                return GestureDetector(
-                                  onTap: () {
-                                    MainNavigationScreen.jumpToVideo(
-                                      context,
-                                      video.id,
-                                      showBackButton: true,
-                                    );
-                                  },
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      if (video.thumbnailURL.isNotEmpty)
-                                        CachedNetworkImage(
-                                          imageUrl: video.thumbnailURL,
-                                          fit: BoxFit.cover,
-                                          placeholder: (context, url) =>
-                                              Container(
-                                            color: Colors.grey[300],
-                                            child: const Center(
-                                              child:
-                                                  CircularProgressIndicator(),
-                                            ),
-                                          ),
-                                          errorWidget: (context, url, error) =>
-                                              Container(
-                                            color: Colors.grey[300],
-                                            child: const Icon(Icons.error),
-                                          ),
-                                        )
-                                      else
-                                        Container(
-                                          color: Colors.grey[300],
-                                          child:
-                                              const Icon(Icons.video_library),
-                                        ),
-                                      if (video.likesCount > 0)
-                                        Positioned(
-                                          bottom: 8,
-                                          left: 8,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  Colors.black.withOpacity(0.6),
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(
-                                                  Icons.play_arrow,
-                                                  color: Colors.white,
-                                                  size: 16,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  video.likesCount.toString(),
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
+                    final videos = snapshot.data ?? [];
+
+                    if (videos.isEmpty) {
+                      return SliverFillRemaining(
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.videocam_off,
+                                size: 48,
+                                color: Colors.grey[400],
+                              ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No flips found',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleMedium
+                                    ?.copyWith(
+                                      color: Colors.grey[600],
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
+
+                    return SliverPadding(
+                      padding: const EdgeInsets.all(1),
+                      sliver: SliverGrid(
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          mainAxisSpacing: 1,
+                          crossAxisSpacing: 1,
+                          childAspectRatio: 0.8,
+                        ),
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final video = videos[index];
+                            return GestureDetector(
+                              onTap: () {
+                                MainNavigationScreen.jumpToVideo(
+                                  context,
+                                  video.id,
+                                  showBackButton: true,
                                 );
                               },
-                              childCount: videos.length,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  if (video.thumbnailURL.isNotEmpty)
+                                    CachedNetworkImage(
+                                      imageUrl: video.thumbnailURL,
+                                      fit: BoxFit.cover,
+                                      placeholder: (context, url) => Container(
+                                        color: Colors.grey[300],
+                                        child: const Center(
+                                          child: CircularProgressIndicator(),
+                                        ),
+                                      ),
+                                      errorWidget: (context, url, error) =>
+                                          Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(Icons.error),
+                                      ),
+                                    )
+                                  else
+                                    Container(
+                                      color: Colors.grey[300],
+                                      child: const Icon(Icons.video_library),
+                                    ),
+                                  if (video.likesCount > 0)
+                                    Positioned(
+                                      bottom: 8,
+                                      left: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.6),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.play_arrow,
+                                              color: Colors.white,
+                                              size: 16,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              video.likesCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          },
+                          childCount: videos.length,
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
+              ],
+            ),
           );
         },
       ),

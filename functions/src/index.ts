@@ -431,6 +431,8 @@ export const followUser = functions.https.onCall(async (data: CallableRequest<Fo
   const followerId = data.auth.uid;
   const followingId = data.data.followingId;
 
+  console.log(`Follow request initiated: ${followerId} -> ${followingId}`);
+
   if (!followingId) {
     throw new functions.https.HttpsError("invalid-argument", "Must provide a user to follow");
   }
@@ -445,6 +447,7 @@ export const followUser = functions.https.onCall(async (data: CallableRequest<Fo
   try {
     // Use transaction to ensure atomic updates
     await db.runTransaction(async (transaction) => {
+      console.log("Starting follow transaction");
       const followerRef = db.collection("users").doc(followerId);
       const followingRef = db.collection("users").doc(followingId);
 
@@ -454,10 +457,20 @@ export const followUser = functions.https.onCall(async (data: CallableRequest<Fo
         transaction.get(followingRef),
       ]);
 
+      console.log("Current follower data:", followerDoc.data());
+      console.log("Current following data:", followingDoc.data());
+
       if (!followerDoc.exists || !followingDoc.exists) {
         throw new functions.https.HttpsError("not-found", "One or both users do not exist");
       }
 
+      // Check if already following
+      const followDocSnapshot = await transaction.get(followDoc);
+      if (followDocSnapshot.exists) {
+        throw new functions.https.HttpsError("already-exists", "Already following this user");
+      }
+
+      console.log("Creating follow document");
       // Create follow relationship
       transaction.set(followDoc, {
         followerId,
@@ -465,18 +478,27 @@ export const followUser = functions.https.onCall(async (data: CallableRequest<Fo
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
+      console.log("Updating follower count");
       // Update follower/following counts
       transaction.update(followerRef, {
         followingCount: admin.firestore.FieldValue.increment(1),
       });
+
+      console.log("Updating following count");
       transaction.update(followingRef, {
         followersCount: admin.firestore.FieldValue.increment(1),
       });
+
+      console.log("Transaction completed successfully");
     });
 
+    console.log("Follow operation successful");
     return { success: true };
   } catch (error) {
     console.error("Error following user:", error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     throw new functions.https.HttpsError("internal", "Failed to follow user");
   }
 });
@@ -523,6 +545,56 @@ export const unfollowUser = functions.https.onCall(async (data: CallableRequest<
     return { success: true };
   } catch (error) {
     console.error("Error unfollowing user:", error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     throw new functions.https.HttpsError("internal", "Failed to unfollow user");
   }
 });
+
+// Add trigger for follows collection changes
+export const onFollowChange = onDocumentWritten(
+  "follows/{followId}",
+  async (event) => {
+    const beforeData = event.data?.before.data();
+    const afterData = event.data?.after.data();
+    const followId = event.params.followId;
+
+    console.log(`Follow document change detected: ${followId}`);
+    console.log("Before:", beforeData);
+    console.log("After:", afterData);
+
+    try {
+      const db = admin.firestore();
+
+      // Document was deleted
+      if (beforeData && !afterData) {
+        console.log("Follow relationship deleted");
+        return;
+      }
+
+      // Document was created or updated
+      if (afterData) {
+        const { followerId, followingId, createdAt } = afterData;
+        console.log(`Follow relationship: ${followerId} -> ${followingId}`);
+        console.log("Created at:", createdAt);
+
+        // Verify document ID matches the data
+        const expectedId = `${followerId}_${followingId}`;
+        if (followId !== expectedId) {
+          console.error(`Invalid follow document ID. Expected: ${expectedId}, Got: ${followId}`);
+          // Fix the document ID
+          const followRef = event.data?.after.ref;
+          if (followRef) {
+            await db.runTransaction(async (transaction) => {
+              transaction.delete(followRef);
+              transaction.set(db.collection("follows").doc(expectedId), afterData);
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error in onFollowChange:", error);
+    }
+  }
+);
