@@ -24,12 +24,12 @@ class FeedScreen extends StatefulWidget {
   final VoidCallback? onBack;
 
   const FeedScreen({
-    Key? key,
+    super.key,
     this.isVisible = true,
     this.initialVideoId,
     this.showBackButton = false,
     this.onBack,
-  }) : super(key: key);
+  });
 
   @override
   State<FeedScreen> createState() => FeedScreenState();
@@ -309,7 +309,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   final UserService _userService = UserService();
   final CommentService _commentService = CommentService();
   List<Video> _videos = [];
-  Map<String, Map<String, dynamic>> _usersData = {};
+  final Map<String, Map<String, dynamic>> _usersData = {};
   bool _isLoading = false;
   bool _isLoadingMore = false;
   bool _hasMoreVideos = true;
@@ -318,7 +318,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   late VideoControllerManager _controllerManager;
   String? _error;
   int _currentPage = 0;
-  Set<String> _processedVideoIds = {}; // Track processed video IDs
+  final Set<String> _processedVideoIds = {}; // Track processed video IDs
   String? _targetVideoId; // Add this property to track target video
   bool _hasInitializedControllers = false;
   bool _isFollowingFeed = false; // Track current feed type
@@ -420,7 +420,8 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     } else if (widget.isVisible && _currentPage >= 0) {
       // Resume current video if feed becomes visible
       _controllerManager.getController(_currentPage).then((controller) {
-        if (controller != null) {
+        if (controller != null && mounted) {
+          print('FeedScreen: Resuming video at index $_currentPage');
           controller.play();
           controller.setLooping(true);
         }
@@ -491,16 +492,55 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     print('FeedScreen: Attempting to jump to video $videoId');
     setState(() {
       _targetVideoId = videoId;
+      _isLoading = true; // Show loading state while we prepare the video
     });
 
     // Find the index of the video
     final index = _videos.indexWhere((v) => v.id == videoId);
     if (index != -1) {
-      print('FeedScreen: Found video at index $index, jumping to it');
-      _pageController.jumpToPage(index);
+      print('FeedScreen: Found video at index $index, preparing to jump');
+      // Initialize the controller for this specific video first
+      _controllerManager.updateCurrentIndex(index, _videos).then((_) async {
+        if (mounted) {
+          // Get the controller to ensure it's ready
+          final controller = await _controllerManager.getController(index);
+          if (controller != null && controller.value.isInitialized) {
+            print('FeedScreen: Controller ready for playback');
+            setState(() {
+              _isLoading = false;
+              _currentPage = index;
+            });
+
+            // Schedule the jump for the next frame to ensure PageView is ready
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _pageController.hasClients) {
+                print('FeedScreen: Executing jump to page $index');
+                _pageController.jumpToPage(index);
+
+                // Ensure video starts playing
+                controller.play();
+                controller.setLooping(true);
+              }
+            });
+          } else {
+            print('FeedScreen: Controller not ready, retrying initialization');
+            // If controller isn't ready, retry initialization
+            await _initializeControllers();
+          }
+        }
+      });
     } else {
-      print(
-          'FeedScreen: Video not found in current list, waiting for stream update');
+      print('FeedScreen: Video not found in current list, reloading feed');
+      // Reset the feed and load videos again
+      setState(() {
+        _lastDocument = null;
+        _hasMoreVideos = true;
+        _videos.clear();
+        _processedVideoIds.clear();
+        _controllerManager.disposeAll();
+        _hasInitializedControllers = false;
+      });
+      _loadVideos();
     }
   }
 
@@ -516,6 +556,22 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     try {
       await _videoSubscription?.cancel();
       print('FeedScreen: Cancelled existing subscription');
+
+      // If we have a target video, load it first
+      if (_targetVideoId != null) {
+        try {
+          print('FeedScreen: Attempting to load target video: $_targetVideoId');
+          final targetVideo = await _videoService.getVideoById(_targetVideoId!);
+          if (targetVideo != null) {
+            print('FeedScreen: Successfully loaded target video');
+            _videos.add(targetVideo);
+            _processedVideoIds.add(targetVideo.id);
+            await _loadUserData([targetVideo]);
+          }
+        } catch (e) {
+          print('FeedScreen: Error loading target video: $e');
+        }
+      }
 
       final stream = _isFollowingFeed
           ? _videoService.getFollowingFeed(limit: 5)
@@ -573,6 +629,18 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
           // Initialize controllers
           await _initializeControllers();
+
+          // If we have a target video, jump to it
+          if (_targetVideoId != null) {
+            final targetIndex =
+                _videos.indexWhere((v) => v.id == _targetVideoId);
+            if (targetIndex != -1) {
+              print(
+                  'FeedScreen: Found target video at index $targetIndex, jumping to it');
+              _pageController.jumpToPage(targetIndex);
+              _targetVideoId = null;
+            }
+          }
         }
       }, onError: (error) {
         print('FeedScreen: Error loading videos: $error');
@@ -793,14 +861,14 @@ class VideoFeedItem extends StatefulWidget {
   final Future<VideoPlayerController?> Function(int index) getController;
 
   const VideoFeedItem({
-    Key? key,
+    super.key,
     required this.video,
     this.userData,
     this.isVisible = true,
     required this.index,
     required this.currentPage,
     required this.getController,
-  }) : super(key: key);
+  });
 
   @override
   State<VideoFeedItem> createState() => _VideoFeedItemState();
@@ -824,7 +892,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   // Like animation controller
   late AnimationController _likeAnimationController;
   bool _isLiked = false;
-  bool _isLiking = false;
+  final bool _isLiking = false;
   bool _showLikeAnimation = false;
   final VideoService _videoService = VideoService();
   StreamSubscription<bool>? _likeStatusSubscription;
@@ -833,7 +901,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   DateTime? _lastTapTime;
   Timer? _doubleTapTimer;
-  bool _isHandlingDoubleTap = false;
+  final bool _isHandlingDoubleTap = false;
   bool _isLongPressing = false;
 
   // Queue system for like actions
@@ -1256,8 +1324,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
-                width: _videoController?.value.size?.width ?? 0,
-                height: _videoController?.value.size?.height ?? 0,
+                width: _videoController?.value.size.width ?? 0,
+                height: _videoController?.value.size.height ?? 0,
                 child: VideoPlayer(_videoController!),
               ),
             ),

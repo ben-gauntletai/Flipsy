@@ -671,4 +671,24 @@ class VideoService {
       return [];
     }
   }
+
+  // Get a single video by ID
+  Future<Video?> getVideoById(String videoId) async {
+    try {
+      print('VideoService: Fetching video by ID: $videoId');
+      final doc = await _firestore.collection('videos').doc(videoId).get();
+
+      if (!doc.exists) {
+        print('VideoService: Video not found: $videoId');
+        return null;
+      }
+
+      final video = Video.fromFirestore(doc);
+      print('VideoService: Successfully fetched video: ${video.id}');
+      return video;
+    } catch (e) {
+      print('VideoService: Error fetching video by ID: $e');
+      return null;
+    }
+  }
 }
