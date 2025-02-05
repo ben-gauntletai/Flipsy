@@ -173,13 +173,21 @@ class AuthService {
         return null;
       }
 
-      print('AuthService: User profile document exists, creating UserModel');
-      final userModel = UserModel.fromFirestore(doc);
-      print('AuthService: UserModel created successfully');
-      return userModel;
+      try {
+        print('AuthService: User profile document exists, creating UserModel');
+        final userModel = UserModel.fromFirestore(doc);
+        print('AuthService: UserModel created successfully');
+        return userModel;
+      } catch (e) {
+        print('AuthService: Error converting document to UserModel: $e');
+        print('AuthService: Raw document data: ${doc.data()}');
+        // Instead of throwing, return null to allow graceful handling
+        return null;
+      }
     } catch (e) {
       print('AuthService: Error getting user profile: $e');
-      throw Exception('Failed to get user profile: $e');
+      // Instead of throwing, return null to allow graceful handling
+      return null;
     }
   }
 
@@ -229,21 +237,20 @@ class AuthService {
         case 'email-already-in-use':
           return Exception('The email address is already in use.');
         case 'invalid-email':
-          return Exception('The email address is invalid.');
+          return Exception('Please enter a valid email address.');
+        case 'weak-password':
+          return Exception('The password provided is too weak.');
         case 'operation-not-allowed':
           return Exception('Email/password accounts are not enabled.');
-        case 'weak-password':
-          return Exception('The password is too weak.');
-        case 'invalid-credential':
-          return Exception('The email or password is incorrect.');
+        case 'user-disabled':
+          return Exception('This account has been disabled.');
+        case 'too-many-requests':
+          return Exception('Too many attempts. Please try again later.');
+        case 'network-request-failed':
+          return Exception('Network error. Please check your connection.');
         default:
-          return Exception(e.message ?? 'An unknown error occurred.');
+          return Exception('An unknown error occurred. Please try again.');
       }
-    }
-
-    // If it's already an Exception, return it as is
-    if (e is Exception) {
-      return e;
     }
 
     return Exception('An unknown error occurred. Please try again.');

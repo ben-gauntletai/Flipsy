@@ -101,12 +101,14 @@ Stores user notifications.
 ```typescript
 {
   userId: string;         // Recipient user
-  type: 'like' | 'comment' | 'follow';
+  type: 'like' | 'comment' | 'follow' | 'video_post';  // Type of notification
   sourceUserId: string;   // User who triggered the notification
   videoId?: string;      // Referenced video if applicable
   commentId?: string;    // Referenced comment if applicable
   createdAt: timestamp;
   read: boolean;
+  videoThumbnailURL?: string;  // Thumbnail URL for video post notifications
+  videoDescription?: string;   // Description for video post notifications
 }
 ```
 

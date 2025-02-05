@@ -166,7 +166,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         initialData: isCurrentUser
             ? {
                 'displayName': currentUser!.displayName,
-                'username': currentUser!.username,
                 'avatarURL': currentUser!.avatarURL,
                 'followingCount': currentUser!.followingCount,
                 'followersCount': currentUser!.followersCount,
@@ -181,7 +180,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           final userData = userStreamSnapshot.data!;
           final displayName = userData['displayName'] as String? ?? 'User';
-          final username = userData['username'] as String? ?? displayName;
           final avatarURL = userData['avatarURL'] as String?;
           final bio = userData['bio'] as String? ?? '';
           final followingCount = userData['followingCount'] as int? ?? 0;
@@ -221,9 +219,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             radius: profileSectionHeight *
                                 0.15, // Proportional to section height
                           ),
-                          // Username
+                          // Display Name
                           Text(
-                            '@$username',
+                            displayName,
                             style: Theme.of(context)
                                 .textTheme
                                 .titleMedium

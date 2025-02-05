@@ -12,7 +12,6 @@ import * as admin from "firebase-admin";
 import {
   onDocumentCreated,
   onDocumentDeleted,
-  onDocumentWritten,
   onDocumentUpdated,
 } from "firebase-functions/v2/firestore";
 import { CallableRequest, onCall } from "firebase-functions/v2/https";
@@ -361,7 +360,7 @@ export const onCommentDeleted = onDocumentDeleted(
 );
 
 // Function to handle comment like changes
-export const onCommentLikeChange = onDocumentWritten(
+export const onCommentLikeChange = onDocumentUpdated(
   "videos/{videoId}/comments/{commentId}/likes/{userId}",
   async (event) => {
     const { videoId, commentId, userId } = event.params;
@@ -558,7 +557,7 @@ export const unfollowUser = functions.https.onCall(async (data: CallableRequest<
 });
 
 // Add trigger for follows collection changes
-export const onFollowChange = onDocumentWritten(
+export const onFollowChange = onDocumentUpdated(
   "follows/{followId}",
   async (event) => {
     const beforeData = event.data?.before.data();
@@ -698,5 +697,52 @@ export const recalculateUserTotalLikes = onCall(async (request: CallableRequest)
   } catch (error) {
     console.error("Error in recalculateUserTotalLikes:", error);
     throw new Error("Failed to recalculate total likes");
+  }
+});
+
+export const onVideoCreated = onDocumentCreated("videos/{videoId}", async (event) => {
+  const snapshot = event.data;
+  if (!snapshot) {
+    console.log("No data associated with the event");
+    return;
+  }
+
+  const videoData = snapshot.data();
+  const videoId = event.params.videoId;
+  const db = admin.firestore();
+  const batch = db.batch();
+
+  try {
+    // Get all followers of the video creator
+    const followersSnapshot = await db
+      .collection("follows")
+      .where("followingId", "==", videoData.userId)
+      .get();
+
+    // Create notifications for each follower
+    followersSnapshot.docs.forEach((doc) => {
+      const notificationRef = db.collection("notifications").doc();
+      batch.set(notificationRef, {
+        userId: doc.data().followerId,
+        type: "video_post",
+        sourceUserId: videoData.userId,
+        videoId: videoId,
+        videoThumbnailURL: videoData.thumbnailURL,
+        videoDescription: videoData.description,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        read: false,
+      });
+    });
+
+    // Update user's totalVideos count
+    const userRef = db.collection("users").doc(videoData.userId);
+    batch.update(userRef, {
+      totalVideos: admin.firestore.FieldValue.increment(1),
+    });
+
+    await batch.commit();
+    console.log("Successfully processed video creation and notifications");
+  } catch (error) {
+    console.error("Error in onVideoCreated:", error);
   }
 });

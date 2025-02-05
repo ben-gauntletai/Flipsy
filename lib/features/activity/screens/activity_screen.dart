@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 import '../../../services/user_service.dart';
 import '../../../widgets/user_avatar.dart';
 import '../../../features/navigation/screens/main_navigation_screen.dart';
@@ -16,7 +17,26 @@ class ActivityScreen extends StatefulWidget {
 class _ActivityScreenState extends State<ActivityScreen> {
   final UserService _userService = UserService();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final String _currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  String? _currentUserId;
+  StreamSubscription<User?>? _authSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (mounted) {
+        setState(() {
+          _currentUserId = user?.uid;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> _handleFollowAction(String userId, bool isFollowing) async {
     print('ActivityScreen: Handling follow action');
@@ -90,13 +110,10 @@ class _ActivityScreenState extends State<ActivityScreen> {
 
   Widget _buildNotificationItem(Map<String, dynamic> notification) {
     final sourceUserId = notification['sourceUserId'] as String;
-    print('ActivityScreen: Building notification item');
-    print('ActivityScreen: Notification source user: $sourceUserId');
-    print('ActivityScreen: Current user: $_currentUserId');
+    final notificationType = notification['type'] as String;
 
     // Skip notifications from yourself
     if (sourceUserId == _currentUserId) {
-      print('ActivityScreen: Skipping self notification');
       return const SizedBox.shrink();
     }
 
@@ -113,6 +130,66 @@ class _ActivityScreenState extends State<ActivityScreen> {
           allowFromNow: true,
         );
 
+        if (notificationType == 'video_post') {
+          return ListTile(
+            leading: GestureDetector(
+              onTap: () {
+                MainNavigationScreen.showUserProfile(context, sourceUserId);
+              },
+              child: UserAvatar(
+                avatarURL: userData['avatarURL'] as String?,
+                radius: 24,
+              ),
+            ),
+            title: RichText(
+              text: TextSpan(
+                style: const TextStyle(color: Colors.black87),
+                children: [
+                  TextSpan(
+                    text: userData['displayName'] as String,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const TextSpan(text: ' posted a new video'),
+                ],
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(timeAgo),
+                if (notification['videoDescription'] != null)
+                  Text(
+                    notification['videoDescription'] as String,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+              ],
+            ),
+            trailing: notification['videoThumbnailURL'] != null
+                ? GestureDetector(
+                    onTap: () {
+                      MainNavigationScreen.jumpToVideo(
+                        context,
+                        notification['videoId'] as String,
+                        showBackButton: true,
+                      );
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        notification['videoThumbnailURL'] as String,
+                        width: 50,
+                        height: 50,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  )
+                : null,
+          );
+        }
+
+        // Follow notification (existing code)
         return StreamBuilder<bool>(
           stream: _userService.watchFollowStatus(sourceUserId),
           builder: (context, followSnapshot) {
@@ -121,10 +198,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
             return ListTile(
               leading: GestureDetector(
                 onTap: () {
-                  MainNavigationScreen.showUserProfile(
-                    context,
-                    sourceUserId,
-                  );
+                  MainNavigationScreen.showUserProfile(context, sourceUserId);
                 },
                 child: UserAvatar(
                   avatarURL: userData['avatarURL'] as String?,
@@ -147,10 +221,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
               trailing: SizedBox(
                 width: 110,
                 child: TextButton(
-                  onPressed: () => _handleFollowAction(
-                    sourceUserId,
-                    isFollowing,
-                  ),
+                  onPressed: () =>
+                      _handleFollowAction(sourceUserId, isFollowing),
                   style: TextButton.styleFrom(
                     backgroundColor:
                         isFollowing ? Colors.grey[200] : Colors.blue,
@@ -173,6 +245,24 @@ class _ActivityScreenState extends State<ActivityScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // If not authenticated, show a message
+    if (_currentUserId == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Activity'),
+        ),
+        body: const Center(
+          child: Text(
+            'Please sign in to view your activity',
+            style: TextStyle(
+              color: Colors.black54,
+              fontSize: 16,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Activity'),
@@ -181,7 +271,7 @@ class _ActivityScreenState extends State<ActivityScreen> {
         stream: _firestore
             .collection('notifications')
             .where('userId', isEqualTo: _currentUserId)
-            .where('type', isEqualTo: 'follow')
+            .where('type', whereIn: ['follow', 'video_post'])
             .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
