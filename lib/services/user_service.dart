@@ -58,62 +58,131 @@ class UserService {
         .snapshots()
         .map((snapshot) {
       print('Received user data update for $userId: ${snapshot.data()}');
+
+      // Default user data with all required fields
+      final Map<String, dynamic> defaultData = {
+        'displayName': 'Unknown User',
+        'avatarURL': null,
+        'followersCount': 0,
+        'followingCount': 0,
+        'totalLikes': 0,
+        'totalVideos': 0,
+      };
+
       if (!snapshot.exists) {
-        return {
-          'displayName': 'Unknown User',
-          'avatarURL': null,
-          'followersCount': 0,
-          'followingCount': 0,
-          'totalLikes': 0,
-        };
+        print('No user data found for $userId, using defaults');
+        return defaultData;
       }
+
       final data = snapshot.data() as Map<String, dynamic>;
-      // Update cache
-      _userCache[userId] = data;
-      return data;
+
+      // Ensure all required fields exist with proper types
+      final Map<String, dynamic> sanitizedData = {
+        ...defaultData,
+        ...data,
+        // Ensure counts are integers
+        'followersCount': (data['followersCount'] ?? 0) as int,
+        'followingCount': (data['followingCount'] ?? 0) as int,
+        'totalLikes': (data['totalLikes'] ?? 0) as int,
+        'totalVideos': (data['totalVideos'] ?? 0) as int,
+      };
+
+      print('Sanitized user data for $userId: $sanitizedData');
+
+      // Update cache with sanitized data
+      _userCache[userId] = sanitizedData;
+      return sanitizedData;
     });
   }
 
   Future<bool> followUser(String userId) async {
+    print('Attempting to follow user: $userId');
     try {
       final functions = FirebaseFunctions.instance;
       final callable = functions.httpsCallable('followUser');
-      final result = await callable.call<Map<String, dynamic>>({
-        'followingId': userId,
-      });
 
-      // Clear cache for both users
+      // Clear cache before the operation to ensure fresh data
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser != null) {
+        print(
+            'Pre-emptively clearing cache for users: ${currentUser.uid} and $userId');
         _userCache.remove(currentUser.uid);
         _userCache.remove(userId);
       }
 
+      final result = await callable.call<Map<String, dynamic>>({
+        'followingId': userId,
+      });
+
+      print('Follow operation result: ${result.data}');
+
+      // Force a refresh of the user data after the operation
+      if (currentUser != null) {
+        print('Forcing refresh of user data after follow operation');
+        await getUserData(currentUser.uid);
+        await getUserData(userId);
+      }
+
       return result.data['success'] as bool;
     } catch (e) {
-      print('Error following user: $e');
+      print('Error following user $userId: $e');
+      if (e is FirebaseFunctionsException) {
+        switch (e.code) {
+          case 'not-found':
+            throw 'User not found';
+          case 'already-exists':
+            throw 'Already following this user';
+          case 'permission-denied':
+            throw 'Permission denied';
+          default:
+            throw 'Failed to follow user';
+        }
+      }
       rethrow;
     }
   }
 
   Future<bool> unfollowUser(String userId) async {
+    print('Attempting to unfollow user: $userId');
     try {
       final functions = FirebaseFunctions.instance;
       final callable = functions.httpsCallable('unfollowUser');
-      final result = await callable.call<Map<String, dynamic>>({
-        'followingId': userId,
-      });
 
-      // Clear cache for both users
+      // Clear cache before the operation to ensure fresh data
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser != null) {
+        print(
+            'Pre-emptively clearing cache for users: ${currentUser.uid} and $userId');
         _userCache.remove(currentUser.uid);
         _userCache.remove(userId);
       }
 
+      final result = await callable.call<Map<String, dynamic>>({
+        'followingId': userId,
+      });
+
+      print('Unfollow operation result: ${result.data}');
+
+      // Force a refresh of the user data after the operation
+      if (currentUser != null) {
+        print('Forcing refresh of user data after unfollow operation');
+        await getUserData(currentUser.uid);
+        await getUserData(userId);
+      }
+
       return result.data['success'] as bool;
     } catch (e) {
-      print('Error unfollowing user: $e');
+      print('Error unfollowing user $userId: $e');
+      if (e is FirebaseFunctionsException) {
+        switch (e.code) {
+          case 'not-found':
+            throw 'Not following this user';
+          case 'permission-denied':
+            throw 'Permission denied';
+          default:
+            throw 'Failed to unfollow user';
+        }
+      }
       rethrow;
     }
   }
@@ -123,12 +192,15 @@ class UserService {
       final currentUser = FirebaseAuth.instance.currentUser;
       if (currentUser == null) return false;
 
+      print('Checking follow status: ${currentUser.uid} -> $userId');
       final followDoc = await FirebaseFirestore.instance
           .collection('follows')
           .doc('${currentUser.uid}_$userId')
           .get();
 
-      return followDoc.exists;
+      final exists = followDoc.exists;
+      print('Follow relationship exists: $exists');
+      return exists;
     } catch (e) {
       print('Error checking follow status: $e');
       return false;
