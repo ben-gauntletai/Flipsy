@@ -129,11 +129,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
   }
 
   Widget _buildCommentsList(List<Comment> comments) {
-    // Filter to get only top-level comments
-    final topLevelComments =
-        comments.where((c) => c.replyToId == null).toList();
-
-    if (topLevelComments.isEmpty) {
+    if (comments.isEmpty) {
       return const Center(
         child: Text(
           'No comments yet',
@@ -178,14 +174,12 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              StreamBuilder<List<Comment>>(
-                stream: _commentStream,
+              StreamBuilder<int>(
+                stream: _commentCountStream,
                 builder: (context, snapshot) {
-                  final comments = snapshot.data ?? [];
-                  final topLevelCount =
-                      comments.where((c) => c.replyToId == null).length;
+                  final count = snapshot.data ?? 0;
                   return Text(
-                    '$topLevelCount ${topLevelCount == 1 ? 'comment' : 'comments'}',
+                    '$count ${count == 1 ? 'comment' : 'comments'}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 16,
@@ -377,8 +371,8 @@ class _CommentItem extends StatelessWidget {
                             fontSize: 12,
                           ),
                         ),
-                        // Only show reply button for top-level comments
-                        if (comment.replyToId == null) ...[
+                        // Show reply button only for parent comments (not replies)
+                        if (comment.depth == 0) ...[
                           const SizedBox(width: 16),
                           GestureDetector(
                             onTap: () => onReply(username, comment.id),
@@ -392,16 +386,14 @@ class _CommentItem extends StatelessWidget {
                             ),
                           ),
                         ],
-                        // Only show reply count for parent comments
-                        if (comment.replyToId == null &&
-                            comment.replyCount > 0) ...[
+                        // Show reply count for parent comments
+                        if (comment.depth == 0 && comment.replyCount > 0) ...[
                           const SizedBox(width: 16),
                           Text(
                             '${comment.replyCount} ${comment.replyCount == 1 ? 'reply' : 'replies'}',
                             style: const TextStyle(
                               color: Colors.white54,
                               fontSize: 12,
-                              fontWeight: FontWeight.w500,
                             ),
                           ),
                         ],

@@ -118,71 +118,75 @@ export const createUser = functions.https.onCall(async (request) => {
 });
 
 // Function to handle comment creation
-export const onCommentCreated = onDocumentCreated("videos/{videoId}/comments/{commentId}", async (event) => {
-  const commentData = event.data?.data();
-  const { videoId } = event.params;
+export const onCommentCreated = onDocumentCreated(
+  "videos/{videoId}/comments/{commentId}",
+  async (event) => {
+    const commentData = event.data?.data();
+    const { videoId } = event.params;
 
-  if (!commentData) return;
-
-  try {
-    const db = admin.firestore();
-    const batch = db.batch();
-
-    // Increment the video's comment count
-    const videoRef = db.collection("videos").doc(videoId);
-    batch.update(videoRef, {
-      commentsCount: admin.firestore.FieldValue.increment(1),
-    });
-
-    // If this is a reply, increment the parent comment's reply count
-    if (commentData.replyToId) {
-      const parentCommentRef = db
-        .collection("videos")
-        .doc(videoId)
-        .collection("comments")
-        .doc(commentData.replyToId);
-      batch.update(parentCommentRef, {
-        replyCount: admin.firestore.FieldValue.increment(1),
-      });
+    if (!commentData) {
+      console.log("No comment data found for creation event");
+      return;
     }
 
-    // Get video data to find the video owner
-    const videoDoc = await videoRef.get();
-    const videoData = videoDoc.data();
+    try {
+      const db = admin.firestore();
+      const batch = db.batch();
 
-    if (videoData && videoData.userId !== commentData.userId) {
-      // Create notification for video owner
-      const notificationRef = db.collection("notifications").doc();
-      batch.set(notificationRef, {
-        userId: videoData.userId,
-        type: "comment",
-        sourceUserId: commentData.userId,
-        videoId,
+      console.log(`Processing comment creation for video ${videoId}:`, {
         commentId: event.params.commentId,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        read: false,
+        isReply: !!commentData.replyToId,
+        depth: commentData.depth,
       });
-    }
 
-    // If this is a reply and the parent comment is from a different user,
-    // create notification for parent comment owner
-    if (commentData.replyToId) {
-      const parentCommentDoc = await db
-        .collection("videos")
-        .doc(videoId)
-        .collection("comments")
-        .doc(commentData.replyToId)
-        .get();
-      const parentCommentData = parentCommentDoc.data();
+      // Only increment the video's comment count for parent comments
+      if (!commentData.replyToId && commentData.depth === 0) {
+        console.log("Incrementing video comment count - parent comment detected");
+        const videoRef = db.collection("videos").doc(videoId);
+        batch.update(videoRef, {
+          commentsCount: admin.firestore.FieldValue.increment(1),
+        });
+      } else {
+        console.log("Skipping comment count increment - this is a reply");
+      }
 
-      if (
-        parentCommentData &&
-        parentCommentData.userId !== commentData.userId
-      ) {
+      // If this is a reply, increment the parent comment's reply count
+      if (commentData.replyToId) {
+        console.log(`Incrementing reply count for parent comment ${commentData.replyToId}`);
+        const parentCommentRef = db
+          .collection("videos")
+          .doc(videoId)
+          .collection("comments")
+          .doc(commentData.replyToId);
+
+        // Verify parent comment exists and is actually a parent
+        const parentDoc = await parentCommentRef.get();
+        if (!parentDoc.exists) {
+          console.error("Parent comment not found");
+          return;
+        }
+
+        const parentData = parentDoc.data();
+        if (parentData?.depth !== 0) {
+          console.error("Invalid reply - parent comment is not a top-level comment");
+          return;
+        }
+
+        batch.update(parentCommentRef, {
+          replyCount: admin.firestore.FieldValue.increment(1),
+        });
+      }
+
+      // Get video data to find the video owner
+      const videoDoc = await db.collection("videos").doc(videoId).get();
+      const videoData = videoDoc.data();
+
+      if (videoData && videoData.userId !== commentData.userId) {
+        // Create notification for video owner
         const notificationRef = db.collection("notifications").doc();
         batch.set(notificationRef, {
-          userId: parentCommentData.userId,
-          type: "reply",
+          userId: videoData.userId,
+          type: "comment",
           sourceUserId: commentData.userId,
           videoId,
           commentId: event.params.commentId,
@@ -190,16 +194,26 @@ export const onCommentCreated = onDocumentCreated("videos/{videoId}/comments/{co
           read: false,
         });
       }
-    }
 
-    // Create notifications for mentioned users
-    if (commentData.mentions && commentData.mentions.length > 0) {
-      for (const mentionedUserId of commentData.mentions) {
-        if (mentionedUserId !== commentData.userId) {
+      // If this is a reply and the parent comment is from a different user,
+      // create notification for parent comment owner
+      if (commentData.replyToId) {
+        const parentCommentDoc = await db
+          .collection("videos")
+          .doc(videoId)
+          .collection("comments")
+          .doc(commentData.replyToId)
+          .get();
+        const parentCommentData = parentCommentDoc.data();
+
+        if (
+          parentCommentData &&
+          parentCommentData.userId !== commentData.userId
+        ) {
           const notificationRef = db.collection("notifications").doc();
           batch.set(notificationRef, {
-            userId: mentionedUserId,
-            type: "mention",
+            userId: parentCommentData.userId,
+            type: "reply",
             sourceUserId: commentData.userId,
             videoId,
             commentId: event.params.commentId,
@@ -208,100 +222,137 @@ export const onCommentCreated = onDocumentCreated("videos/{videoId}/comments/{co
           });
         }
       }
-    }
 
-    await batch.commit();
-  } catch (error) {
-    console.error("Error in onCommentCreated:", error);
+      // Create notifications for mentioned users
+      if (commentData.mentions && commentData.mentions.length > 0) {
+        for (const mentionedUserId of commentData.mentions) {
+          if (mentionedUserId !== commentData.userId) {
+            const notificationRef = db.collection("notifications").doc();
+            batch.set(notificationRef, {
+              userId: mentionedUserId,
+              type: "mention",
+              sourceUserId: commentData.userId,
+              videoId,
+              commentId: event.params.commentId,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              read: false,
+            });
+          }
+        }
+      }
+
+      await batch.commit();
+      console.log("Successfully processed comment creation");
+    } catch (error) {
+      console.error("Error in onCommentCreated:", error);
+    }
   }
-});
+);
 
 // Function to handle comment deletion
-export const onCommentDeleted = onDocumentDeleted("videos/{videoId}/comments/{commentId}", async (event) => {
-  const commentData = event.data?.data();
-  const { videoId } = event.params;
+export const onCommentDeleted = onDocumentDeleted(
+  "videos/{videoId}/comments/{commentId}",
+  async (event) => {
+    const commentData = event.data?.data();
+    const { videoId } = event.params;
 
-  if (!commentData) {
-    console.log("No comment data found for deletion event");
-    return;
-  }
+    if (!commentData) {
+      console.log("No comment data found for deletion event");
+      return;
+    }
 
-  try {
-    console.log(`Processing comment deletion for video ${videoId}, comment ${event.params.commentId}`);
-    const db = admin.firestore();
-    const batch = db.batch();
+    try {
+      console.log(`Processing comment deletion for video ${videoId}:`, {
+        commentId: event.params.commentId,
+        isReply: !!commentData.replyToId,
+        depth: commentData.depth,
+      });
 
-    // Decrement the video's comment count
-    const videoRef = db.collection("videos").doc(videoId);
-    batch.update(videoRef, {
-      commentsCount: admin.firestore.FieldValue.increment(-1),
-    });
+      const db = admin.firestore();
+      const batch = db.batch();
 
-    // If this was a reply, decrement the parent comment's reply count
-    if (commentData.replyToId) {
-      console.log(`Comment was a reply to ${commentData.replyToId}, updating parent comment`);
-      const parentCommentRef = db
+      // Only decrement the video's comment count for parent comments
+      if (!commentData.replyToId && commentData.depth === 0) {
+        console.log("Decrementing video comment count - parent comment detected");
+        const videoRef = db.collection("videos").doc(videoId);
+        batch.update(videoRef, {
+          commentsCount: admin.firestore.FieldValue.increment(-1),
+        });
+      } else {
+        console.log("Skipping comment count decrement - this is a reply");
+      }
+
+      // If this was a reply, decrement the parent comment's reply count
+      if (commentData.replyToId) {
+        console.log(`Decrementing reply count for parent comment ${commentData.replyToId}`);
+        const parentCommentRef = db
+          .collection("videos")
+          .doc(videoId)
+          .collection("comments")
+          .doc(commentData.replyToId);
+
+        // Check if parent comment exists before updating
+        const parentCommentDoc = await parentCommentRef.get();
+        if (parentCommentDoc.exists) {
+          const parentData = parentCommentDoc.data();
+          if (parentData?.depth === 0) {
+            batch.update(parentCommentRef, {
+              replyCount: admin.firestore.FieldValue.increment(-1),
+            });
+          } else {
+            console.log("Parent comment is not a top-level comment, skipping reply count update");
+          }
+        } else {
+          console.log(`Parent comment ${commentData.replyToId} not found`);
+        }
+      }
+
+      // Delete all likes for this comment
+      console.log("Deleting comment likes");
+      const likesSnapshot = await db
         .collection("videos")
         .doc(videoId)
         .collection("comments")
-        .doc(commentData.replyToId);
+        .doc(event.params.commentId)
+        .collection("likes")
+        .get();
 
-      // Check if parent comment exists before updating
-      const parentCommentDoc = await parentCommentRef.get();
-      if (parentCommentDoc.exists) {
-        batch.update(parentCommentRef, {
-          replyCount: admin.firestore.FieldValue.increment(-1),
-        });
-      } else {
-        console.log(`Parent comment ${commentData.replyToId} not found`);
-      }
+      likesSnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
+      // Delete all replies to this comment
+      console.log("Deleting comment replies");
+      const repliesSnapshot = await db
+        .collection("videos")
+        .doc(videoId)
+        .collection("comments")
+        .where("replyToId", "==", event.params.commentId)
+        .get();
+
+      repliesSnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
+      // Delete related notifications
+      console.log("Deleting related notifications");
+      const notificationsSnapshot = await db
+        .collection("notifications")
+        .where("videoId", "==", videoId)
+        .where("commentId", "==", event.params.commentId)
+        .get();
+
+      notificationsSnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
+      await batch.commit();
+      console.log("Successfully processed comment deletion");
+    } catch (error) {
+      console.error("Error in onCommentDeleted:", error);
     }
-
-    // Delete all likes for this comment
-    console.log("Deleting comment likes");
-    const likesSnapshot = await db
-      .collection("videos")
-      .doc(videoId)
-      .collection("comments")
-      .doc(event.params.commentId)
-      .collection("likes")
-      .get();
-
-    likesSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
-    // Delete all replies to this comment
-    console.log("Deleting comment replies");
-    const repliesSnapshot = await db
-      .collection("videos")
-      .doc(videoId)
-      .collection("comments")
-      .where("replyToId", "==", event.params.commentId)
-      .get();
-
-    repliesSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
-    // Delete related notifications
-    console.log("Deleting related notifications");
-    const notificationsSnapshot = await db
-      .collection("notifications")
-      .where("videoId", "==", videoId)
-      .where("commentId", "==", event.params.commentId)
-      .get();
-
-    notificationsSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
-    await batch.commit();
-    console.log("Successfully processed comment deletion");
-  } catch (error) {
-    console.error("Error in onCommentDeleted:", error);
   }
-});
+);
 
 // Function to handle comment like changes
 export const onCommentLikeChange = onDocumentWritten(

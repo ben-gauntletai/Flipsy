@@ -13,7 +13,6 @@ class CommentService {
   final String _currentUserId;
   final Map<String, BehaviorSubject<List<Comment>>> _commentSubjects = {};
   final Map<String, StreamSubscription<QuerySnapshot>> _subscriptions = {};
-  final Map<String, BehaviorSubject<int>> _commentCountSubjects = {};
 
   CommentService._internal()
       : _currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
@@ -33,13 +32,6 @@ class CommentService {
     if (commentSubject != null && !commentSubject.isClosed) {
       commentSubject.close();
       _commentSubjects.remove(videoId);
-    }
-
-    // Close the count subject
-    final countSubject = _commentCountSubjects[videoId];
-    if (countSubject != null && !countSubject.isClosed) {
-      countSubject.close();
-      _commentCountSubjects.remove(videoId);
     }
   }
 
@@ -105,7 +97,6 @@ class CommentService {
           // For each parent comment, add it and its replies
           for (var parent in parentComments) {
             organizedComments.add(parent);
-
             // Sort replies by creation time and add them
             final replies = repliesMap[parent.id] ?? [];
             replies.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -152,122 +143,84 @@ class CommentService {
     final user = _auth.currentUser;
     if (user == null) throw Exception('User must be logged in to comment');
 
-    final batch = _firestore.batch();
-    final commentRef = _firestore
-        .collection('videos')
-        .doc(videoId)
-        .collection('comments')
-        .doc();
-
-    int depth = 0;
-    if (replyToId != null) {
-      final parentComment = await _firestore
+    try {
+      final commentRef = _firestore
           .collection('videos')
           .doc(videoId)
           .collection('comments')
-          .doc(replyToId)
-          .get();
+          .doc();
 
-      if (parentComment.exists) {
-        final parentData = parentComment.data();
-        depth = (parentData?['depth'] as int? ?? 0) + 1;
-        // Limit nesting depth to 2 levels
-        if (depth > 2) depth = 2;
-      }
-    }
+      // Set depth to 1 for replies, 0 for parent comments
+      final depth = replyToId != null ? 1 : 0;
 
-    final comment = Comment(
-      id: commentRef.id,
-      userId: user.uid,
-      videoId: videoId,
-      text: text,
-      createdAt: DateTime.now(),
-      likesCount: 0,
-      replyToId: replyToId,
-      depth: depth,
-    );
+      final comment = Comment(
+        id: commentRef.id,
+        userId: user.uid,
+        videoId: videoId,
+        text: text,
+        createdAt: DateTime.now(),
+        likesCount: 0,
+        replyToId: replyToId,
+        depth: depth,
+        replyCount: 0,
+      );
 
-    batch.set(commentRef, comment.toMap());
+      // Let the cloud function handle all the counting
+      await commentRef.set(comment.toMap());
 
-    // Update video's comment count
-    final videoRef = _firestore.collection('videos').doc(videoId);
-    batch.update(videoRef, {
-      'commentsCount': FieldValue.increment(1),
-    });
+      // Try to create notification separately
+      if (replyToId != null) {
+        try {
+          final parentCommentRef = _firestore
+              .collection('videos')
+              .doc(videoId)
+              .collection('comments')
+              .doc(replyToId);
 
-    // If this is a reply, update parent comment's reply count
-    if (replyToId != null) {
-      final parentCommentRef = _firestore
-          .collection('videos')
-          .doc(videoId)
-          .collection('comments')
-          .doc(replyToId);
+          final parentComment = await parentCommentRef.get();
+          if (!parentComment.exists) {
+            throw Exception('Parent comment not found');
+          }
 
-      batch.update(parentCommentRef, {
-        'replyCount': FieldValue.increment(1),
-      });
+          final parentData = parentComment.data();
+          if (parentData?['depth'] != 0) {
+            throw Exception('Cannot reply to a reply');
+          }
 
-      // Create notification for reply
-      final parentComment = await parentCommentRef.get();
-      if (parentComment.exists) {
-        final parentUserId = parentComment.data()?['userId'] as String?;
-        if (parentUserId != null && parentUserId != user.uid) {
-          final notificationRef = _firestore.collection('notifications').doc();
-          batch.set(notificationRef, {
-            'type': 'comment_reply',
-            'recipientId': parentUserId,
-            'senderId': user.uid,
-            'videoId': videoId,
-            'commentId': commentRef.id,
-            'createdAt': FieldValue.serverTimestamp(),
-            'read': false,
-          });
+          final parentUserId = parentData?['userId'] as String?;
+          if (parentUserId != null && parentUserId != user.uid) {
+            await _firestore.collection('notifications').add({
+              'type': 'comment_reply',
+              'recipientId': parentUserId,
+              'senderId': user.uid,
+              'videoId': videoId,
+              'commentId': commentRef.id,
+              'createdAt': FieldValue.serverTimestamp(),
+              'read': false,
+            });
+          }
+        } catch (e) {
+          print('Warning: Failed to create notification: $e');
         }
       }
+    } catch (e) {
+      print('Error adding comment: $e');
+      rethrow;
     }
-
-    await batch.commit();
   }
 
   // Delete a comment
   Future<void> deleteComment(String videoId, String commentId) async {
     try {
-      final batch = _firestore.batch();
-      final commentRef = _firestore
+      // Let the cloud function handle all the counting
+      await _firestore
           .collection('videos')
           .doc(videoId)
           .collection('comments')
-          .doc(commentId);
-
-      final comment = await commentRef.get();
-      final commentData = comment.data();
-
-      if (commentData == null) return;
-
-      batch.delete(commentRef);
-
-      // Decrement comment count on video
-      final videoRef = _firestore.collection('videos').doc(videoId);
-      batch.update(videoRef, {
-        'commentsCount': FieldValue.increment(-1),
-      });
-
-      // If this is a reply, decrement reply count on parent comment
-      final replyToId = commentData['replyToId'] as String?;
-      if (replyToId != null) {
-        final parentCommentRef = _firestore
-            .collection('videos')
-            .doc(videoId)
-            .collection('comments')
-            .doc(replyToId);
-        batch.update(parentCommentRef, {
-          'replyCount': FieldValue.increment(-1),
-        });
-      }
-
-      await batch.commit();
+          .doc(commentId)
+          .delete();
     } catch (e) {
-      print('CommentService: Error deleting comment: $e');
+      print('Error deleting comment: $e');
       rethrow;
     }
   }
@@ -363,9 +316,24 @@ class CommentService {
     });
   }
 
+  // Add a stream to watch the video's comment count
   Stream<int> watchCommentCount(String videoId) {
     return watchComments(videoId).map((comments) {
-      return comments.where((c) => c.replyToId == null).length;
+      final parentComments = comments.where((c) => c.replyToId == null).length;
+      print(
+          'CommentService: Counted $parentComments parent comments for video $videoId');
+      return parentComments;
     });
+  }
+
+  // Add a stream to watch a comment's reply count
+  Stream<int> watchCommentReplyCount(String videoId, String commentId) {
+    return _firestore
+        .collection('videos')
+        .doc(videoId)
+        .collection('comments')
+        .doc(commentId)
+        .snapshots()
+        .map((snapshot) => (snapshot.data()?['replyCount'] as int?) ?? 0);
   }
 }
