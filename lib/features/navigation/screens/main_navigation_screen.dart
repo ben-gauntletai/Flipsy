@@ -19,29 +19,17 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
   final GlobalKey<FeedScreenState> _feedKey = GlobalKey<FeedScreenState>();
 
   void _onItemTapped(int index) {
-    if (index == 2) {
-      // More/Upload button
-      Navigator.push<String>(
-        context,
-        MaterialPageRoute(
-          builder: (context) => const VideoUploadScreen(),
-        ),
-      ).then((videoId) {
-        // If we got a video ID back, ensure we're on the feed screen and jump to the video
-        if (videoId != null && mounted) {
-          setState(() {
-            _selectedIndex = 0; // Switch to feed screen
-          });
-          // Use the GlobalKey to access the FeedScreen state
-          _feedKey.currentState?.jumpToVideo(videoId);
-        }
-      });
-      return;
-    }
-
     setState(() {
       _selectedIndex = index;
     });
+  }
+
+  void _onVideoUploaded(String videoId) {
+    setState(() {
+      _selectedIndex = 0; // Switch to feed screen
+    });
+    // Use the GlobalKey to access the FeedScreen state
+    _feedKey.currentState?.jumpToVideo(videoId);
   }
 
   @override
@@ -55,7 +43,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
         children: [
           FeedScreen(key: _feedKey, isVisible: _selectedIndex == 0), // Home
           const DiscoverScreen(), // Discover
-          const SizedBox.shrink(), // Upload (placeholder)
+          VideoUploadScreen(
+              onVideoUploaded: _onVideoUploaded), // Upload screen with callback
           const Center(child: Text('Inbox')), // Inbox
           if (currentUser != null)
             ProfileScreen() // Current user's profile
@@ -89,9 +78,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               label: 'Discover',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.more_horiz),
-              activeIcon: Icon(Icons.more_horiz),
-              label: 'More',
+              icon: Icon(Icons.add_box_outlined),
+              activeIcon: Icon(Icons.add_box),
+              label: 'Upload',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.inbox_outlined),

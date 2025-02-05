@@ -8,7 +8,12 @@ import 'package:video_player/video_player.dart';
 import '../widgets/upload_progress_dialog.dart';
 
 class VideoUploadScreen extends StatefulWidget {
-  const VideoUploadScreen({super.key});
+  final Function(String)? onVideoUploaded;
+
+  const VideoUploadScreen({
+    super.key,
+    this.onVideoUploaded,
+  });
 
   @override
   State<VideoUploadScreen> createState() => _VideoUploadScreenState();
@@ -165,8 +170,9 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
 
       if (mounted) {
         Navigator.of(context).pop(); // Close progress dialog
-        Navigator.of(context)
-            .pop(video.id); // Return to previous screen with video ID
+        if (widget.onVideoUploaded != null) {
+          widget.onVideoUploaded!(video.id);
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video uploaded successfully!')),
         );
@@ -219,8 +225,13 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
           elevation: 0,
           leading: IconButton(
             padding: EdgeInsets.zero,
-            icon: const Icon(Icons.arrow_back, color: Colors.black),
-            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.close, color: Colors.black),
+            onPressed: () => setState(() {
+              _videoFile = null;
+              _descriptionController.clear();
+              _videoController?.dispose();
+              _videoController = null;
+            }),
           ),
           title: const Text(
             'Post',
