@@ -129,6 +129,24 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
   }
 
   Widget _buildCommentsList(List<Comment> comments) {
+    if (!widget.allowComments) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Comments are turned off',
+              style: TextStyle(
+                color: Colors.white54,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     if (comments.isEmpty) {
       return const Center(
         child: Text(
@@ -226,31 +244,31 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
           ),
         ),
 
-        // Reply indicator
-        if (_replyToUsername != null)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Colors.grey[900],
-            child: Row(
-              children: [
-                Text(
-                  'Replying to @$_replyToUsername',
-                  style: const TextStyle(color: Colors.white54),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon:
-                      const Icon(Icons.close, size: 16, color: Colors.white54),
-                  onPressed: _cancelReply,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
+        // Reply indicator and comment input field only shown if comments are allowed
+        if (widget.allowComments) ...[
+          if (_replyToUsername != null)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Colors.grey[900],
+              child: Row(
+                children: [
+                  Text(
+                    'Replying to @$_replyToUsername',
+                    style: const TextStyle(color: Colors.white54),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.close,
+                        size: 16, color: Colors.white54),
+                    onPressed: _cancelReply,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-        // Comment input
-        if (widget.allowComments)
+          // Comment input
           Container(
             padding: EdgeInsets.fromLTRB(16, 8, 16, 8 + bottomPadding),
             decoration: BoxDecoration(
@@ -302,6 +320,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
               ],
             ),
           ),
+        ],
       ],
     );
   }
