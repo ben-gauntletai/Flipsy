@@ -122,6 +122,9 @@ Stores user notifications.
 2. users/likedVideos collection:
    - likedAt DESC
 
+3. notifications collection:
+   - userId, type, createdAt DESC
+
 ## Security Rules
 
 ```javascript

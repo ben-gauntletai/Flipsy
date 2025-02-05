@@ -3,7 +3,15 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class UserService {
+  static final UserService _instance = UserService._internal();
+  factory UserService() => _instance;
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Map<String, Map<String, dynamic>> _userCache = {};
+
+  UserService._internal();
+
+  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   // Helper method to get follow document ID
   String _getFollowDocId(String followerId, String followingId) {
@@ -35,9 +43,6 @@ class UserService {
       };
     }
   }
-
-  // Cache user data in memory for better performance
-  final Map<String, Map<String, dynamic>> _userCache = {};
 
   // Get user data with caching
   Future<Map<String, dynamic>> getCachedUserData(String userId) async {
@@ -101,49 +106,64 @@ class UserService {
   }
 
   Future<bool> followUser(String userId) async {
-    print('Attempting to follow user: $userId');
+    print('\nUserService: Starting followUser');
+    print('UserService: Current user ID: $_currentUserId');
+    print('UserService: Target user ID: $userId');
+
+    if (_currentUserId.isEmpty) {
+      print('UserService: No current user ID');
+      return false;
+    }
+
+    // Prevent self-following
+    if (_currentUserId == userId) {
+      print('UserService: Cannot follow yourself');
+      print('UserService: Current user: $_currentUserId');
+      print('UserService: Target user: $userId');
+      return false;
+    }
+
     try {
-      final functions = FirebaseFunctions.instance;
-      final callable = functions.httpsCallable('followUser');
+      print('UserService: Following user: $_currentUserId -> $userId');
+      final batch = _firestore.batch();
 
-      // Clear cache before the operation to ensure fresh data
-      final currentUser = FirebaseAuth.instance.currentUser;
-      if (currentUser != null) {
-        print(
-            'Pre-emptively clearing cache for users: ${currentUser.uid} and $userId');
-        _userCache.remove(currentUser.uid);
-        _userCache.remove(userId);
-      }
-
-      final result = await callable.call<Map<String, dynamic>>({
+      // Create follow document
+      final followDoc =
+          _firestore.collection('follows').doc('${_currentUserId}_$userId');
+      batch.set(followDoc, {
+        'followerId': _currentUserId,
         'followingId': userId,
+        'createdAt': FieldValue.serverTimestamp(),
       });
 
-      print('Follow operation result: ${result.data}');
+      // Create notification for the followed user
+      final notificationRef = _firestore.collection('notifications').doc();
+      batch.set(notificationRef, {
+        'userId': userId,
+        'type': 'follow',
+        'sourceUserId': _currentUserId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      });
 
-      // Force a refresh of the user data after the operation
-      if (currentUser != null) {
-        print('Forcing refresh of user data after follow operation');
-        await getUserData(currentUser.uid);
-        await getUserData(userId);
-      }
+      // Update follower count for target user
+      final targetUserRef = _firestore.collection('users').doc(userId);
+      batch.update(targetUserRef, {
+        'followersCount': FieldValue.increment(1),
+      });
 
-      return result.data['success'] as bool;
+      // Update following count for current user
+      final currentUserRef = _firestore.collection('users').doc(_currentUserId);
+      batch.update(currentUserRef, {
+        'followingCount': FieldValue.increment(1),
+      });
+
+      await batch.commit();
+      print('UserService: Successfully followed user and created notification');
+      return true;
     } catch (e) {
-      print('Error following user $userId: $e');
-      if (e is FirebaseFunctionsException) {
-        switch (e.code) {
-          case 'not-found':
-            throw 'User not found';
-          case 'already-exists':
-            throw 'Already following this user';
-          case 'permission-denied':
-            throw 'Permission denied';
-          default:
-            throw 'Failed to follow user';
-        }
-      }
-      rethrow;
+      print('UserService: Error following user: $e');
+      return false;
     }
   }
 

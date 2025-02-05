@@ -5,6 +5,7 @@ import '../../video/screens/video_upload_screen.dart';
 import '../../profile/screens/profile_screen.dart';
 import '../../feed/screens/feed_screen.dart';
 import '../../discover/screens/discover_screen.dart';
+import '../../activity/screens/activity_screen.dart';
 import '../../auth/bloc/auth_bloc.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -123,7 +124,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           const DiscoverScreen(), // Discover
           VideoUploadScreen(
               onVideoUploaded: _onVideoUploaded), // Upload screen with callback
-          const Center(child: Text('Inbox')), // Inbox
+          const ActivityScreen(), // Activity
           if (currentUser != null)
             ProfileScreen(
               userId: _currentProfileUserId,
@@ -165,9 +166,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
               label: 'Upload',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.inbox_outlined),
-              activeIcon: Icon(Icons.inbox),
-              label: 'Inbox',
+              icon: Icon(Icons.notifications_outlined),
+              activeIcon: Icon(Icons.notifications),
+              label: 'Activity',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.person_outline),
