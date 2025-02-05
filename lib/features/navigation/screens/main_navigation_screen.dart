@@ -10,6 +10,12 @@ import '../../auth/bloc/auth_bloc.dart';
 class MainNavigationScreen extends StatefulWidget {
   const MainNavigationScreen({super.key});
 
+  static void jumpToVideo(BuildContext context, String videoId,
+      {bool showBackButton = false}) {
+    final state = context.findAncestorStateOfType<_MainNavigationScreenState>();
+    state?.jumpToVideo(videoId, showBackButton: showBackButton);
+  }
+
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
@@ -17,6 +23,7 @@ class MainNavigationScreen extends StatefulWidget {
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
   final GlobalKey<FeedScreenState> _feedKey = GlobalKey<FeedScreenState>();
+  int? _previousIndex;
 
   void _onItemTapped(int index) {
     setState(() {
@@ -32,6 +39,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     _feedKey.currentState?.jumpToVideo(videoId);
   }
 
+  void jumpToVideo(String videoId, {bool showBackButton = false}) {
+    if (showBackButton) {
+      _previousIndex = _selectedIndex;
+    }
+    setState(() {
+      _selectedIndex = 0; // Switch to feed screen
+    });
+    _feedKey.currentState?.jumpToVideo(videoId);
+  }
+
+  void goBack() {
+    if (_previousIndex != null) {
+      setState(() {
+        _selectedIndex = _previousIndex!;
+        _previousIndex = null;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = context.watch<AuthBloc>().state;
@@ -41,7 +67,12 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          FeedScreen(key: _feedKey, isVisible: _selectedIndex == 0), // Home
+          FeedScreen(
+            key: _feedKey,
+            isVisible: _selectedIndex == 0,
+            showBackButton: _previousIndex != null,
+            onBack: goBack,
+          ), // Home
           const DiscoverScreen(), // Discover
           VideoUploadScreen(
               onVideoUploaded: _onVideoUploaded), // Upload screen with callback
