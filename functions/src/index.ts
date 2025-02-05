@@ -180,14 +180,52 @@ export const onCommentCreated = onDocumentCreated(
         batch.update(parentCommentRef, {
           replyCount: admin.firestore.FieldValue.increment(1),
         });
+
+        // Only notify the parent comment author if they made the original comment
+        // and they're not replying to their own comment
+        if (parentData.userId !== commentData.userId) {
+          console.log("Creating notification for parent comment author");
+          const notificationRef = db.collection("notifications").doc();
+          batch.set(notificationRef, {
+            userId: parentData.userId,
+            type: "comment_reply",
+            sourceUserId: commentData.userId,
+            videoId,
+            commentId: event.params.commentId,
+            commentText: commentData.text.substring(0, 100), // Limit preview to 100 chars
+            videoThumbnailURL: null, // Will be set later if video data exists
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+          });
+        }
       }
 
       // Get video data to find the video owner
       const videoDoc = await db.collection("videos").doc(videoId).get();
       const videoData = videoDoc.data();
 
-      if (videoData && videoData.userId !== commentData.userId) {
-        // Create notification for video owner
+      if (!videoData) {
+        console.error("Video data not found");
+        return;
+      }
+
+      // Update video thumbnail URL for any notifications we're about to send
+      const thumbnailURL = videoData.thumbnailURL;
+      const notificationsToUpdate = await db
+        .collection("notifications")
+        .where("videoId", "==", videoId)
+        .where("videoThumbnailURL", "==", null)
+        .get();
+
+      notificationsToUpdate.docs.forEach((doc) => {
+        batch.update(doc.ref, { videoThumbnailURL: thumbnailURL });
+      });
+
+      // Only notify the video owner if:
+      // 1. This is a new parent comment (not a reply)
+      // 2. The commenter is not the video owner
+      if (!commentData.replyToId && videoData.userId !== commentData.userId) {
+        console.log("Creating notification for video owner");
         const notificationRef = db.collection("notifications").doc();
         batch.set(notificationRef, {
           userId: videoData.userId,
@@ -195,55 +233,11 @@ export const onCommentCreated = onDocumentCreated(
           sourceUserId: commentData.userId,
           videoId,
           commentId: event.params.commentId,
+          commentText: commentData.text.substring(0, 100), // Limit preview to 100 chars
+          videoThumbnailURL: videoData.thumbnailURL,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           read: false,
         });
-      }
-
-      // If this is a reply and the parent comment is from a different user,
-      // create notification for parent comment owner
-      if (commentData.replyToId) {
-        const parentCommentDoc = await db
-          .collection("videos")
-          .doc(videoId)
-          .collection("comments")
-          .doc(commentData.replyToId)
-          .get();
-        const parentCommentData = parentCommentDoc.data();
-
-        if (
-          parentCommentData &&
-          parentCommentData.userId !== commentData.userId
-        ) {
-          const notificationRef = db.collection("notifications").doc();
-          batch.set(notificationRef, {
-            userId: parentCommentData.userId,
-            type: "reply",
-            sourceUserId: commentData.userId,
-            videoId,
-            commentId: event.params.commentId,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            read: false,
-          });
-        }
-      }
-
-      // Create notifications for mentioned users
-      if (commentData.mentions && commentData.mentions.length > 0) {
-        for (const mentionedUserId of commentData.mentions) {
-          if (mentionedUserId !== commentData.userId) {
-            const notificationRef = db.collection("notifications").doc();
-            batch.set(notificationRef, {
-              userId: mentionedUserId,
-              type: "mention",
-              sourceUserId: commentData.userId,
-              videoId,
-              commentId: event.params.commentId,
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-              read: false,
-            });
-          }
-        }
       }
 
       await batch.commit();

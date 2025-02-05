@@ -187,6 +187,68 @@ class _ActivityScreenState extends State<ActivityScreen> {
                   )
                 : null,
           );
+        } else if (notificationType == 'comment' ||
+            notificationType == 'comment_reply') {
+          return ListTile(
+            leading: GestureDetector(
+              onTap: () {
+                MainNavigationScreen.showUserProfile(context, sourceUserId);
+              },
+              child: UserAvatar(
+                avatarURL: userData['avatarURL'] as String?,
+                radius: 24,
+              ),
+            ),
+            title: RichText(
+              text: TextSpan(
+                style: const TextStyle(color: Colors.black87),
+                children: [
+                  TextSpan(
+                    text: userData['displayName'] as String,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  TextSpan(
+                    text: notificationType == 'comment'
+                        ? ' commented on your video'
+                        : ' replied to your comment',
+                  ),
+                ],
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(timeAgo),
+                if (notification['commentText'] != null)
+                  Text(
+                    notification['commentText'] as String,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+              ],
+            ),
+            trailing: notification['videoThumbnailURL'] != null
+                ? GestureDetector(
+                    onTap: () {
+                      MainNavigationScreen.jumpToVideo(
+                        context,
+                        notification['videoId'] as String,
+                        showBackButton: true,
+                      );
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        notification['videoThumbnailURL'] as String,
+                        width: 50,
+                        height: 50,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  )
+                : null,
+          );
         }
 
         // Follow notification (existing code)
@@ -271,7 +333,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
         stream: _firestore
             .collection('notifications')
             .where('userId', isEqualTo: _currentUserId)
-            .where('type', whereIn: ['follow', 'video_post'])
+            .where('type',
+                whereIn: ['follow', 'video_post', 'comment', 'comment_reply'])
             .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
