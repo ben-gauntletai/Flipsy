@@ -536,4 +536,139 @@ class VideoService {
         .snapshots()
         .map((snapshot) => (snapshot.data()?['commentsCount'] as int?) ?? 0);
   }
+
+  // Get videos from users that the current user follows
+  Stream<List<Video>> getFollowingFeed({int limit = 10}) {
+    print('VideoService: Getting following feed with limit: $limit');
+    if (_currentUserId.isEmpty) {
+      print('VideoService: No current user, returning empty stream');
+      return Stream.value([]);
+    }
+
+    try {
+      // First, get the list of users that the current user follows
+      return _firestore
+          .collection('follows')
+          .where('followerId', isEqualTo: _currentUserId)
+          .snapshots()
+          .asyncMap((followSnapshot) async {
+        print('VideoService: Got ${followSnapshot.docs.length} followed users');
+
+        if (followSnapshot.docs.isEmpty) {
+          print('VideoService: User is not following anyone');
+          return [];
+        }
+
+        // Extract the IDs of followed users
+        final followedUserIds = followSnapshot.docs
+            .map((doc) => doc.data()['followingId'] as String)
+            .toList();
+
+        print('VideoService: Following users: $followedUserIds');
+
+        // Get videos from followed users
+        final videoQuery = await _firestore
+            .collection('videos')
+            .where('userId', whereIn: followedUserIds)
+            .where('status', isEqualTo: 'active')
+            .orderBy('createdAt', descending: true)
+            .limit(limit)
+            .get();
+
+        print(
+            'VideoService: Got ${videoQuery.docs.length} videos from followed users');
+
+        final videos = videoQuery.docs
+            .map((doc) {
+              try {
+                return Video.fromFirestore(doc);
+              } catch (e) {
+                print('VideoService: Error parsing video doc ${doc.id}: $e');
+                return null;
+              }
+            })
+            .where((video) => video != null)
+            .cast<Video>()
+            .toList();
+
+        print(
+            'VideoService: Returning ${videos.length} videos for following feed');
+        return videos;
+      });
+    } catch (e) {
+      print('VideoService: Error getting following feed: $e');
+      return Stream.value([]);
+    }
+  }
+
+  // Get a batch of following feed videos (for pagination)
+  Future<List<Video>> getFollowingFeedBatch({
+    int limit = 10,
+    DocumentSnapshot? startAfter,
+  }) async {
+    print('VideoService: Getting following feed batch with limit: $limit');
+    if (_currentUserId.isEmpty) {
+      print('VideoService: No current user, returning empty list');
+      return [];
+    }
+
+    try {
+      // Get the list of users that the current user follows
+      final followSnapshot = await _firestore
+          .collection('follows')
+          .where('followerId', isEqualTo: _currentUserId)
+          .get();
+
+      if (followSnapshot.docs.isEmpty) {
+        print('VideoService: User is not following anyone');
+        return [];
+      }
+
+      // Extract the IDs of followed users
+      final followedUserIds = followSnapshot.docs
+          .map((doc) => doc.data()['followingId'] as String)
+          .toList();
+
+      print('VideoService: Following users: $followedUserIds');
+
+      // Create the base query
+      Query query = _firestore
+          .collection('videos')
+          .where('userId', whereIn: followedUserIds)
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true);
+
+      // If we're paginating, add the startAfter
+      if (startAfter != null) {
+        print('VideoService: Using startAfter document: ${startAfter.id}');
+        query = query.startAfterDocument(startAfter);
+      }
+
+      query = query.limit(limit);
+
+      final videoQuery = await query.get();
+      print(
+          'VideoService: Got ${videoQuery.docs.length} videos from followed users');
+
+      final videos = videoQuery.docs
+          .map((doc) {
+            try {
+              return Video.fromFirestore(doc);
+            } catch (e) {
+              print('VideoService: Error parsing video doc ${doc.id}: $e');
+              return null;
+            }
+          })
+          .where((video) => video != null)
+          .cast<Video>()
+          .toList();
+
+      print(
+          'VideoService: Returning ${videos.length} videos for following feed batch');
+      return videos;
+    } catch (e) {
+      print('VideoService: Error getting following feed batch: $e');
+      return [];
+    }
+  }
 }

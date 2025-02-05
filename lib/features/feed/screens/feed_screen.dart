@@ -321,6 +321,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   Set<String> _processedVideoIds = {}; // Track processed video IDs
   String? _targetVideoId; // Add this property to track target video
   bool _hasInitializedControllers = false;
+  bool _isFollowingFeed = false; // Track current feed type
 
   @override
   void initState() {
@@ -508,14 +509,19 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     setState(() {
       _isLoading = true;
       _error = null;
+      _processedVideoIds.clear();
+      _videos.clear();
     });
 
     try {
       await _videoSubscription?.cancel();
       print('FeedScreen: Cancelled existing subscription');
 
-      _videoSubscription =
-          _videoService.getVideoFeed(limit: 5).listen((videos) async {
+      final stream = _isFollowingFeed
+          ? _videoService.getFollowingFeed(limit: 5)
+          : _videoService.getVideoFeed(limit: 5);
+
+      _videoSubscription = stream.listen((videos) async {
         print('FeedScreen: Received ${videos.length} videos from stream');
 
         if (videos.isNotEmpty) {
@@ -523,7 +529,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           print('FeedScreen: Got last document for pagination');
         }
 
-        // Process new videos and update user data
+        // Process new videos
         final List<Video> newVideos = [];
         final Set<String> newVideoIds = {};
 
@@ -563,10 +569,6 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
             _isLoading = false;
             _hasMoreVideos = videos.length == 5;
-
-            print('FeedScreen: Updated state with ${_videos.length} videos');
-            print(
-                'FeedScreen: Final video IDs: ${_videos.map((v) => v.id).toList()}');
           });
 
           // Initialize controllers
@@ -600,10 +602,15 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     });
 
     try {
-      final newVideos = await _videoService.getVideoFeedBatch(
-        limit: 5,
-        startAfter: _lastDocument,
-      );
+      final newVideos = _isFollowingFeed
+          ? await _videoService.getFollowingFeedBatch(
+              limit: 5,
+              startAfter: _lastDocument,
+            )
+          : await _videoService.getVideoFeedBatch(
+              limit: 5,
+              startAfter: _lastDocument,
+            );
 
       if (newVideos.isNotEmpty) {
         _lastDocument = await _videoService.getLastDocument(newVideos.last.id);
@@ -614,83 +621,80 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             .toList();
 
         if (uniqueNewVideos.isNotEmpty) {
-          // Pre-fetch user data for new videos
           await _loadUserData(uniqueNewVideos);
 
           if (mounted) {
             setState(() {
-              // Add new video IDs to processed set
               _processedVideoIds.addAll(uniqueNewVideos.map((v) => v.id));
-
-              // Add new videos to the list
               _videos.addAll(uniqueNewVideos);
-              // Re-sort the entire list
               _videos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
               _isLoadingMore = false;
               _hasMoreVideos = newVideos.length == 5;
             });
           }
-        } else {
-          if (mounted) {
-            setState(() {
-              _isLoadingMore = false;
-            });
-          }
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _isLoadingMore = false;
-            _hasMoreVideos = false;
-          });
         }
       }
     } catch (e) {
-      print('Error loading more videos: $e');
+      print('FeedScreen: Error loading more videos: $e');
       if (mounted) {
         setState(() {
           _isLoadingMore = false;
-          _error = 'Error loading more videos';
+          _error = 'Error loading more videos: $e';
         });
       }
     }
   }
 
+  void _switchFeed(bool isFollowing) {
+    if (_isFollowingFeed == isFollowing) return;
+
+    setState(() {
+      _isFollowingFeed = isFollowing;
+      _currentPage = 0;
+      _lastDocument = null;
+      _hasMoreVideos = true;
+      _controllerManager.disposeAll();
+      _hasInitializedControllers = false;
+    });
+
+    _loadVideos();
+  }
+
   @override
   Widget build(BuildContext context) {
-    print(
-        'FeedScreen: Building with isLoading: $_isLoading, videos: ${_videos.length}, currentPage: $_currentPage');
     return Scaffold(
-      backgroundColor: Colors.black,
       body: Stack(
         children: [
-          if (_isLoading && _videos.isEmpty)
+          if (_isLoading)
             const Center(
-              child: CircularProgressIndicator(
-                color: Colors.white,
-              ),
+              child: CircularProgressIndicator(),
             )
-          else if (_videos.isEmpty && !_isLoading)
+          else if (_error != null)
             Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Text(
-                    'No videos available',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                  if (_error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        _error!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                    ),
+                  const Icon(Icons.error_outline, size: 48),
+                  const SizedBox(height: 16),
+                  Text(_error!),
                   TextButton(
                     onPressed: _loadVideos,
                     child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          else if (_videos.isEmpty)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.videocam_off, size: 48),
+                  const SizedBox(height: 16),
+                  Text(
+                    _isFollowingFeed
+                        ? 'No videos from followed users'
+                        : 'No videos available',
                   ),
                 ],
               ),
@@ -699,20 +703,10 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             PageView.builder(
               controller: _pageController,
               scrollDirection: Axis.vertical,
-              itemCount: _videos.length + (_hasMoreVideos ? 1 : 0),
+              itemCount: _videos.length,
               itemBuilder: (context, index) {
-                if (index >= _videos.length) {
-                  return const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20),
-                      child: CircularProgressIndicator(color: Colors.white),
-                    ),
-                  );
-                }
                 final video = _videos[index];
                 final userData = _usersData[video.userId];
-                print(
-                    'FeedScreen: Building video item at index $index, currentPage: $_currentPage');
                 return VideoFeedItem(
                   key: ValueKey(video.id),
                   video: video,
@@ -724,6 +718,54 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 );
               },
             ),
+
+          // Top Navigation (Following/For You)
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: () => _switchFeed(true),
+                        child: Text(
+                          'Following',
+                          style: TextStyle(
+                            color: _isFollowingFeed
+                                ? Colors.white
+                                : Colors.white60,
+                            fontSize: 15,
+                            fontWeight: _isFollowingFeed
+                                ? FontWeight.bold
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 20),
+                      GestureDetector(
+                        onTap: () => _switchFeed(false),
+                        child: Text(
+                          'For You',
+                          style: TextStyle(
+                            color: !_isFollowingFeed
+                                ? Colors.white
+                                : Colors.white60,
+                            fontSize: 15,
+                            fontWeight: !_isFollowingFeed
+                                ? FontWeight.bold
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           if (widget.showBackButton)
             Positioned(
               top: MediaQuery.of(context).padding.top + 8,
@@ -736,52 +778,6 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 onPressed: widget.onBack,
               ),
             ),
-
-          // Top Navigation (Following/For You)
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        'Following',
-                        style: TextStyle(
-                          color: Colors.white60,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(width: 20),
-                      Column(
-                        children: [
-                          const Text(
-                            'For You',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Container(
-                            width: 30,
-                            height: 2,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(1),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
