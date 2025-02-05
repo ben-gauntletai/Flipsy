@@ -151,6 +151,15 @@ service cloud.firestore {
       );
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
+
+    // Follow relationship rules
+    match /follows/{followId} {
+      allow read: if true;
+      allow create: if request.auth != null && 
+        followId == request.auth.uid + '_' + request.resource.data.followingId;
+      allow delete: if request.auth != null && 
+        followId == request.auth.uid + '_' + resource.data.followingId;
+    }
   }
 }
 ```

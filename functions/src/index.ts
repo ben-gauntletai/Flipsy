@@ -10,6 +10,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { onDocumentCreated, onDocumentDeleted, onDocumentWritten } from "firebase-functions/v2/firestore";
+import { CallableRequest } from "firebase-functions/v2/https";
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -417,3 +418,111 @@ export const onCommentLikeChange = onDocumentWritten(
     }
   }
 );
+
+interface FollowData {
+  followingId: string;
+}
+
+export const followUser = functions.https.onCall(async (data: CallableRequest<FollowData>) => {
+  if (!data.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Must be logged in to follow users");
+  }
+
+  const followerId = data.auth.uid;
+  const followingId = data.data.followingId;
+
+  if (!followingId) {
+    throw new functions.https.HttpsError("invalid-argument", "Must provide a user to follow");
+  }
+
+  if (followerId === followingId) {
+    throw new functions.https.HttpsError("invalid-argument", "Cannot follow yourself");
+  }
+
+  const db = admin.firestore();
+  const followDoc = db.collection("follows").doc(`${followerId}_${followingId}`);
+
+  try {
+    // Use transaction to ensure atomic updates
+    await db.runTransaction(async (transaction) => {
+      const followerRef = db.collection("users").doc(followerId);
+      const followingRef = db.collection("users").doc(followingId);
+
+      // Check if users exist
+      const [followerDoc, followingDoc] = await Promise.all([
+        transaction.get(followerRef),
+        transaction.get(followingRef),
+      ]);
+
+      if (!followerDoc.exists || !followingDoc.exists) {
+        throw new functions.https.HttpsError("not-found", "One or both users do not exist");
+      }
+
+      // Create follow relationship
+      transaction.set(followDoc, {
+        followerId,
+        followingId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Update follower/following counts
+      transaction.update(followerRef, {
+        followingCount: admin.firestore.FieldValue.increment(1),
+      });
+      transaction.update(followingRef, {
+        followersCount: admin.firestore.FieldValue.increment(1),
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error following user:", error);
+    throw new functions.https.HttpsError("internal", "Failed to follow user");
+  }
+});
+
+export const unfollowUser = functions.https.onCall(async (data: CallableRequest<FollowData>) => {
+  if (!data.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Must be logged in to unfollow users");
+  }
+
+  const followerId = data.auth.uid;
+  const followingId = data.data.followingId;
+
+  if (!followingId) {
+    throw new functions.https.HttpsError("invalid-argument", "Must provide a user to unfollow");
+  }
+
+  const db = admin.firestore();
+  const followDoc = db.collection("follows").doc(`${followerId}_${followingId}`);
+
+  try {
+    // Use transaction to ensure atomic updates
+    await db.runTransaction(async (transaction) => {
+      const followDocSnapshot = await transaction.get(followDoc);
+
+      if (!followDocSnapshot.exists) {
+        throw new functions.https.HttpsError("not-found", "Follow relationship does not exist");
+      }
+
+      const followerRef = db.collection("users").doc(followerId);
+      const followingRef = db.collection("users").doc(followingId);
+
+      // Delete follow relationship
+      transaction.delete(followDoc);
+
+      // Update follower/following counts
+      transaction.update(followerRef, {
+        followingCount: admin.firestore.FieldValue.increment(-1),
+      });
+      transaction.update(followingRef, {
+        followersCount: admin.firestore.FieldValue.increment(-1),
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error unfollowing user:", error);
+    throw new functions.https.HttpsError("internal", "Failed to unfollow user");
+  }
+});
