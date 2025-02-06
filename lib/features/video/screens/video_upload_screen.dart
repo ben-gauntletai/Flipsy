@@ -28,7 +28,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   VideoPlayerController? _videoController;
   String? _error;
   bool _allowComments = true;
-  String _privacy = 'Everyone';
+  String _privacy = 'everyone';
   bool _isCompleting = false;
 
   @override
@@ -165,6 +165,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         description: _descriptionController.text.trim(),
         videoFile: _videoFile,
         allowComments: _allowComments,
+        privacy: _privacy,
       );
       print('Video document created successfully with ID: ${video.id}');
 
@@ -437,11 +438,18 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          _privacy,
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 14),
+                          _privacy == 'everyone'
+                              ? 'Everyone'
+                              : _privacy == 'followers'
+                                  ? 'Followers'
+                                  : 'Private',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 14,
+                          ),
                         ),
-                        const Icon(Icons.chevron_right, size: 20),
+                        const SizedBox(width: 4),
+                        Icon(Icons.chevron_right, color: Colors.grey[400]),
                       ],
                     ),
                     contentPadding: const EdgeInsets.symmetric(
@@ -449,6 +457,74 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                     minLeadingWidth: 24,
                     horizontalTitleGap: 8,
                     dense: true,
+                    onTap: _isUploading
+                        ? null
+                        : () {
+                            showModalBottomSheet(
+                              context: context,
+                              builder: (context) => SafeArea(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Text(
+                                        'Who can watch this video',
+                                        style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Colors.grey[800],
+                                        ),
+                                      ),
+                                    ),
+                                    const Divider(height: 1),
+                                    ListTile(
+                                      title: const Text('Everyone'),
+                                      subtitle: const Text(
+                                          'Anyone on Flipsy can watch this video'),
+                                      trailing: _privacy == 'everyone'
+                                          ? const Icon(Icons.check,
+                                              color: Color(0xFFFF2B55))
+                                          : null,
+                                      onTap: () {
+                                        setState(() => _privacy = 'everyone');
+                                        Navigator.pop(context);
+                                      },
+                                    ),
+                                    ListTile(
+                                      title: const Text('Followers'),
+                                      subtitle: const Text(
+                                          'Only your followers can watch this video'),
+                                      trailing: _privacy == 'followers'
+                                          ? const Icon(Icons.check,
+                                              color: Color(0xFFFF2B55))
+                                          : null,
+                                      onTap: () {
+                                        setState(() => _privacy = 'followers');
+                                        Navigator.pop(context);
+                                      },
+                                    ),
+                                    ListTile(
+                                      title: const Text('Private'),
+                                      subtitle: const Text(
+                                          'Only you can watch this video'),
+                                      trailing: _privacy == 'private'
+                                          ? const Icon(Icons.check,
+                                              color: Color(0xFFFF2B55))
+                                          : null,
+                                      onTap: () {
+                                        setState(() => _privacy = 'private');
+                                        Navigator.pop(context);
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              backgroundColor: Colors.white,
+                            );
+                          },
                   ),
                   const Divider(height: 1),
                   SwitchListTile(

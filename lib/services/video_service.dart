@@ -119,6 +119,7 @@ class VideoService {
     String? description,
     File? videoFile,
     required bool allowComments,
+    String privacy = 'everyone',
   }) async {
     try {
       print('VideoService: Creating new video document');
@@ -152,6 +153,7 @@ class VideoService {
         'height': height,
         'status': 'active',
         'allowComments': allowComments,
+        'privacy': privacy,
       };
 
       print('VideoService: Creating document with data: $videoData');
@@ -229,45 +231,48 @@ class VideoService {
       // Add ordering and limit
       query = query.orderBy('createdAt', descending: true).limit(limit);
 
-      return query.snapshots().map((snapshot) {
+      return query.snapshots().map((snapshot) async {
         print(
             'VideoService: Got ${snapshot.docs.length} videos from Firestore');
-        print(
-            'VideoService: Document IDs: ${snapshot.docs.map((doc) => doc.id).join(', ')}');
-
-        // Debug timestamp information
-        for (final doc in snapshot.docs) {
-          final data = doc.data() as Map<String, dynamic>;
-          print('VideoService: Document ${doc.id}:');
-          print('  - createdAt: ${data['createdAt']}');
-          print('  - videoURL: ${data['videoURL']}');
-          print('  - status: ${data['status']}');
-        }
 
         // Use a map to ensure uniqueness and maintain order
         final Map<String, Video> uniqueVideos = {};
 
+        // Get the current user's following list if they're logged in
+        Set<String> followedUsers = {};
+        if (_currentUserId.isNotEmpty) {
+          final followsSnapshot = await _firestore
+              .collection('follows')
+              .where('followerId', isEqualTo: _currentUserId)
+              .get();
+          followedUsers = followsSnapshot.docs
+              .map((doc) => doc.data()['followingId'] as String)
+              .toSet();
+        }
+
         for (final doc in snapshot.docs) {
           try {
             final data = doc.data() as Map<String, dynamic>;
+            final privacy = data['privacy'] as String? ?? 'everyone';
+            final videoUserId = data['userId'] as String;
 
-            // Skip documents with null timestamps
-            if (data['createdAt'] == null) {
+            // Include videos that are:
+            // 1. Public (everyone)
+            // 2. Don't have a privacy setting (defaults to everyone)
+            // 3. Followers-only if the user is following or is the owner
+            if (privacy == 'everyone' ||
+                !data.containsKey('privacy') ||
+                (privacy == 'followers' &&
+                    (followedUsers.contains(videoUserId) ||
+                        videoUserId == _currentUserId))) {
+              final video = Video.fromFirestore(doc);
+              uniqueVideos[doc.id] = video;
               print(
-                  'VideoService: Skipping doc ${doc.id} - timestamp not yet resolved');
-              continue;
+                  'VideoService: Successfully processed video ${doc.id} with privacy: $privacy');
+            } else {
+              print(
+                  'VideoService: Skipping video ${doc.id} due to privacy settings: $privacy');
             }
-
-            // Validate video URL
-            if (data['videoURL'] == null ||
-                data['videoURL'].toString().isEmpty) {
-              print('VideoService: Skipping doc ${doc.id} - invalid video URL');
-              continue;
-            }
-
-            final video = Video.fromFirestore(doc);
-            uniqueVideos[doc.id] = video;
-            print('VideoService: Successfully processed video ${doc.id}');
           } catch (e) {
             print('VideoService: Error parsing video doc ${doc.id}: $e');
           }
@@ -277,10 +282,8 @@ class VideoService {
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
         print('VideoService: Returning ${result.length} unique videos');
-        print(
-            'VideoService: Video IDs in order: ${result.map((v) => v.id).join(', ')}');
         return result;
-      });
+      }).asyncMap((videos) async => videos);
     } catch (e) {
       print('VideoService: Error setting up video feed stream: $e');
       rethrow;
@@ -309,16 +312,17 @@ class VideoService {
 
       final snapshot = await query.get();
       print('VideoService: Got ${snapshot.docs.length} videos from Firestore');
-      print(
-          'VideoService: Document IDs: ${snapshot.docs.map((doc) => doc.id).join(', ')}');
 
-      // Debug timestamp information
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        print('VideoService: Document ${doc.id}:');
-        print('  - createdAt: ${data['createdAt']}');
-        print('  - videoURL: ${data['videoURL']}');
-        print('  - status: ${data['status']}');
+      // Get the current user's following list
+      Set<String> followedUsers = {};
+      if (_currentUserId.isNotEmpty) {
+        final followsSnapshot = await _firestore
+            .collection('follows')
+            .where('followerId', isEqualTo: _currentUserId)
+            .get();
+        followedUsers = followsSnapshot.docs
+            .map((doc) => doc.data()['followingId'] as String)
+            .toSet();
       }
 
       // Use a map to ensure uniqueness and maintain order
@@ -327,23 +331,26 @@ class VideoService {
       for (final doc in snapshot.docs) {
         try {
           final data = doc.data() as Map<String, dynamic>;
+          final privacy = data['privacy'] as String? ?? 'everyone';
+          final videoUserId = data['userId'] as String;
 
-          // Skip documents with null timestamps
-          if (data['createdAt'] == null) {
+          // Include videos that are:
+          // 1. Public (everyone)
+          // 2. Don't have a privacy setting (defaults to everyone)
+          // 3. Followers-only if the user is following or is the owner
+          if (privacy == 'everyone' ||
+              !data.containsKey('privacy') ||
+              (privacy == 'followers' &&
+                  (followedUsers.contains(videoUserId) ||
+                      videoUserId == _currentUserId))) {
+            final video = Video.fromFirestore(doc);
+            uniqueVideos[doc.id] = video;
             print(
-                'VideoService: Skipping doc ${doc.id} - timestamp not yet resolved');
-            continue;
+                'VideoService: Successfully processed video ${doc.id} with privacy: $privacy');
+          } else {
+            print(
+                'VideoService: Skipping video ${doc.id} due to privacy settings: $privacy');
           }
-
-          // Validate video URL
-          if (data['videoURL'] == null || data['videoURL'].toString().isEmpty) {
-            print('VideoService: Skipping doc ${doc.id} - invalid video URL');
-            continue;
-          }
-
-          final video = Video.fromFirestore(doc);
-          uniqueVideos[doc.id] = video;
-          print('VideoService: Successfully processed video ${doc.id}');
         } catch (e) {
           print('VideoService: Error parsing video doc ${doc.id}: $e');
         }
@@ -353,8 +360,6 @@ class VideoService {
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       print('VideoService: Returning ${result.length} unique videos');
-      print(
-          'VideoService: Video IDs in order: ${result.map((v) => v.id).join(', ')}');
       return result;
     } catch (e) {
       print('VideoService: Error getting video feed batch: $e');
@@ -376,45 +381,64 @@ class VideoService {
   Stream<List<Video>> getUserVideos(String userId) {
     print('VideoService: Fetching videos for user: $userId');
     try {
-      return _firestore
+      Query query = _firestore
           .collection('videos')
           .where('userId', isEqualTo: userId)
-          // Temporarily remove the status filter and ordering to debug
-          // .where('status', isEqualTo: 'active')
-          // .orderBy('createdAt', descending: true)
-          .snapshots()
-          .map((snapshot) {
+          .where('status', isEqualTo: 'active');
+
+      // If viewing own profile, show all videos
+      // If viewing other's profile, only show public and followers-only videos
+      if (userId != _currentUserId) {
+        query = query.where('privacy', whereIn: ['everyone', 'followers']);
+      }
+
+      return query.snapshots().map((snapshot) async {
         print('VideoService: Got snapshot with ${snapshot.docs.length} videos');
-        try {
-          final videos = snapshot.docs
-              .map((doc) {
-                try {
-                  final video = Video.fromFirestore(doc);
-                  // Filter active status in memory
-                  if (video.status == 'active') {
-                    return video;
-                  }
-                  return null;
-                } catch (e) {
-                  print('VideoService: Error parsing video doc ${doc.id}: $e');
+
+        // If viewing other's profile and they have followers-only videos,
+        // check if current user is a follower
+        Set<String> followedUsers = {};
+        if (userId != _currentUserId) {
+          final followsSnapshot = await _firestore
+              .collection('follows')
+              .where('followerId', isEqualTo: _currentUserId)
+              .where('followingId', isEqualTo: userId)
+              .get();
+          followedUsers = followsSnapshot.docs
+              .map((doc) => doc.data()['followingId'] as String)
+              .toSet();
+        }
+
+        final videos = snapshot.docs
+            .map((doc) {
+              try {
+                final video = Video.fromFirestore(doc);
+                final isFollowing = followedUsers.contains(userId);
+
+                // Skip followers-only videos if not following
+                if (video.privacy == 'followers' &&
+                    !isFollowing &&
+                    userId != _currentUserId) {
                   return null;
                 }
-              })
-              .where((video) => video != null)
-              .cast<Video>()
-              .toList();
 
-          // Sort in memory
-          videos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                return video;
+              } catch (e) {
+                print('VideoService: Error parsing video doc ${doc.id}: $e');
+                return null;
+              }
+            })
+            .where((video) => video != null)
+            .cast<Video>()
+            .toList();
 
-          print(
-              'VideoService: Successfully parsed ${videos.length} active videos');
-          return videos;
-        } catch (e) {
-          print('VideoService: Error mapping snapshot: $e');
-          rethrow;
-        }
-      });
+        // Sort in memory
+        videos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        print(
+            'VideoService: Successfully parsed ${videos.length} active videos');
+        return videos;
+      }).asyncMap((videos) async => videos);
     } catch (e) {
       print('VideoService: Error setting up stream: $e');
       rethrow;
@@ -691,6 +715,10 @@ class VideoService {
             .collection('videos')
             .where('userId', whereIn: followedUserIds)
             .where('status', isEqualTo: 'active')
+            .where('privacy', whereIn: [
+              'everyone',
+              'followers'
+            ]) // Only get public and followers-only videos
             .orderBy('createdAt', descending: true)
             .limit(limit)
             .get();
@@ -717,7 +745,7 @@ class VideoService {
       });
     } catch (e) {
       print('VideoService: Error getting following feed: $e');
-      return Stream.value([]);
+      rethrow;
     }
   }
 
@@ -804,6 +832,27 @@ class VideoService {
       }
 
       final video = Video.fromFirestore(doc);
+
+      // Check privacy settings
+      if (video.privacy == 'private' && video.userId != _currentUserId) {
+        print('VideoService: Video is private and user is not owner');
+        return null;
+      }
+
+      if (video.privacy == 'followers' && video.userId != _currentUserId) {
+        // Check if user is a follower
+        final followDoc = await _firestore
+            .collection('follows')
+            .doc('${_currentUserId}_${video.userId}')
+            .get();
+
+        if (!followDoc.exists) {
+          print(
+              'VideoService: Video is followers-only and user is not a follower');
+          return null;
+        }
+      }
+
       print('VideoService: Successfully fetched video: ${video.id}');
       return video;
     } catch (e) {

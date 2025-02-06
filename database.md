@@ -18,6 +18,7 @@ Collection of all videos in the application.
 - **shareCount**: number
 - **views**: number
 - **allowComments**: boolean (default: true)
+- **privacy**: string (enum: 'everyone', 'followers', 'private', default: 'everyone')
 
 ### users
 Collection of all users in the application.
@@ -150,7 +151,19 @@ service cloud.firestore {
 
     // Video document rules
     match /videos/{videoId} {
-      allow read: if true;
+      allow read: if 
+        // Public videos are readable by anyone
+        resource.data.privacy == 'everyone' ||
+        // Private videos are only readable by the owner
+        (resource.data.privacy == 'private' && request.auth != null && request.auth.uid == resource.data.userId) ||
+        // Followers-only videos are readable by followers and the owner
+        (resource.data.privacy == 'followers' && (
+          request.auth != null && (
+            request.auth.uid == resource.data.userId ||
+            exists(/databases/$(database)/documents/follows/$(request.auth.uid + '_' + resource.data.userId))
+          )
+        ));
+      
       allow create: if request.auth != null;
       allow update: if request.auth != null && (
         resource.data.userId == request.auth.uid ||

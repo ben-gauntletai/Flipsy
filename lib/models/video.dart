@@ -17,6 +17,7 @@ class Video {
   final String status;
   final Map<String, dynamic>? aiEnhancements;
   final bool allowComments;
+  final String privacy; // 'everyone', 'followers', 'private'
 
   Video({
     required this.id,
@@ -35,6 +36,7 @@ class Video {
     required this.status,
     this.aiEnhancements,
     this.allowComments = true,
+    this.privacy = 'everyone',
   });
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
@@ -80,6 +82,7 @@ class Video {
       status: data['status'] as String? ?? 'active',
       aiEnhancements: data['aiEnhancements'] as Map<String, dynamic>?,
       allowComments: data['allowComments'] as bool? ?? true,
+      privacy: data['privacy'] as String? ?? 'everyone',
     );
   }
 
@@ -104,6 +107,7 @@ class Video {
       'status': status,
       'aiEnhancements': aiEnhancements,
       'allowComments': allowComments,
+      'privacy': privacy,
     };
   }
 
@@ -124,6 +128,7 @@ class Video {
     String? status,
     Map<String, dynamic>? aiEnhancements,
     bool? allowComments,
+    String? privacy,
   }) {
     return Video(
       id: id ?? this.id,
@@ -142,6 +147,7 @@ class Video {
       status: status ?? this.status,
       aiEnhancements: aiEnhancements ?? this.aiEnhancements,
       allowComments: allowComments ?? this.allowComments,
+      privacy: privacy ?? this.privacy,
     );
   }
 }
