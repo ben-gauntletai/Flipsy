@@ -240,23 +240,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
           ),
           centerTitle: true,
           actions: [
-            if (!_isUploading)
-              Padding(
-                padding: const EdgeInsets.only(right: 4),
-                child: TextButton(
-                  onPressed: _videoFile != null ? _uploadVideo : null,
-                  child: Text(
-                    'Post',
-                    style: TextStyle(
-                      color: _videoFile != null
-                          ? const Color(0xFFFF2B55)
-                          : Colors.grey,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ),
+            // Removed the post button from here
           ],
         ),
       ),
