@@ -1590,12 +1590,15 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '@$displayName',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
+                GestureDetector(
+                  onTap: () => _navigateToProfile(context),
+                  child: Text(
+                    '@$displayName',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
