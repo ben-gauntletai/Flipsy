@@ -204,17 +204,8 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       // The auth state listener will handle the state update
     } catch (e) {
       print('AuthBloc: Sign in error caught: ${e.toString()}');
-      String errorMessage = e.toString().toLowerCase();
-      if (errorMessage.contains('recaptcha') ||
-          errorMessage.contains('incorrect') ||
-          errorMessage.contains('malformed') ||
-          errorMessage.contains('invalid')) {
-        print('AuthBloc: Emitting invalid credentials error');
-        emit(const AuthError('Invalid email or password'));
-      } else {
-        print('AuthBloc: Emitting general error');
-        emit(AuthError(errorMessage));
-      }
+      // Instead of showing errors, just emit Unauthenticated
+      emit(Unauthenticated());
     }
   }
 
