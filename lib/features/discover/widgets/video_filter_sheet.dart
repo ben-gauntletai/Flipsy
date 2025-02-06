@@ -17,6 +17,7 @@ class VideoFilterSheet extends StatefulWidget {
 
 class _VideoFilterSheetState extends State<VideoFilterSheet> {
   late VideoFilter _currentFilter;
+  late VideoFilter _tempFilter; // Temporary filter for storing changes
   final TextEditingController _hashtagController = TextEditingController();
   final FocusNode _hashtagFocusNode = FocusNode();
 
@@ -24,6 +25,7 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
   void initState() {
     super.initState();
     _currentFilter = widget.initialFilter;
+    _tempFilter = widget.initialFilter; // Initialize temp filter
   }
 
   @override
@@ -44,10 +46,9 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
 
     if (hashtag.isNotEmpty) {
       setState(() {
-        final newHashtags = Set<String>.from(_currentFilter.hashtags)
+        final newHashtags = Set<String>.from(_tempFilter.hashtags)
           ..add(hashtag);
-        _currentFilter = _currentFilter.copyWith(hashtags: newHashtags);
-        widget.onFilterChanged(_currentFilter);
+        _tempFilter = _tempFilter.copyWith(hashtags: newHashtags);
       });
     }
 
@@ -56,170 +57,207 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
 
   void _removeHashtag(String hashtag) {
     setState(() {
-      final newHashtags = Set<String>.from(_currentFilter.hashtags)
+      final newHashtags = Set<String>.from(_tempFilter.hashtags)
         ..remove(hashtag);
-      _currentFilter = _currentFilter.copyWith(hashtags: newHashtags);
-      widget.onFilterChanged(_currentFilter);
+      _tempFilter = _tempFilter.copyWith(hashtags: newHashtags);
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
     return Container(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+        bottom: bottomPadding,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  'Filter Videos',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                TextButton(
-                  onPressed: () {
-                    setState(() {
-                      _currentFilter = const VideoFilter();
-                      widget.onFilterChanged(_currentFilter);
-                    });
-                  },
-                  child: const Text('Reset'),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          // Scrollable content
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: [
-                // Budget Range
-                _buildRangeSlider(
-                  title: 'Budget Range',
-                  subtitle:
-                      '\$${_currentFilter.budgetRange?.start.toStringAsFixed(0) ?? "0"} - \$${_currentFilter.budgetRange?.end.toStringAsFixed(0) ?? "100"}',
-                  range: _currentFilter.budgetRange ??
-                      VideoFilter.defaultBudgetRange,
-                  min: VideoFilter.defaultBudgetRange.start,
-                  max: VideoFilter.defaultBudgetRange.end,
-                  onChanged: (range) {
-                    setState(() {
-                      _currentFilter =
-                          _currentFilter.copyWith(budgetRange: range);
-                      widget.onFilterChanged(_currentFilter);
-                    });
-                  },
-                ),
-                const Divider(),
-                // Calories Range
-                _buildRangeSlider(
-                  title: 'Calories Range',
-                  subtitle:
-                      '${_currentFilter.caloriesRange?.start.toInt() ?? "0"} - ${_currentFilter.caloriesRange?.end.toInt() ?? "2000"} cal',
-                  range: _currentFilter.caloriesRange ??
-                      VideoFilter.defaultCaloriesRange,
-                  min: VideoFilter.defaultCaloriesRange.start,
-                  max: VideoFilter.defaultCaloriesRange.end,
-                  onChanged: (range) {
-                    setState(() {
-                      _currentFilter =
-                          _currentFilter.copyWith(caloriesRange: range);
-                      widget.onFilterChanged(_currentFilter);
-                    });
-                  },
-                ),
-                const Divider(),
-                // Prep Time Range
-                _buildRangeSlider(
-                  title: 'Prep Time Range',
-                  subtitle:
-                      '${_currentFilter.prepTimeRange?.start.toInt() ?? "0"} - ${_currentFilter.prepTimeRange?.end.toInt() ?? "180"} min',
-                  range: _currentFilter.prepTimeRange ??
-                      VideoFilter.defaultPrepTimeRange,
-                  min: VideoFilter.defaultPrepTimeRange.start,
-                  max: VideoFilter.defaultPrepTimeRange.end,
-                  onChanged: (range) {
-                    setState(() {
-                      _currentFilter =
-                          _currentFilter.copyWith(prepTimeRange: range);
-                      widget.onFilterChanged(_currentFilter);
-                    });
-                  },
-                ),
-                const Divider(),
-                // Spiciness Range
-                _buildRangeSlider(
-                  title: 'Spiciness Range',
-                  subtitle:
-                      '${_currentFilter.minSpiciness ?? 0} - ${_currentFilter.maxSpiciness ?? 5} peppers',
-                  range: RangeValues(
-                    (_currentFilter.minSpiciness ?? 0).toDouble(),
-                    (_currentFilter.maxSpiciness ?? 5).toDouble(),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Filter Videos',
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                  min: VideoFilter.defaultSpicinessRange.start,
-                  max: VideoFilter.defaultSpicinessRange.end,
-                  divisions: 5,
-                  onChanged: (range) {
-                    setState(() {
-                      _currentFilter = _currentFilter.copyWith(
-                        minSpiciness: range.start.toInt(),
-                        maxSpiciness: range.end.toInt(),
-                      );
-                      widget.onFilterChanged(_currentFilter);
-                    });
-                  },
-                ),
-                const Divider(),
-                // Hashtags
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Hashtags',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _hashtagController,
-                      focusNode: _hashtagFocusNode,
-                      decoration: const InputDecoration(
-                        hintText: 'Add hashtag (e.g., spicy, quick)',
-                        prefixText: '#',
-                        border: OutlineInputBorder(),
-                      ),
-                      onSubmitted: _addHashtag,
-                      textInputAction: TextInputAction.done,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _currentFilter.hashtags.map((hashtag) {
-                        return Chip(
-                          label: Text('#$hashtag'),
-                          onDeleted: () => _removeHashtag(hashtag),
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primaryContainer,
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
-              ],
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _tempFilter = const VideoFilter();
+                      });
+                    },
+                    child: const Text('Reset'),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            const Divider(height: 1),
+            // Scrollable content
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  // Budget Range
+                  _buildRangeSlider(
+                    title: 'Budget Range',
+                    subtitle:
+                        '\$${_tempFilter.budgetRange?.start.toStringAsFixed(0) ?? "0"} - \$${_tempFilter.budgetRange?.end.toStringAsFixed(0) ?? "100"}',
+                    range: _tempFilter.budgetRange ??
+                        VideoFilter.defaultBudgetRange,
+                    min: VideoFilter.defaultBudgetRange.start,
+                    max: VideoFilter.defaultBudgetRange.end,
+                    onChanged: (range) {
+                      setState(() {
+                        _tempFilter = _tempFilter.copyWith(budgetRange: range);
+                      });
+                    },
+                  ),
+                  const Divider(),
+                  // Calories Range
+                  _buildRangeSlider(
+                    title: 'Calories Range',
+                    subtitle:
+                        '${_tempFilter.caloriesRange?.start.toInt() ?? "0"} - ${_tempFilter.caloriesRange?.end.toInt() ?? "2000"} cal',
+                    range: _tempFilter.caloriesRange ??
+                        VideoFilter.defaultCaloriesRange,
+                    min: VideoFilter.defaultCaloriesRange.start,
+                    max: VideoFilter.defaultCaloriesRange.end,
+                    onChanged: (range) {
+                      setState(() {
+                        _tempFilter =
+                            _tempFilter.copyWith(caloriesRange: range);
+                      });
+                    },
+                  ),
+                  const Divider(),
+                  // Prep Time Range
+                  _buildRangeSlider(
+                    title: 'Prep Time Range',
+                    subtitle:
+                        '${_tempFilter.prepTimeRange?.start.toInt() ?? "0"} - ${_tempFilter.prepTimeRange?.end.toInt() ?? "180"} min',
+                    range: _tempFilter.prepTimeRange ??
+                        VideoFilter.defaultPrepTimeRange,
+                    min: VideoFilter.defaultPrepTimeRange.start,
+                    max: VideoFilter.defaultPrepTimeRange.end,
+                    onChanged: (range) {
+                      setState(() {
+                        _tempFilter =
+                            _tempFilter.copyWith(prepTimeRange: range);
+                      });
+                    },
+                  ),
+                  const Divider(),
+                  // Spiciness Range
+                  _buildRangeSlider(
+                    title: 'Spiciness Range',
+                    subtitle:
+                        '${_tempFilter.minSpiciness ?? 0} - ${_tempFilter.maxSpiciness ?? 5} peppers',
+                    range: RangeValues(
+                      (_tempFilter.minSpiciness ?? 0).toDouble(),
+                      (_tempFilter.maxSpiciness ?? 5).toDouble(),
+                    ),
+                    min: VideoFilter.defaultSpicinessRange.start,
+                    max: VideoFilter.defaultSpicinessRange.end,
+                    divisions: 5,
+                    onChanged: (range) {
+                      setState(() {
+                        _tempFilter = _tempFilter.copyWith(
+                          minSpiciness: range.start.toInt(),
+                          maxSpiciness: range.end.toInt(),
+                        );
+                      });
+                    },
+                  ),
+                  const Divider(),
+                  // Hashtags
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Hashtags',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _hashtagController,
+                        focusNode: _hashtagFocusNode,
+                        decoration: const InputDecoration(
+                          hintText: 'Add hashtag (e.g., spicy, quick)',
+                          prefixText: '#',
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: _addHashtag,
+                        textInputAction: TextInputAction.done,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: _tempFilter.hashtags.map((hashtag) {
+                          return Chip(
+                            label: Text('#$hashtag'),
+                            onDeleted: () => _removeHashtag(hashtag),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primaryContainer,
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                ],
+              ),
+            ),
+            // Apply Button
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 5,
+                    offset: const Offset(0, -3),
+                  ),
+                ],
+              ),
+              child: ElevatedButton(
+                onPressed: () {
+                  widget.onFilterChanged(_tempFilter);
+                  Navigator.pop(context);
+                },
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  backgroundColor: Theme.of(context).primaryColor,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'Apply Filters',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

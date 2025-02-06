@@ -1001,90 +1001,106 @@ class VideoService {
   // Get a batch of filtered videos (non-stream version for pagination)
   Future<List<Video>> getFilteredVideoFeedBatch({
     required VideoFilter filter,
-    int limit = 10,
     DocumentSnapshot? startAfter,
   }) async {
-    print('VideoService: Getting filtered video feed batch');
     try {
-      // Create the base query
-      Query query =
-          _firestore.collection('videos').where('status', isEqualTo: 'active');
+      print('\nVideoService: ===== Starting filtered video feed batch =====');
+      print('VideoService: Current filter state: ${filter.toFirestoreQuery()}');
 
-      // Apply budget range filter
-      if (filter.budgetRange != null) {
-        query = query
-            .where('budget', isGreaterThanOrEqualTo: filter.budgetRange!.start)
-            .where('budget', isLessThanOrEqualTo: filter.budgetRange!.end);
-      }
+      // Start with base query for active videos only
+      Query query = _firestore
+          .collection('videos')
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true);
 
-      // Apply calories range filter
-      if (filter.caloriesRange != null) {
-        query = query
-            .where('calories',
-                isGreaterThanOrEqualTo: filter.caloriesRange!.start.toInt())
-            .where('calories', isLessThanOrEqualTo: filter.caloriesRange!.end);
-      }
+      print('VideoService: Base query created for active videos');
 
-      // Apply prep time range filter
-      if (filter.prepTimeRange != null) {
-        query = query
-            .where('prepTimeMinutes',
-                isGreaterThanOrEqualTo: filter.prepTimeRange!.start.toInt())
-            .where('prepTimeMinutes',
-                isLessThanOrEqualTo: filter.prepTimeRange!.end);
-      }
-
-      // Apply spiciness range filter
-      if (filter.minSpiciness != null || filter.maxSpiciness != null) {
-        query = query
-            .where('spiciness',
-                isGreaterThanOrEqualTo: filter.minSpiciness ?? 0)
-            .where('spiciness', isLessThanOrEqualTo: filter.maxSpiciness ?? 5);
-      }
-
-      // Apply hashtag filter
-      if (filter.hashtags.isNotEmpty) {
-        // Extract hashtags from description field
-        query = query.where('description',
-            arrayContainsAny: filter.hashtags.map((tag) => '#$tag').toList());
-      }
-
-      // If we're paginating, add the startAfter
+      // Apply pagination if needed
       if (startAfter != null) {
         print('VideoService: Using startAfter document: ${startAfter.id}');
         query = query.startAfterDocument(startAfter);
       }
 
-      // Add ordering and limit
-      query = query.orderBy('createdAt', descending: true).limit(limit);
+      // Limit the results
+      query = query.limit(50); // Fetch more to account for filtering
 
-      final snapshot = await query.get();
-      print('VideoService: Got ${snapshot.docs.length} filtered videos');
+      print('VideoService: Executing query...');
+      final querySnapshot = await query.get();
+      final docs = querySnapshot.docs;
+      print('VideoService: Got ${docs.length} documents from Firestore');
 
-      final videos = snapshot.docs
-          .map((doc) {
-            try {
-              final data = doc.data() as Map<String, dynamic>;
-              final videoId = data['videoId'] as String?;
-              final video = Video.fromFirestore(doc);
-              // Filter privacy in memory - include only 'everyone' and 'followers' videos
-              if (video.privacy == 'private') {
-                return null;
-              }
-              return video;
-            } catch (e) {
-              print('VideoService: Error parsing video doc ${doc.id}: $e');
-              return null;
+      // Convert to Video objects and apply filters in memory
+      List<Video> videos = [];
+      for (var doc in docs) {
+        try {
+          final video = Video.fromFirestore(doc);
+
+          // Apply filters in memory
+          bool passesFilters = true;
+
+          // Budget filter
+          if (filter.budgetRange != null) {
+            if (video.budget < filter.budgetRange!.start ||
+                video.budget > filter.budgetRange!.end) {
+              passesFilters = false;
             }
-          })
-          .where((video) => video != null)
-          .cast<Video>()
-          .toList();
+          }
 
-      print('VideoService: Successfully parsed ${videos.length} videos');
+          // Calories filter
+          if (passesFilters && filter.caloriesRange != null) {
+            if (video.calories < filter.caloriesRange!.start ||
+                video.calories > filter.caloriesRange!.end) {
+              passesFilters = false;
+            }
+          }
+
+          // Prep time filter
+          if (passesFilters && filter.prepTimeRange != null) {
+            if (video.prepTimeMinutes < filter.prepTimeRange!.start ||
+                video.prepTimeMinutes > filter.prepTimeRange!.end) {
+              passesFilters = false;
+            }
+          }
+
+          // Spiciness filter
+          if (passesFilters &&
+              (filter.minSpiciness != null || filter.maxSpiciness != null)) {
+            if (video.spiciness < (filter.minSpiciness ?? 0) ||
+                video.spiciness > (filter.maxSpiciness ?? 5)) {
+              passesFilters = false;
+            }
+          }
+
+          // Hashtag filter
+          if (passesFilters && filter.hashtags.isNotEmpty) {
+            final description = video.description?.toLowerCase() ?? '';
+            if (!filter.hashtags
+                .any((tag) => description.contains('#$tag'.toLowerCase()))) {
+              passesFilters = false;
+            }
+          }
+
+          if (passesFilters) {
+            print('VideoService: Video ${doc.id} passed all filters');
+            videos.add(video);
+          }
+        } catch (e) {
+          print('VideoService: Error parsing video doc ${doc.id}: $e');
+        }
+      }
+
+      print('VideoService: ${videos.length} videos passed all filters');
+
+      // Limit to 10 results
+      if (videos.length > 10) {
+        videos = videos.sublist(0, 10);
+      }
+
+      print('VideoService: Returning ${videos.length} videos');
+      print('VideoService: ===== End of filtered video feed batch =====\n');
       return videos;
     } catch (e) {
-      print('VideoService: Error getting filtered video feed batch: $e');
+      print('VideoService: Error fetching filtered videos: $e');
       return [];
     }
   }

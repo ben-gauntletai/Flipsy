@@ -180,4 +180,28 @@ class Video {
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
     );
   }
+
+  factory Video.fromMap(Map<String, dynamic> map) {
+    return Video(
+      id: map['id'] as String,
+      userId: map['userId'] as String,
+      videoURL: map['videoURL'] as String,
+      thumbnailURL: map['thumbnailURL'] as String,
+      description: map['description'] as String?,
+      budget: map['budget'] == null ? 0.0 : (map['budget'] as num).toDouble(),
+      calories: (map['calories'] as num?)?.toInt() ?? 0,
+      prepTimeMinutes: (map['prepTimeMinutes'] as num?)?.toInt() ?? 0,
+      spiciness: (map['spiciness'] as num?)?.toInt() ?? 0,
+      createdAt: (map['createdAt'] as Timestamp).toDate(),
+      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ??
+          (map['createdAt'] as Timestamp).toDate(),
+      status: map['status'] as String? ?? 'published',
+      likesCount: (map['likesCount'] as num?)?.toInt() ?? 0,
+      commentsCount: (map['commentsCount'] as num?)?.toInt() ?? 0,
+      shareCount: (map['shareCount'] as num?)?.toInt() ?? 0,
+      duration: (map['duration'] as num?)?.toDouble() ?? 0.0,
+      width: (map['width'] as num?)?.toInt() ?? 0,
+      height: (map['height'] as num?)?.toInt() ?? 0,
+    );
+  }
 }

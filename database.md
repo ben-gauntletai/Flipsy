@@ -147,6 +147,10 @@ Stores user notifications.
    - status, createdAt DESC
    - userId, createdAt DESC
    - status, likesCount DESC
+   - status, budget, createdAt DESC
+   - status, calories, createdAt DESC
+   - status, prepTimeMinutes, createdAt DESC
+   - status, spiciness, createdAt DESC
 
 2. users/likedVideos collection:
    - likedAt DESC

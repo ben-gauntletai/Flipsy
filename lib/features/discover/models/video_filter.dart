@@ -1,22 +1,27 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter/material.dart' show RangeValues;
+import '../../../models/video.dart';
 
 class VideoFilter extends Equatable {
-  final RangeValues? budgetRange;
-  final RangeValues? caloriesRange;
-  final RangeValues? prepTimeRange;
-  final int? minSpiciness;
-  final int? maxSpiciness;
+  final RangeValues budgetRange;
+  final RangeValues caloriesRange;
+  final RangeValues prepTimeRange;
+  final int minSpiciness;
+  final int maxSpiciness;
   final Set<String> hashtags;
 
   const VideoFilter({
-    this.budgetRange,
-    this.caloriesRange,
-    this.prepTimeRange,
-    this.minSpiciness,
-    this.maxSpiciness,
+    RangeValues? budgetRange,
+    RangeValues? caloriesRange,
+    RangeValues? prepTimeRange,
+    int? minSpiciness,
+    int? maxSpiciness,
     this.hashtags = const {},
-  });
+  })  : budgetRange = budgetRange ?? defaultBudgetRange,
+        caloriesRange = caloriesRange ?? defaultCaloriesRange,
+        prepTimeRange = prepTimeRange ?? defaultPrepTimeRange,
+        minSpiciness = minSpiciness ?? 0,
+        maxSpiciness = maxSpiciness ?? 5;
 
   // Default ranges for the filters
   static const defaultBudgetRange = RangeValues(0, 100); // $0 - $100
@@ -24,13 +29,27 @@ class VideoFilter extends Equatable {
   static const defaultPrepTimeRange = RangeValues(0, 180); // 0 - 180 minutes
   static const defaultSpicinessRange = RangeValues(0, 5); // 0 - 5 peppers
 
-  bool get hasFilters =>
-      budgetRange != null ||
-      caloriesRange != null ||
-      prepTimeRange != null ||
-      minSpiciness != null ||
-      maxSpiciness != null ||
-      hashtags.isNotEmpty;
+  bool get hasFilters {
+    // Check if any filter differs from its default value
+    final hasBudgetFilter = budgetRange.start != defaultBudgetRange.start ||
+        budgetRange.end != defaultBudgetRange.end;
+
+    final hasCaloriesFilter =
+        caloriesRange.start != defaultCaloriesRange.start ||
+            caloriesRange.end != defaultCaloriesRange.end;
+
+    final hasPrepTimeFilter =
+        prepTimeRange.start != defaultPrepTimeRange.start ||
+            prepTimeRange.end != defaultPrepTimeRange.end;
+
+    final hasSpicinessFilter = minSpiciness != 0 || maxSpiciness != 5;
+
+    return hasBudgetFilter ||
+        hasCaloriesFilter ||
+        hasPrepTimeFilter ||
+        hasSpicinessFilter ||
+        hashtags.isNotEmpty;
+  }
 
   VideoFilter copyWith({
     RangeValues? budgetRange,
@@ -53,32 +72,33 @@ class VideoFilter extends Equatable {
   Map<String, dynamic> toFirestoreQuery() {
     final conditions = <String, dynamic>{};
 
-    if (budgetRange != null) {
+    // Only include non-default filters
+    if (budgetRange != defaultBudgetRange) {
       conditions['budget_range'] = {
-        'min': budgetRange!.start,
-        'max': budgetRange!.end,
+        'min': budgetRange.start,
+        'max': budgetRange.end,
       };
     }
 
-    if (caloriesRange != null) {
+    if (caloriesRange != defaultCaloriesRange) {
       conditions['calories_range'] = {
-        'min': caloriesRange!.start.toInt(),
-        'max': caloriesRange!.end.toInt(),
+        'min': caloriesRange.start.toInt(),
+        'max': caloriesRange.end.toInt(),
       };
     }
 
-    if (prepTimeRange != null) {
+    if (prepTimeRange != defaultPrepTimeRange) {
       conditions['prep_time_range'] = {
-        'min': prepTimeRange!.start.toInt(),
-        'max': prepTimeRange!.end.toInt(),
+        'min': prepTimeRange.start.toInt(),
+        'max': prepTimeRange.end.toInt(),
       };
     }
 
-    if (minSpiciness != null) {
+    if (minSpiciness != 0) {
       conditions['min_spiciness'] = minSpiciness;
     }
 
-    if (maxSpiciness != null) {
+    if (maxSpiciness != 5) {
       conditions['max_spiciness'] = maxSpiciness;
     }
 
@@ -87,6 +107,55 @@ class VideoFilter extends Equatable {
     }
 
     return conditions;
+  }
+
+  bool matchesVideo(Video video) {
+    // Only apply non-default filters
+    if (budgetRange != defaultBudgetRange) {
+      final videoBudget = video.budget;
+      if (videoBudget < budgetRange.start || videoBudget > budgetRange.end) {
+        return false;
+      }
+    }
+
+    if (caloriesRange != defaultCaloriesRange) {
+      final videoCalories = video.calories;
+      if (videoCalories < caloriesRange.start ||
+          videoCalories > caloriesRange.end) {
+        return false;
+      }
+    }
+
+    if (prepTimeRange != defaultPrepTimeRange) {
+      final videoPrepTime = video.prepTimeMinutes;
+      if (videoPrepTime < prepTimeRange.start ||
+          videoPrepTime > prepTimeRange.end) {
+        return false;
+      }
+    }
+
+    if (minSpiciness != 0 || maxSpiciness != 5) {
+      final videoSpiciness = video.spiciness;
+      if (videoSpiciness < minSpiciness || videoSpiciness > maxSpiciness) {
+        return false;
+      }
+    }
+
+    if (hashtags.isNotEmpty) {
+      final description = video.description?.toLowerCase() ?? '';
+      bool hasMatchingHashtag = false;
+      for (final tag in hashtags) {
+        if (description.contains('#$tag'.toLowerCase())) {
+          hasMatchingHashtag = true;
+          break;
+        }
+      }
+      if (!hasMatchingHashtag) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   @override
