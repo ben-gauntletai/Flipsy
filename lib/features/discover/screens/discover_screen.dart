@@ -139,6 +139,31 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
+  void _handleSearch(String value) {
+    // Remove any leading # if present
+    final searchText = value.trim();
+    if (searchText.isEmpty) {
+      return;
+    }
+
+    try {
+      // Try to add the hashtag to the filter
+      setState(() {
+        _currentFilter = _currentFilter.addHashtag(searchText);
+        _searchController.clear(); // Clear the search field after adding
+      });
+      _loadVideos(refresh: true);
+    } catch (e) {
+      // Show error if hashtag is invalid or we've reached the maximum
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString()),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return WillPopScope(
@@ -167,8 +192,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       child: TextField(
                         controller: _searchController,
                         decoration: InputDecoration(
-                          hintText: 'Search videos',
-                          prefixIcon: const Icon(Icons.search),
+                          hintText: 'Search hashtags (e.g. pasta)',
+                          prefixIcon: const Icon(Icons.tag),
+                          prefixText: '#',
+                          prefixStyle: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 16,
+                          ),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -177,8 +207,17 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                             vertical: 8,
                           ),
                         ),
-                        onSubmitted: (value) {
-                          // TODO: Implement search
+                        onSubmitted: _handleSearch,
+                        // Add text change listener to remove # if user types it
+                        onChanged: (value) {
+                          if (value.startsWith('#')) {
+                            _searchController.text = value.substring(1);
+                            _searchController.selection =
+                                TextSelection.fromPosition(
+                              TextPosition(
+                                  offset: _searchController.text.length),
+                            );
+                          }
                         },
                       ),
                     ),
