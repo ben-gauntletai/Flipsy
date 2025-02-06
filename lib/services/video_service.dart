@@ -173,15 +173,15 @@ class VideoService {
       final List<String> hashtags = Video.extractHashtags(description);
       print('VideoService: Extracted hashtags: $hashtags');
 
-      // Calculate bucket values
-      final budgetBucket = Video.calculateBudgetBucket(budget);
-      final caloriesBucket = Video.calculateCaloriesBucket(calories);
-      final prepTimeBucket = Video.calculatePrepTimeBucket(prepTimeMinutes);
-
-      print('VideoService: Calculated buckets:');
-      print('  - Budget bucket: $budgetBucket');
-      print('  - Calories bucket: $caloriesBucket');
-      print('  - Prep time bucket: $prepTimeBucket');
+      // Generate tags for filtering
+      final tags = Video.generateTags(
+        budget: budget,
+        calories: calories,
+        prepTimeMinutes: prepTimeMinutes,
+        spiciness: spiciness,
+        hashtags: hashtags,
+      );
+      print('VideoService: Generated tags: $tags');
 
       // Use current timestamp for immediate feed update
       final now = DateTime.now();
@@ -191,7 +191,7 @@ class VideoService {
         'videoURL': videoURL,
         'thumbnailURL': thumbnailURL,
         'description': description,
-        'createdAt': now, // Use current timestamp first
+        'createdAt': now,
         'updatedAt': now,
         'likesCount': 0,
         'commentsCount': 0,
@@ -208,9 +208,7 @@ class VideoService {
         'calories': calories,
         'prepTimeMinutes': prepTimeMinutes,
         'hashtags': hashtags,
-        'budgetBucket': budgetBucket,
-        'caloriesBucket': caloriesBucket,
-        'prepTimeBucket': prepTimeBucket,
+        'tags': tags,
       });
 
       print('VideoService: Created document with ID: ${videoDoc.id}');
@@ -994,45 +992,122 @@ class VideoService {
     print('VideoService: Current filter state: ${filter?.toFirestoreQuery()}');
 
     try {
-      // Clear expired cache entries
-      _clearExpiredCache();
+      // First, let's check what videos exist at all
+      final allVideosSnapshot = await _firestore
+          .collection('videos')
+          .where('status', isEqualTo: 'active')
+          .get();
 
-      // Generate cache key
-      final cacheKey = '${filter?.toFirestoreQuery()}_${startAfter?.id}';
+      print('\nDiagnostic Information:');
+      print(
+          'Total active videos in database: ${allVideosSnapshot.docs.length}');
 
-      // Check cache first
-      if (_queryCache.containsKey(cacheKey)) {
-        print('VideoService: Returning cached results for key: $cacheKey');
-        return _queryCache[cacheKey]!;
+      // Analyze the tags in the database
+      final Set<String> allBudgetTags = {};
+      int videosWithBudgetTags = 0;
+      int videosInBudgetRange = 0;
+
+      for (final doc in allVideosSnapshot.docs) {
+        final data = doc.data();
+        final tags = (data['tags'] as List<dynamic>?)?.cast<String>() ?? [];
+        final budgetTags =
+            tags.where((tag) => tag.startsWith('budget_')).toList();
+        allBudgetTags.addAll(budgetTags);
+
+        if (budgetTags.isNotEmpty) {
+          videosWithBudgetTags++;
+        }
+
+        final budget = (data['budget'] as num?)?.toDouble() ?? 0.0;
+        if (budget >= 0 && budget <= 75) {
+          videosInBudgetRange++;
+        }
+
+        print('\nAnalyzing video ${doc.id}:');
+        print('- Budget: $budget');
+        print('- Tags: $tags');
+        print('- Budget tags: $budgetTags');
       }
 
+      print('\nDatabase Analysis:');
+      print('Videos with budget tags: $videosWithBudgetTags');
+      print('Videos in budget range 0-75: $videosInBudgetRange');
+      print('All budget tags found: $allBudgetTags');
+
+      // Continue with the original query...
       Query<Map<String, dynamic>> query =
           _firestore.collection('videos').where('status', isEqualTo: 'active');
 
       if (filter != null && filter.hasFilters) {
-        // Generate filter tags
-        final filterTags = filter.generateFilterTags();
-        print('VideoService: Using filter tags: $filterTags');
+        final queryData = filter.toFirestoreQuery();
+        if (queryData.containsKey('where')) {
+          final conditions = queryData['where'] as List<Map<String, dynamic>>;
 
-        // Apply tag-based filtering if there are any tags
-        if (filterTags.isNotEmpty) {
-          query = query.where('tags', arrayContainsAny: filterTags);
+          // Find the condition with the fewest tags to optimize the query
+          Map<String, dynamic>? bestCondition;
+          int minTagCount = double.maxFinite.toInt();
+
+          print(
+              'VideoService: Processing ${conditions.length} filter conditions');
+
+          for (final condition in conditions) {
+            if (condition.containsKey('tags')) {
+              final tagsCondition = condition['tags'] as Map<String, dynamic>;
+              if (tagsCondition.containsKey('arrayContainsAny')) {
+                final tags = tagsCondition['arrayContainsAny'] as List<String>;
+                print(
+                    'VideoService: Found condition with ${tags.length} tags: $tags');
+                if (tags.isNotEmpty && tags.length < minTagCount) {
+                  minTagCount = tags.length;
+                  bestCondition = condition;
+                  print(
+                      'VideoService: New best condition found with ${tags.length} tags');
+                }
+              }
+            }
+          }
+
+          if (bestCondition != null) {
+            final tagsCondition = bestCondition['tags'] as Map<String, dynamic>;
+            final tags = tagsCondition['arrayContainsAny'] as List<String>;
+            print('VideoService: Using arrayContainsAny with tags: $tags');
+            query = query.where('tags', arrayContainsAny: tags);
+          } else {
+            print('VideoService: No valid tag conditions found');
+          }
+        } else {
+          print('VideoService: No where conditions in query data');
         }
+      } else {
+        print('VideoService: No filters applied');
       }
 
       // Always add createdAt ordering
       query = query.orderBy('createdAt', descending: true);
+      print('VideoService: Added createdAt ordering');
 
       // Get videos with limit
-      query = query.limit(10);
+      query =
+          query.limit(20); // Increased limit since we'll filter more in memory
+      print('VideoService: Set limit to 20');
 
       if (startAfter != null) {
         query = query.startAfterDocument(startAfter);
+        print('VideoService: Added startAfter cursor');
       }
 
-      print('VideoService: Executing query');
+      print(
+          'VideoService: Executing query with structure: ${query.toString()}');
       final querySnapshot = await query.get();
-      print('VideoService: Got ${querySnapshot.docs.length} videos');
+      print(
+          'VideoService: Got ${querySnapshot.docs.length} videos from initial query');
+
+      if (querySnapshot.docs.isEmpty) {
+        print('VideoService: Query returned no results. This could indicate:');
+        print('1. No videos match the status=active condition');
+        print('2. No videos have the required tags');
+        print('3. Index might be missing or not yet built');
+      }
 
       // Convert to Video objects and filter out any that might be invalid
       List<Video> videos = [];
@@ -1050,7 +1125,44 @@ class VideoService {
           }
 
           final video = Video.fromFirestore(doc);
+          print(
+              'VideoService: Processing video ${doc.id} with tags: ${video.tags}');
+
+          // If we have filters, verify all conditions are met
+          if (filter != null && filter.hasFilters) {
+            final queryData = filter.toFirestoreQuery();
+            if (queryData.containsKey('where')) {
+              final conditions =
+                  queryData['where'] as List<Map<String, dynamic>>;
+              bool matchesAllConditions = true;
+
+              for (final condition in conditions) {
+                if (condition.containsKey('tags')) {
+                  final tagsCondition =
+                      condition['tags'] as Map<String, dynamic>;
+                  if (tagsCondition.containsKey('arrayContainsAny')) {
+                    final requiredTags =
+                        tagsCondition['arrayContainsAny'] as List<String>;
+                    if (!requiredTags.any((tag) => video.tags.contains(tag))) {
+                      matchesAllConditions = false;
+                      print(
+                          'VideoService: Video ${doc.id} does not match condition for tags: $requiredTags');
+                      break;
+                    }
+                  }
+                }
+              }
+
+              if (!matchesAllConditions) {
+                print(
+                    'VideoService: Video ${doc.id} does not match all conditions, skipping');
+                continue;
+              }
+            }
+          }
+
           videos.add(video);
+          print('VideoService: Added video ${doc.id} to results');
         } catch (e) {
           print('VideoService: Error parsing video ${doc.id}: $e');
           continue;
@@ -1060,11 +1172,14 @@ class VideoService {
       print(
           'VideoService: Successfully processed ${videos.length} valid videos');
 
-      // Cache the results
-      _queryCache[cacheKey] = videos;
-      _queryCacheTimestamps[cacheKey] = DateTime.now();
+      // Sort by createdAt to maintain consistency
+      videos.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-      print('VideoService: Returning ${videos.length} videos after filtering');
+      // Limit to 10 videos after all filtering
+      if (videos.length > 10) {
+        videos = videos.sublist(0, 10);
+      }
+
       return videos;
     } catch (e) {
       print('VideoService: Error getting filtered videos: $e');

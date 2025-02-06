@@ -52,16 +52,31 @@ class VideoFilter {
     ];
 
     for (var bucket in allBuckets) {
-      final parts = bucket.split('-');
-      final start = double.parse(parts[0]);
-      final end = parts.length > 1 && !parts[1].endsWith('+')
-          ? double.parse(parts[1])
-          : double.infinity;
+      try {
+        if (bucket.endsWith('+')) {
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (budgetRange.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
 
-      if (end >= budgetRange.start && start <= budgetRange.end) {
-        buckets.add(bucket);
+        final parts = bucket.split('-');
+        if (parts.length != 2) continue;
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
+
+        if (budgetRange.start <= end && budgetRange.end > start) {
+          buckets.add(bucket);
+        }
+      } catch (e) {
+        print('Error processing budget bucket: $e');
+        continue;
       }
     }
+    print(
+        'VideoFilter: Generated budget buckets: $buckets for range ${budgetRange.start}-${budgetRange.end}');
     return buckets;
   }
 
@@ -76,14 +91,27 @@ class VideoFilter {
     ];
 
     for (var bucket in allBuckets) {
-      final parts = bucket.split('-');
-      final start = double.parse(parts[0]);
-      final end = parts.length > 1 && !parts[1].endsWith('+')
-          ? double.parse(parts[1])
-          : double.infinity;
+      try {
+        if (bucket.endsWith('+')) {
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (caloriesRange.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
 
-      if (end >= caloriesRange.start && start <= caloriesRange.end) {
-        buckets.add(bucket);
+        final parts = bucket.split('-');
+        if (parts.length != 2) continue;
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
+
+        if (end >= caloriesRange.start && start <= caloriesRange.end) {
+          buckets.add(bucket);
+        }
+      } catch (e) {
+        print('Error processing calories bucket: $e');
+        continue;
       }
     }
     return buckets;
@@ -100,14 +128,27 @@ class VideoFilter {
     ];
 
     for (var bucket in allBuckets) {
-      final parts = bucket.split('-');
-      final start = double.parse(parts[0]);
-      final end = parts.length > 1 && !parts[1].endsWith('+')
-          ? double.parse(parts[1])
-          : double.infinity;
+      try {
+        if (bucket.endsWith('+')) {
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (prepTimeRange.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
 
-      if (end >= prepTimeRange.start && start <= prepTimeRange.end) {
-        buckets.add(bucket);
+        final parts = bucket.split('-');
+        if (parts.length != 2) continue;
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
+
+        if (end >= prepTimeRange.start && start <= prepTimeRange.end) {
+          buckets.add(bucket);
+        }
+      } catch (e) {
+        print('Error processing prep time bucket: $e');
+        continue;
       }
     }
     return buckets;
@@ -177,34 +218,73 @@ class VideoFilter {
 
   Map<String, dynamic> toFirestoreQuery() {
     final Map<String, dynamic> query = {};
-    final List<String> filterTags = [];
+    final List<Map<String, dynamic>> conditions = [];
 
+    // Add budget condition if range is not default
     if (budgetRange != defaultBudgetRange) {
-      filterTags.addAll(budgetBuckets.map((bucket) => 'budget_$bucket'));
-    }
-
-    if (caloriesRange != defaultCaloriesRange) {
-      filterTags.addAll(caloriesBuckets.map((bucket) => 'calories_$bucket'));
-    }
-
-    if (prepTimeRange != defaultPrepTimeRange) {
-      filterTags.addAll(prepTimeBuckets.map((bucket) => 'prep_$bucket'));
-    }
-
-    if (minSpiciness != 0 || maxSpiciness != 5) {
-      for (int i = minSpiciness; i <= maxSpiciness; i++) {
-        filterTags.add('spicy_$i');
+      final budgetTags =
+          budgetBuckets.map((bucket) => 'budget_$bucket').toList();
+      if (budgetTags.isNotEmpty) {
+        conditions.add({
+          'tags': {
+            'arrayContainsAny': budgetTags,
+          }
+        });
       }
     }
 
-    if (hashtags.isNotEmpty) {
-      filterTags.addAll(hashtags.map((tag) => 'tag_$tag'));
+    // Add calories condition if range is not default
+    if (caloriesRange != defaultCaloriesRange) {
+      final calorieTags =
+          caloriesBuckets.map((bucket) => 'calories_$bucket').toList();
+      if (calorieTags.isNotEmpty) {
+        conditions.add({
+          'tags': {
+            'arrayContainsAny': calorieTags,
+          }
+        });
+      }
     }
 
-    if (filterTags.isNotEmpty) {
-      query['tags'] = {
-        'arrayContainsAny': filterTags,
-      };
+    // Add prep time condition if range is not default
+    if (prepTimeRange != defaultPrepTimeRange) {
+      final prepTimeTags =
+          prepTimeBuckets.map((bucket) => 'prep_$bucket').toList();
+      if (prepTimeTags.isNotEmpty) {
+        conditions.add({
+          'tags': {
+            'arrayContainsAny': prepTimeTags,
+          }
+        });
+      }
+    }
+
+    // Add spiciness condition if not default range
+    if (minSpiciness != 0 || maxSpiciness != 5) {
+      final List<String> spicyTags = [];
+      for (int i = minSpiciness; i <= maxSpiciness; i++) {
+        spicyTags.add('spicy_$i');
+      }
+      conditions.add({
+        'tags': {
+          'arrayContainsAny': spicyTags,
+        }
+      });
+    }
+
+    // Add hashtag condition if any hashtags are specified
+    if (hashtags.isNotEmpty) {
+      final hashtagTags = hashtags.map((tag) => 'tag_$tag').toList();
+      conditions.add({
+        'tags': {
+          'arrayContainsAny': hashtagTags,
+        }
+      });
+    }
+
+    // If we have conditions, add them to the query
+    if (conditions.isNotEmpty) {
+      query['where'] = conditions;
     }
 
     return query;
@@ -233,32 +313,40 @@ class VideoFilter {
     print('VideoFilter: Generating filter tags');
     final List<String> tags = [];
 
-    // Add budget tags
-    print(
-        'VideoFilter: Processing budget range: ${budgetRange.start} - ${budgetRange.end}');
-    final budgetTags = _getBudgetBuckets(budgetRange);
-    print('VideoFilter: Generated budget tags: $budgetTags');
-    tags.addAll(budgetTags.map((bucket) => 'budget_$bucket'));
+    // Add budget tags only if range is not default
+    if (budgetRange != defaultBudgetRange) {
+      print(
+          'VideoFilter: Processing budget range: ${budgetRange.start} - ${budgetRange.end}');
+      final budgetTags = _getBudgetBuckets(budgetRange);
+      print('VideoFilter: Generated budget tags: $budgetTags');
+      tags.addAll(budgetTags.map((bucket) => 'budget_$bucket'));
+    }
 
-    // Add calories tags
-    print(
-        'VideoFilter: Processing calories range: ${caloriesRange.start} - ${caloriesRange.end}');
-    final calorieTags = _getCaloriesBuckets(caloriesRange);
-    print('VideoFilter: Generated calorie tags: $calorieTags');
-    tags.addAll(calorieTags.map((bucket) => 'calories_$bucket'));
+    // Add calories tags only if range is not default
+    if (caloriesRange != defaultCaloriesRange) {
+      print(
+          'VideoFilter: Processing calories range: ${caloriesRange.start} - ${caloriesRange.end}');
+      final calorieTags = _getCaloriesBuckets(caloriesRange);
+      print('VideoFilter: Generated calorie tags: $calorieTags');
+      tags.addAll(calorieTags.map((bucket) => 'calories_$bucket'));
+    }
 
-    // Add prep time tags
-    print(
-        'VideoFilter: Processing prep time range: ${prepTimeRange.start} - ${prepTimeRange.end}');
-    final prepTimeTags = _getPrepTimeBuckets(prepTimeRange);
-    print('VideoFilter: Generated prep time tags: $prepTimeTags');
-    tags.addAll(prepTimeTags.map((bucket) => 'prep_$bucket'));
+    // Add prep time tags only if range is not default
+    if (prepTimeRange != defaultPrepTimeRange) {
+      print(
+          'VideoFilter: Processing prep time range: ${prepTimeRange.start} - ${prepTimeRange.end}');
+      final prepTimeTags = _getPrepTimeBuckets(prepTimeRange);
+      print('VideoFilter: Generated prep time tags: $prepTimeTags');
+      tags.addAll(prepTimeTags.map((bucket) => 'prep_$bucket'));
+    }
 
-    // Add spiciness tags
-    print(
-        'VideoFilter: Processing spiciness range: $minSpiciness - $maxSpiciness');
-    for (var i = minSpiciness; i <= maxSpiciness; i++) {
-      tags.add('spicy_$i');
+    // Add spiciness tags only if range is not default
+    if (minSpiciness != 0 || maxSpiciness != 5) {
+      print(
+          'VideoFilter: Processing spiciness range: $minSpiciness - $maxSpiciness');
+      for (var i = minSpiciness; i <= maxSpiciness; i++) {
+        tags.add('spicy_$i');
+      }
     }
 
     print('VideoFilter: Final generated tags: $tags');
@@ -275,21 +363,30 @@ class VideoFilter {
     for (final bucket in ranges) {
       try {
         print('VideoFilter: Processing budget bucket: $bucket');
+        if (bucket.endsWith('+')) {
+          // Handle infinity bucket (e.g., '100+')
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (range.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
+
         final parts = bucket.split('-');
-        print('VideoFilter: Split parts: $parts');
-        final start = double.parse(parts[0].replaceAll('+', ''));
-        final end = parts.length == 1 && parts[0].endsWith('+')
-            ? double.infinity
-            : double.parse(parts[1]);
-        print('VideoFilter: Parsed range: $start - $end');
+        if (parts.length != 2) {
+          print('VideoFilter: Invalid bucket format: $bucket');
+          continue;
+        }
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
 
         if (range.end >= start && range.start <= end) {
-          print('VideoFilter: Adding bucket: $bucket');
           buckets.add(bucket);
         }
       } catch (e) {
         print('VideoFilter: Error processing budget bucket $bucket: $e');
-        rethrow;
+        continue; // Skip this bucket instead of throwing
       }
     }
 
@@ -307,21 +404,30 @@ class VideoFilter {
     for (final bucket in ranges) {
       try {
         print('VideoFilter: Processing calories bucket: $bucket');
+        if (bucket.endsWith('+')) {
+          // Handle infinity bucket (e.g., '1500+')
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (range.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
+
         final parts = bucket.split('-');
-        print('VideoFilter: Split parts: $parts');
-        final start = double.parse(parts[0].replaceAll('+', ''));
-        final end = parts.length == 1 && parts[0].endsWith('+')
-            ? double.infinity
-            : double.parse(parts[1]);
-        print('VideoFilter: Parsed range: $start - $end');
+        if (parts.length != 2) {
+          print('VideoFilter: Invalid bucket format: $bucket');
+          continue;
+        }
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
 
         if (range.end >= start && range.start <= end) {
-          print('VideoFilter: Adding bucket: $bucket');
           buckets.add(bucket);
         }
       } catch (e) {
         print('VideoFilter: Error processing calories bucket $bucket: $e');
-        rethrow;
+        continue; // Skip this bucket instead of throwing
       }
     }
 
@@ -339,21 +445,30 @@ class VideoFilter {
     for (final bucket in ranges) {
       try {
         print('VideoFilter: Processing prep time bucket: $bucket');
+        if (bucket.endsWith('+')) {
+          // Handle infinity bucket (e.g., '120+')
+          final start = double.parse(bucket.substring(0, bucket.length - 1));
+          if (range.end >= start) {
+            buckets.add(bucket);
+          }
+          continue;
+        }
+
         final parts = bucket.split('-');
-        print('VideoFilter: Split parts: $parts');
-        final start = double.parse(parts[0].replaceAll('+', ''));
-        final end = parts.length == 1 && parts[0].endsWith('+')
-            ? double.infinity
-            : double.parse(parts[1]);
-        print('VideoFilter: Parsed range: $start - $end');
+        if (parts.length != 2) {
+          print('VideoFilter: Invalid bucket format: $bucket');
+          continue;
+        }
+
+        final start = double.parse(parts[0]);
+        final end = double.parse(parts[1]);
 
         if (range.end >= start && range.start <= end) {
-          print('VideoFilter: Adding bucket: $bucket');
           buckets.add(bucket);
         }
       } catch (e) {
         print('VideoFilter: Error processing prep time bucket $bucket: $e');
-        rethrow;
+        continue; // Skip this bucket instead of throwing
       }
     }
 

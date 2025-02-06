@@ -976,77 +976,51 @@ function generateTags(
 }
 
 // Migration function to add tags to existing videos
-export const migrateVideosToTags = onCall(async (request: CallableRequest) => {
-  // Check if the caller is authenticated
-  if (!request.auth) {
-    throw new functions.https.HttpsError(
-      "unauthenticated",
-      "Must be authenticated to migrate videos",
-    );
-  }
-
+export const migrateVideosToTags = functions.https.onRequest(async (req, res) => {
   try {
+    console.log("Starting video migration...");
     const db = admin.firestore();
     const videosRef = db.collection("videos");
+    // Get all videos
     const snapshot = await videosRef.get();
     let updatedCount = 0;
+    const skippedCount = 0;
     let errorCount = 0;
-    let skippedCount = 0;
-
-    console.log(`Starting migration of ${snapshot.size} videos to tag-based system`);
-
     for (const doc of snapshot.docs) {
       try {
-        const data = doc.data();
-
-        // Skip if tags already exist and are up to date
-        const currentTags = data.tags || [];
-        const newTags = generateTags(
-          data.budget || 0,
-          data.calories || 0,
-          data.prepTimeMinutes || 0,
-          data.spiciness || 0,
-          data.hashtags || [],
+        const video = doc.data();
+        // Generate tags for the video
+        const tags = generateTags(
+          video.budget || 0,
+          video.calories || 0,
+          video.prepTimeMinutes || 0,
+          video.spiciness || 0,
+          video.hashtags || []
         );
-
-        // Check if tags are different (need updating)
-        const needsUpdate = JSON.stringify(currentTags.sort()) !==
-          JSON.stringify(newTags.sort());
-
-        if (!needsUpdate) {
-          console.log(`Skipping video ${doc.id} - tags are up to date`);
-          skippedCount++;
-          continue;
-        }
-
-        await doc.ref.update({
-          tags: newTags,
+        // Update the video with tags
+        await videosRef.doc(doc.id).update({
+          tags: tags,
         });
-
         updatedCount++;
-        console.log(`Updated video ${doc.id} with tags:`, newTags);
-      } catch (error) {
-        console.error(`Error updating video ${doc.id}:`, error);
+        console.log(`Updated video ${doc.id} with tags:`, tags);
+      } catch (err) {
         errorCount++;
+        console.error(`Error updating video ${doc.id}:`, err);
       }
     }
-
-    console.log(
-      `Migration completed. Updated: ${updatedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`
-    );
-    return {
+    const message =
+      `Migration completed. Updated: ${updatedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`;
+    console.log(message);
+    res.status(200).json({
       success: true,
       updatedCount,
       skippedCount,
       errorCount,
       message: `Successfully migrated ${updatedCount} videos. ` +
         `Skipped ${skippedCount}. Encountered ${errorCount} errors.`,
-    };
+    });
   } catch (error) {
     console.error("Error in migration:", error);
-    throw new functions.https.HttpsError(
-      "internal",
-      "An error occurred during migration",
-    );
+    res.status(500).json({ error: "An error occurred during migration" });
   }
 });
