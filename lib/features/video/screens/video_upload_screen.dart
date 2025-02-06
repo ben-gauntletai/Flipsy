@@ -273,48 +273,25 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   style: const TextStyle(color: Colors.red, fontSize: 13),
                 ),
               ),
+            // Main content area
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _descriptionController,
-                            decoration: const InputDecoration(
-                              hintText:
-                                  'Describe your post, add hashtags, or mention creators that inspired you',
-                              hintStyle:
-                                  TextStyle(color: Colors.grey, fontSize: 15),
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                            maxLines: 4,
-                            minLines: 1,
-                            style: const TextStyle(fontSize: 15),
-                            enabled: !_isUploading,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        if (_videoController?.value.isInitialized ?? false)
-                          Container(
-                            width: 80,
-                            height: 120,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: Colors.grey[200]!),
-                            ),
+                  // Video takes all remaining space
+                  Expanded(
+                    child: _videoController?.value.isInitialized ?? false
+                        ? Container(
+                            width: double.infinity,
+                            height: double.infinity,
+                            color: Colors.black,
                             child: Stack(
-                              fit: StackFit.expand,
                               children: [
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: VideoPlayer(_videoController!),
+                                Center(
+                                  child: AspectRatio(
+                                    aspectRatio:
+                                        _videoController!.value.aspectRatio,
+                                    child: VideoPlayer(_videoController!),
+                                  ),
                                 ),
                                 Positioned(
                                   bottom: 8,
@@ -343,252 +320,186 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                               ],
                             ),
                           )
-                        else
-                          GestureDetector(
+                        : GestureDetector(
                             onTap: _isUploading ? null : _pickVideo,
                             child: Container(
-                              width: 80,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                color: Colors.grey[100],
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.video_library,
-                                    size: 24,
-                                    color: Colors.grey[600],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Select',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _buildActionChip(
-                          icon: Icons.tag,
-                          label: 'Hashtags',
-                          onTap: () {},
-                        ),
-                        _buildActionChip(
-                          icon: Icons.alternate_email,
-                          label: 'Mention',
-                          onTap: () {},
-                        ),
-                        _buildActionChip(
-                          icon: Icons.video_library,
-                          label: 'Videos',
-                          onTap: () {},
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.person_outline),
-                    title: const Text('Tag people'),
-                    trailing: const Icon(Icons.chevron_right, size: 20),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    minLeadingWidth: 24,
-                    horizontalTitleGap: 8,
-                    dense: true,
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.link),
-                    title: const Text('Add link'),
-                    trailing: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFF2B55),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child:
-                          const Icon(Icons.add, color: Colors.white, size: 16),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    minLeadingWidth: 24,
-                    horizontalTitleGap: 8,
-                    dense: true,
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.lock_outline),
-                    title: const Text('Who can watch this video'),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          _privacy == 'everyone'
-                              ? 'Everyone'
-                              : _privacy == 'followers'
-                                  ? 'Followers'
-                                  : 'Private',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.chevron_right, color: Colors.grey[400]),
-                      ],
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    minLeadingWidth: 24,
-                    horizontalTitleGap: 8,
-                    dense: true,
-                    onTap: _isUploading
-                        ? null
-                        : () {
-                            showModalBottomSheet(
-                              context: context,
-                              builder: (context) => SafeArea(
+                              color: Colors.black,
+                              child: Center(
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
                                   children: [
-                                    Padding(
-                                      padding: const EdgeInsets.all(16),
-                                      child: Text(
-                                        'Who can watch this video',
-                                        style: TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.grey[800],
-                                        ),
+                                    Icon(
+                                      Icons.video_library,
+                                      size: 48,
+                                      color: Colors.white.withOpacity(0.8),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Select Video',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.8),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w500,
                                       ),
-                                    ),
-                                    const Divider(height: 1),
-                                    ListTile(
-                                      title: const Text('Everyone'),
-                                      subtitle: const Text(
-                                          'Anyone on Flipsy can watch this video'),
-                                      trailing: _privacy == 'everyone'
-                                          ? const Icon(Icons.check,
-                                              color: Color(0xFFFF2B55))
-                                          : null,
-                                      onTap: () {
-                                        setState(() => _privacy = 'everyone');
-                                        Navigator.pop(context);
-                                      },
-                                    ),
-                                    ListTile(
-                                      title: const Text('Followers'),
-                                      subtitle: const Text(
-                                          'Only your followers can watch this video'),
-                                      trailing: _privacy == 'followers'
-                                          ? const Icon(Icons.check,
-                                              color: Color(0xFFFF2B55))
-                                          : null,
-                                      onTap: () {
-                                        setState(() => _privacy = 'followers');
-                                        Navigator.pop(context);
-                                      },
-                                    ),
-                                    ListTile(
-                                      title: const Text('Private'),
-                                      subtitle: const Text(
-                                          'Only you can watch this video'),
-                                      trailing: _privacy == 'private'
-                                          ? const Icon(Icons.check,
-                                              color: Color(0xFFFF2B55))
-                                          : null,
-                                      onTap: () {
-                                        setState(() => _privacy = 'private');
-                                        Navigator.pop(context);
-                                      },
                                     ),
                                   ],
                                 ),
                               ),
-                              backgroundColor: Colors.white,
-                            );
-                          },
-                  ),
-                  const Divider(height: 1),
-                  SwitchListTile(
-                    value: _allowComments,
-                    onChanged: (bool value) {
-                      setState(() {
-                        _allowComments = value;
-                      });
-                    },
-                    title: const Text('Allow comments'),
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    activeColor: const Color(0xFF00F2EA),
-                    dense: true,
-                  ),
-                  const Divider(height: 1),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Share to:',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.black87,
                             ),
                           ),
-                          const Spacer(),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  ),
+                  // Bottom section with description and settings
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      border: Border(
+                        top: BorderSide(color: Colors.grey[200]!),
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: TextField(
+                            controller: _descriptionController,
+                            decoration: const InputDecoration(
+                              hintText:
+                                  'Describe your post, add hashtags, or mention creators that inspired you',
+                              hintStyle:
+                                  TextStyle(color: Colors.grey, fontSize: 15),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            maxLines: 3,
+                            minLines: 1,
+                            style: const TextStyle(fontSize: 15),
+                            enabled: !_isUploading,
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.lock_outline),
+                          title: const Text('Who can watch this video'),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              _buildSocialShareButton(
-                                icon: 'facebook',
-                                label: 'Facebook',
-                                onTap: () {},
+                              Text(
+                                _privacy == 'everyone'
+                                    ? 'Everyone'
+                                    : _privacy == 'followers'
+                                        ? 'Followers'
+                                        : 'Private',
+                                style: TextStyle(
+                                  color: Colors.grey[600],
+                                  fontSize: 14,
+                                ),
                               ),
-                              _buildSocialShareButton(
-                                icon: 'instagram',
-                                label: 'Instagram',
-                                onTap: () {},
-                              ),
-                              _buildSocialShareButton(
-                                icon: 'whatsapp',
-                                label: 'WhatsApp',
-                                onTap: () {},
-                              ),
-                              _buildSocialShareButton(
-                                icon: 'twitter',
-                                label: 'Twitter',
-                                onTap: () {},
-                              ),
+                              const SizedBox(width: 4),
+                              Icon(Icons.chevron_right,
+                                  color: Colors.grey[400]),
                             ],
                           ),
-                          const Spacer(),
-                        ],
-                      ),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          minLeadingWidth: 24,
+                          horizontalTitleGap: 8,
+                          dense: true,
+                          onTap: _isUploading
+                              ? null
+                              : () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    builder: (context) => SafeArea(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Padding(
+                                            padding: const EdgeInsets.all(16),
+                                            child: Text(
+                                              'Who can watch this video',
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: Colors.grey[800],
+                                              ),
+                                            ),
+                                          ),
+                                          const Divider(height: 1),
+                                          ListTile(
+                                            title: const Text('Everyone'),
+                                            subtitle: const Text(
+                                                'Anyone on Flipsy can watch this video'),
+                                            trailing: _privacy == 'everyone'
+                                                ? const Icon(Icons.check,
+                                                    color: Color(0xFFFF2B55))
+                                                : null,
+                                            onTap: () {
+                                              setState(
+                                                  () => _privacy = 'everyone');
+                                              Navigator.pop(context);
+                                            },
+                                          ),
+                                          ListTile(
+                                            title: const Text('Followers'),
+                                            subtitle: const Text(
+                                                'Only your followers can watch this video'),
+                                            trailing: _privacy == 'followers'
+                                                ? const Icon(Icons.check,
+                                                    color: Color(0xFFFF2B55))
+                                                : null,
+                                            onTap: () {
+                                              setState(
+                                                  () => _privacy = 'followers');
+                                              Navigator.pop(context);
+                                            },
+                                          ),
+                                          ListTile(
+                                            title: const Text('Private'),
+                                            subtitle: const Text(
+                                                'Only you can watch this video'),
+                                            trailing: _privacy == 'private'
+                                                ? const Icon(Icons.check,
+                                                    color: Color(0xFFFF2B55))
+                                                : null,
+                                            onTap: () {
+                                              setState(
+                                                  () => _privacy = 'private');
+                                              Navigator.pop(context);
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.white,
+                                  );
+                                },
+                        ),
+                        const Divider(height: 1),
+                        SwitchListTile(
+                          value: _allowComments,
+                          onChanged: (bool value) {
+                            setState(() {
+                              _allowComments = value;
+                            });
+                          },
+                          title: const Text('Allow comments'),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 8),
+                          activeColor: const Color(0xFF00F2EA),
+                          dense: true,
+                        ),
+                        const Divider(height: 1),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
+            // Post button
             Container(
               padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
               decoration: BoxDecoration(
@@ -636,131 +547,6 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildActionChip({
-    required IconData icon,
-    required String label,
-    VoidCallback? onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.grey[50],
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.grey[200]!),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: Colors.grey[700]),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSocialButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey[300]!),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          icon,
-          size: 18,
-          color: Colors.grey[600],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSocialShareButton({
-    required String icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    IconData getIcon() {
-      switch (icon) {
-        case 'facebook':
-          return FontAwesomeIcons.facebookF;
-        case 'instagram':
-          return FontAwesomeIcons.instagram;
-        case 'whatsapp':
-          return FontAwesomeIcons.whatsapp;
-        case 'twitter':
-          return FontAwesomeIcons.twitter;
-        default:
-          return FontAwesomeIcons.share;
-      }
-    }
-
-    Color getIconColor() {
-      switch (icon) {
-        case 'facebook':
-          return const Color(0xFF1877F2);
-        case 'instagram':
-          return const Color(0xFFE4405F);
-        case 'whatsapp':
-          return const Color(0xFF25D366);
-        case 'twitter':
-          return const Color(0xFF1DA1F2);
-        default:
-          return Colors.grey[800]!;
-      }
-    }
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(24),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: FaIcon(
-                getIcon(),
-                size: 20,
-                color: getIconColor(),
-              ),
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[700],
-            ),
-          ),
-        ],
       ),
     );
   }
