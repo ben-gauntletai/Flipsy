@@ -6,6 +6,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../../../services/video_service.dart';
 import 'package:video_player/video_player.dart';
 import '../widgets/upload_progress_dialog.dart';
+import '../widgets/spiciness_selector.dart';
 
 class VideoUploadScreen extends StatefulWidget {
   final Function(String)? onVideoUploaded;
@@ -22,6 +23,9 @@ class VideoUploadScreen extends StatefulWidget {
 class _VideoUploadScreenState extends State<VideoUploadScreen> {
   final VideoService _videoService = VideoService();
   final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _budgetController = TextEditingController();
+  final TextEditingController _caloriesController = TextEditingController();
+  final TextEditingController _prepTimeController = TextEditingController();
   final ValueNotifier<double> _progressNotifier = ValueNotifier<double>(0.0);
   File? _videoFile;
   bool _isUploading = false;
@@ -30,10 +34,14 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   bool _allowComments = true;
   String _privacy = 'everyone';
   bool _isCompleting = false;
+  int _spiciness = 0;
 
   @override
   void dispose() {
     _descriptionController.dispose();
+    _budgetController.dispose();
+    _caloriesController.dispose();
+    _prepTimeController.dispose();
     _videoController?.dispose();
     _progressNotifier.dispose();
     super.dispose();
@@ -131,20 +139,18 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
 
       print('Uploading video');
       final videoURL = await _videoService.uploadVideo(
-        user.uid,
-        _videoFile!,
+        videoFile: _videoFile!,
+        userId: user.uid,
         onProgress: (progress) {
           print('Progress callback received: $progress');
           _progressNotifier.value = progress;
           print(
               'Upload progress updated: ${(progress * 100).toStringAsFixed(2)}%');
         },
-        onCanceled: () {
-          if (mounted) {
-            Navigator.of(context).pop(); // Close progress dialog
-            Navigator.of(context).pop(); // Return to previous screen
-          }
-        },
+        description: _descriptionController.text.trim(),
+        allowComments: _allowComments,
+        privacy: _privacy,
+        spiciness: _spiciness,
       );
       print('Video uploaded: $videoURL');
 
@@ -156,7 +162,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       }
 
       print('Creating video document');
-      final video = await _videoService.createVideo(
+      final video = await _videoService.createVideoDocument(
         userId: user.uid,
         videoURL: videoURL,
         duration: metadata['duration'],
@@ -166,6 +172,10 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         videoFile: _videoFile,
         allowComments: _allowComments,
         privacy: _privacy,
+        spiciness: _spiciness,
+        budget: double.tryParse(_budgetController.text) ?? 0.0,
+        calories: int.tryParse(_caloriesController.text) ?? 0,
+        prepTimeMinutes: int.tryParse(_prepTimeController.text) ?? 0,
       );
       print('Video document created successfully with ID: ${video.id}');
 
@@ -230,6 +240,9 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             onPressed: () => setState(() {
               _videoFile = null;
               _descriptionController.clear();
+              _budgetController.clear();
+              _caloriesController.clear();
+              _prepTimeController.clear();
               _videoController?.dispose();
               _videoController = null;
             }),
@@ -343,6 +356,8 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        const Divider(height: 1),
+                        // Description field remains full width
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                           child: TextField(
@@ -360,6 +375,102 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                             minLines: 1,
                             style: const TextStyle(fontSize: 15),
                             enabled: !_isUploading,
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        // Cost and Calories in one row
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: Row(
+                            children: [
+                              // Budget field
+                              Expanded(
+                                child: TextField(
+                                  controller: _budgetController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Cost',
+                                    hintText: 'Meal cost',
+                                    prefixText: '\$',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 16),
+                                  ),
+                                  keyboardType: TextInputType.numberWithOptions(
+                                      decimal: true),
+                                  enabled: !_isUploading,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // Calories field
+                              Expanded(
+                                child: TextField(
+                                  controller: _caloriesController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Calories',
+                                    hintText: 'Cal count',
+                                    suffixText: 'cal',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 16),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  enabled: !_isUploading,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        // Prep Time and Spiciness in one row
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: Row(
+                            children: [
+                              // Prep Time field
+                              Expanded(
+                                child: TextField(
+                                  controller: _prepTimeController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Prep Time',
+                                    hintText: 'Minutes',
+                                    suffixText: 'min',
+                                    border: OutlineInputBorder(),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 16),
+                                  ),
+                                  keyboardType: TextInputType.number,
+                                  enabled: !_isUploading,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              // Spiciness field
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Padding(
+                                      padding:
+                                          EdgeInsets.only(left: 12, bottom: 4),
+                                      child: Text(
+                                        'Spiciness',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.black54,
+                                        ),
+                                      ),
+                                    ),
+                                    SpicinessSelector(
+                                      value: _spiciness,
+                                      onChanged: (value) {
+                                        setState(() {
+                                          _spiciness = value;
+                                        });
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const Divider(height: 1),

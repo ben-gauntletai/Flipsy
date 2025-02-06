@@ -18,6 +18,10 @@ class Video {
   final Map<String, dynamic>? aiEnhancements;
   final bool allowComments;
   final String privacy; // 'everyone', 'followers', 'private'
+  final int spiciness; // 0-5 rating for spiciness (0 = not spicy)
+  final double budget; // Cost of the meal in local currency
+  final int calories; // Calorie count of the meal
+  final int prepTimeMinutes; // Preparation time in minutes
 
   Video({
     required this.id,
@@ -37,6 +41,10 @@ class Video {
     this.aiEnhancements,
     this.allowComments = true,
     this.privacy = 'everyone',
+    this.spiciness = 0,
+    this.budget = 0.0,
+    this.calories = 0,
+    this.prepTimeMinutes = 0,
   });
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
@@ -83,6 +91,10 @@ class Video {
       aiEnhancements: data['aiEnhancements'] as Map<String, dynamic>?,
       allowComments: data['allowComments'] as bool? ?? true,
       privacy: data['privacy'] as String? ?? 'everyone',
+      spiciness: (data['spiciness'] as num?)?.toInt() ?? 0,
+      budget: (data['budget'] as num?)?.toDouble() ?? 0.0,
+      calories: (data['calories'] as num?)?.toInt() ?? 0,
+      prepTimeMinutes: (data['prepTimeMinutes'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -108,6 +120,10 @@ class Video {
       'aiEnhancements': aiEnhancements,
       'allowComments': allowComments,
       'privacy': privacy,
+      'spiciness': spiciness,
+      'budget': budget,
+      'calories': calories,
+      'prepTimeMinutes': prepTimeMinutes,
     };
   }
 
@@ -129,6 +145,10 @@ class Video {
     Map<String, dynamic>? aiEnhancements,
     bool? allowComments,
     String? privacy,
+    int? spiciness,
+    double? budget,
+    int? calories,
+    int? prepTimeMinutes,
   }) {
     return Video(
       id: id ?? this.id,
@@ -148,6 +168,10 @@ class Video {
       aiEnhancements: aiEnhancements ?? this.aiEnhancements,
       allowComments: allowComments ?? this.allowComments,
       privacy: privacy ?? this.privacy,
+      spiciness: spiciness ?? this.spiciness,
+      budget: budget ?? this.budget,
+      calories: calories ?? this.calories,
+      prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
     );
   }
 }

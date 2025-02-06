@@ -3,22 +3,32 @@
 ## Collections
 
 ### videos
-Collection of all videos in the application.
+Main collection for storing video metadata.
 
-- **id**: string (auto-generated)
-- **userId**: string (reference to users collection)
-- **videoURL**: string
-- **thumbnailURL**: string
-- **description**: string
-- **createdAt**: timestamp
-- **updatedAt**: timestamp
-- **status**: string (active, deleted, reported)
-- **likesCount**: number
-- **commentsCount**: number
-- **shareCount**: number
-- **views**: number
-- **allowComments**: boolean (default: true)
-- **privacy**: string (enum: 'everyone', 'followers', 'private', default: 'everyone')
+**Path:** `videos/{videoId}`
+```typescript
+{
+  userId: string;         // Reference to users/{userId}
+  videoURL: string;      // URL to video file in Storage
+  thumbnailURL: string;  // URL to thumbnail image in Storage
+  description: string;   // Optional video description
+  createdAt: timestamp;  // When the video was uploaded
+  updatedAt: timestamp;  // When the video was last updated
+  likesCount: number;    // Number of likes
+  commentsCount: number; // Number of comments
+  shareCount: number;    // Number of shares
+  duration: number;      // Video duration in seconds
+  width: number;         // Video width in pixels
+  height: number;        // Video height in pixels
+  status: string;        // 'active' | 'deleted' | 'processing'
+  allowComments: boolean; // Whether comments are enabled
+  privacy: string;       // 'everyone' | 'followers' | 'private'
+  spiciness: number;     // Rating from 1-5 indicating content spiciness
+  budget: number;        // Cost of the meal in local currency
+  calories: number;      // Calorie count of the meal
+  prepTimeMinutes: number; // Time taken to prepare the meal in minutes
+}
+```
 
 ### users
 Collection of all users in the application.

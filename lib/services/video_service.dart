@@ -56,19 +56,15 @@ class VideoService {
     }
   }
 
-  // Upload a video file to Firebase Storage
-  Future<String> uploadVideo(
-    String userId,
-    File videoFile, {
+  // Private method to handle video file upload
+  Future<String> _uploadVideoFile(
+    File videoFile,
+    String userId, {
     Function(double)? onProgress,
-    Function()? onCanceled,
   }) async {
-    UploadTask? uploadTask;
     try {
       final fileName = '${const Uuid().v4()}.mp4';
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('users/$userId/videos/$fileName');
+      final storageRef = _storage.ref().child('users/$userId/videos/$fileName');
 
       // Create metadata
       final metadata = SettableMetadata(
@@ -77,7 +73,7 @@ class VideoService {
       );
 
       // Upload with metadata
-      uploadTask = storageRef.putFile(videoFile, metadata);
+      final uploadTask = storageRef.putFile(videoFile, metadata);
 
       // Monitor upload progress
       uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
@@ -86,46 +82,86 @@ class VideoService {
         print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
       }, onError: (error) {
         print('Error in upload stream: $error');
-        if (error.toString().contains('canceled')) {
-          onCanceled?.call();
-        }
       });
 
       // Wait for upload to complete and get download URL
       final snapshot = await uploadTask;
       final downloadUrl = await snapshot.ref.getDownloadURL();
 
-      print('Video uploaded successfully: $downloadUrl');
+      print('Video file uploaded successfully: $downloadUrl');
       return downloadUrl;
     } catch (e) {
-      print('Error uploading video: $e');
-      // Check if the error is due to cancellation
-      if (e.toString().contains('canceled')) {
-        uploadTask?.cancel();
-        onCanceled?.call();
-        throw Exception('Upload canceled');
-      }
-      throw Exception('Failed to upload video: $e');
+      print('Error uploading video file: $e');
+      throw Exception('Failed to upload video file: $e');
     }
   }
 
-  // Create a new video document in Firestore
-  Future<Video> createVideo({
+  // Upload a video file to Firebase Storage
+  Future<String> uploadVideo({
+    required File videoFile,
+    required String userId,
+    String? description,
+    Function(double)? onProgress,
+    bool allowComments = true,
+    String privacy = 'everyone',
+    int spiciness = 0,
+  }) async {
+    print('VideoService: Starting video upload');
+    try {
+      // Get video metadata
+      final metadata = await getVideoMetadata(videoFile);
+      final duration = metadata['duration'] as double;
+      final width = metadata['width'] as int;
+      final height = metadata['height'] as int;
+
+      // Upload video file
+      final String videoURL = await _uploadVideoFile(
+        videoFile,
+        userId,
+        onProgress: onProgress,
+      );
+
+      print('VideoService: Video uploaded successfully');
+      print('VideoService: Creating video document');
+
+      // Create video document
+      final video = await createVideoDocument(
+        userId: userId,
+        videoURL: videoURL,
+        description: description,
+        duration: duration,
+        width: width,
+        height: height,
+        videoFile: videoFile,
+        allowComments: allowComments,
+        privacy: privacy,
+        spiciness: spiciness,
+      );
+
+      return video.id;
+    } catch (e) {
+      print('VideoService: Error uploading video: $e');
+      rethrow;
+    }
+  }
+
+  Future<Video> createVideoDocument({
     required String userId,
     required String videoURL,
+    String? description,
     required double duration,
     required int width,
     required int height,
-    String? description,
     File? videoFile,
-    required bool allowComments,
+    bool allowComments = true,
     String privacy = 'everyone',
+    int spiciness = 0,
+    double budget = 0.0,
+    int calories = 0,
+    int prepTimeMinutes = 0,
   }) async {
     try {
-      print('VideoService: Creating new video document');
-      print('VideoService: User ID: $userId');
-      print('VideoService: Video URL: $videoURL');
-
+      print('VideoService: Generating thumbnail');
       String thumbnailURL;
       if (videoFile != null) {
         thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
@@ -154,6 +190,10 @@ class VideoService {
         'status': 'active',
         'allowComments': allowComments,
         'privacy': privacy,
+        'spiciness': spiciness,
+        'budget': budget,
+        'calories': calories,
+        'prepTimeMinutes': prepTimeMinutes,
       };
 
       print('VideoService: Creating document with data: $videoData');
