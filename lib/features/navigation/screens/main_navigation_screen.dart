@@ -111,71 +111,119 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     final authState = context.watch<AuthBloc>().state;
     final currentUser = authState is Authenticated ? authState.user : null;
 
-    return Scaffold(
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          FeedScreen(
-            key: _feedKey,
-            isVisible: _selectedIndex == 0,
-            showBackButton: canGoBack,
-            onBack: goBack,
-          ), // Home
-          const DiscoverScreen(), // Discover
-          VideoUploadScreen(
-              onVideoUploaded: _onVideoUploaded), // Upload screen with callback
-          const ActivityScreen(), // Activity
-          if (currentUser != null)
-            ProfileScreen(
-              userId: _currentProfileUserId,
-              showBackButton: _currentProfileUserId != null && canGoBack,
+    return WillPopScope(
+      onWillPop: () async {
+        // First, check if there's any modal or dialog to dismiss
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+          return false;
+        }
+
+        // Then check our custom navigation history
+        if (canGoBack) {
+          goBack();
+          return false;
+        }
+
+        // If we're not on the home feed, go there
+        if (_selectedIndex != 0) {
+          setState(() {
+            _selectedIndex = 0;
+            _currentProfileUserId = null;
+            _navigationHistory.clear();
+          });
+          return false;
+        }
+
+        // If we're on the home feed and there's nowhere to go back,
+        // show a confirmation dialog
+        final shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Exit App?'),
+            content: const Text('Are you sure you want to exit the app?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('CANCEL'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('EXIT'),
+              ),
+            ],
+          ),
+        );
+
+        return shouldExit ?? false;
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            FeedScreen(
+              key: _feedKey,
+              isVisible: _selectedIndex == 0,
+              showBackButton: canGoBack,
               onBack: goBack,
-            ) // Profile screen (current user or other user)
-          else
-            const Center(child: CircularProgressIndicator()),
-        ],
-      ),
-      bottomNavigationBar: Theme(
-        data: Theme.of(context).copyWith(
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: _onItemTapped,
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.black,
-          selectedItemColor: Colors.white,
-          unselectedItemColor: Colors.grey,
-          showSelectedLabels: true,
-          showUnselectedLabels: true,
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.search),
-              activeIcon: Icon(Icons.search),
-              label: 'Discover',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.add_box_outlined),
-              activeIcon: Icon(Icons.add_box),
-              label: 'Upload',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.notifications_outlined),
-              activeIcon: Icon(Icons.notifications),
-              label: 'Activity',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person_outline),
-              activeIcon: Icon(Icons.person),
-              label: 'Profile',
-            ),
+            ), // Home
+            const DiscoverScreen(), // Discover
+            VideoUploadScreen(
+                onVideoUploaded:
+                    _onVideoUploaded), // Upload screen with callback
+            const ActivityScreen(), // Activity
+            if (currentUser != null)
+              ProfileScreen(
+                userId: _currentProfileUserId,
+                showBackButton: _currentProfileUserId != null && canGoBack,
+                onBack: goBack,
+              ) // Profile screen (current user or other user)
+            else
+              const Center(child: CircularProgressIndicator()),
           ],
+        ),
+        bottomNavigationBar: Theme(
+          data: Theme.of(context).copyWith(
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+          ),
+          child: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            type: BottomNavigationBarType.fixed,
+            backgroundColor: Colors.black,
+            selectedItemColor: Colors.white,
+            unselectedItemColor: Colors.grey,
+            showSelectedLabels: true,
+            showUnselectedLabels: true,
+            items: const [
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home),
+                label: 'Home',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.search),
+                activeIcon: Icon(Icons.search),
+                label: 'Discover',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.add_box_outlined),
+                activeIcon: Icon(Icons.add_box),
+                label: 'Upload',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.notifications_outlined),
+                activeIcon: Icon(Icons.notifications),
+                label: 'Activity',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.person_outline),
+                activeIcon: Icon(Icons.person),
+                label: 'Profile',
+              ),
+            ],
+          ),
         ),
       ),
     );

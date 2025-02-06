@@ -141,274 +141,288 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Search and Filter Bar
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  // Search Field
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search videos',
-                        prefixIcon: const Icon(Icons.search),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+    return WillPopScope(
+      onWillPop: () async {
+        // First check if there's any modal or dialog to dismiss
+        final navigator = Navigator.of(context);
+        if (navigator.canPop()) {
+          navigator.pop();
+          return false;
+        }
+
+        // Let the MainNavigationScreen handle the back button
+        return true;
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Search and Filter Bar
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    // Search Field
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: InputDecoration(
+                          hintText: 'Search videos',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
+                        onSubmitted: (value) {
+                          // TODO: Implement search
+                        },
                       ),
-                      onSubmitted: (value) {
-                        // TODO: Implement search
-                      },
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Filter Button
-                  IconButton.filled(
-                    onPressed: _showFilterSheet,
-                    icon: Stack(
-                      children: [
-                        const Icon(Icons.tune),
-                        if (_currentFilter.hasFilters)
-                          Positioned(
-                            right: 0,
-                            top: 0,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: const BoxDecoration(
-                                color: Colors.red,
-                                shape: BoxShape.circle,
-                              ),
-                              constraints: const BoxConstraints(
-                                minWidth: 8,
-                                minHeight: 8,
+                    const SizedBox(width: 8),
+                    // Filter Button
+                    IconButton.filled(
+                      onPressed: _showFilterSheet,
+                      icon: Stack(
+                        children: [
+                          const Icon(Icons.tune),
+                          if (_currentFilter.hasFilters)
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 8,
+                                  minHeight: 8,
+                                ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // Active Filters Chips
-            if (_currentFilter.hasFilters)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (_currentFilter.budgetRange !=
-                        VideoFilter.defaultBudgetRange)
-                      Chip(
-                        label: Text(
-                          '\$${_currentFilter.budgetRange.start.toStringAsFixed(0)} - \$${_currentFilter.budgetRange.end.toStringAsFixed(0)}',
-                        ),
-                        onDeleted: () {
-                          setState(() {
-                            _currentFilter = _currentFilter.copyWith(
-                              budgetRange: VideoFilter.defaultBudgetRange,
-                            );
-                          });
-                          _loadVideos(refresh: true);
-                        },
-                      ),
-                    if (_currentFilter.caloriesRange !=
-                        VideoFilter.defaultCaloriesRange)
-                      Chip(
-                        label: Text(
-                          '${_currentFilter.caloriesRange.start.toInt()} - ${_currentFilter.caloriesRange.end.toInt()} cal',
-                        ),
-                        onDeleted: () {
-                          setState(() {
-                            _currentFilter = _currentFilter.copyWith(
-                              caloriesRange: VideoFilter.defaultCaloriesRange,
-                            );
-                          });
-                          _loadVideos(refresh: true);
-                        },
-                      ),
-                    if (_currentFilter.prepTimeRange !=
-                        VideoFilter.defaultPrepTimeRange)
-                      Chip(
-                        label: Text(
-                          '${_currentFilter.prepTimeRange.start.toInt()} - ${_currentFilter.prepTimeRange.end.toInt()} min',
-                        ),
-                        onDeleted: () {
-                          setState(() {
-                            _currentFilter = _currentFilter.copyWith(
-                              prepTimeRange: VideoFilter.defaultPrepTimeRange,
-                            );
-                          });
-                          _loadVideos(refresh: true);
-                        },
-                      ),
-                    if (_currentFilter.minSpiciness != 0 ||
-                        _currentFilter.maxSpiciness != 5)
-                      Chip(
-                        label: Text(
-                          '${_currentFilter.minSpiciness} - ${_currentFilter.maxSpiciness} 🌶️',
-                        ),
-                        onDeleted: () {
-                          setState(() {
-                            _currentFilter = _currentFilter.copyWith(
-                              minSpiciness: 0,
-                              maxSpiciness: 5,
-                            );
-                          });
-                          _loadVideos(refresh: true);
-                        },
-                      ),
-                    ..._currentFilter.hashtags.map(
-                      (tag) => Chip(
-                        label: Text('#$tag'),
-                        deleteIcon: const Icon(Icons.close, size: 18),
-                        onDeleted: () {
-                          setState(() {
-                            _currentFilter = _currentFilter.removeHashtag(tag);
-                          });
-                          _loadVideos(refresh: true);
-                        },
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
 
-            // Videos Grid
-            Expanded(
-              child: _error != null
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(_error!),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              setState(() {
-                                _currentFilter = const VideoFilter();
-                              });
-                              _loadVideos(refresh: true);
-                            },
-                            child: const Text('Clear filters'),
+              // Active Filters Chips
+              if (_currentFilter.hasFilters)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      if (_currentFilter.budgetRange !=
+                          VideoFilter.defaultBudgetRange)
+                        Chip(
+                          label: Text(
+                            '\$${_currentFilter.budgetRange.start.toStringAsFixed(0)} - \$${_currentFilter.budgetRange.end.toStringAsFixed(0)}',
                           ),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: () => _loadVideos(refresh: true),
-                      child: GridView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(8),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          childAspectRatio: 0.8,
-                          crossAxisSpacing: 8,
-                          mainAxisSpacing: 8,
-                        ),
-                        itemCount:
-                            _videos.length + (_isLoading && _hasMore ? 1 : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= _videos.length) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
-                          }
-
-                          final video = _videos[index];
-                          return GestureDetector(
-                            onTap: () {
-                              Navigator.pushNamed(
-                                context,
-                                '/video',
-                                arguments: video,
+                          onDeleted: () {
+                            setState(() {
+                              _currentFilter = _currentFilter.copyWith(
+                                budgetRange: VideoFilter.defaultBudgetRange,
                               );
-                            },
-                            child: Card(
-                              clipBehavior: Clip.antiAlias,
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: [
-                                  Image.network(
-                                    video.thumbnailURL,
-                                    fit: BoxFit.cover,
-                                  ),
-                                  // Video metadata overlay
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    child: Container(
-                                      padding: const EdgeInsets.all(8),
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.bottomCenter,
-                                          end: Alignment.topCenter,
-                                          colors: [
-                                            Colors.black.withOpacity(0.8),
-                                            Colors.transparent,
+                            });
+                            _loadVideos(refresh: true);
+                          },
+                        ),
+                      if (_currentFilter.caloriesRange !=
+                          VideoFilter.defaultCaloriesRange)
+                        Chip(
+                          label: Text(
+                            '${_currentFilter.caloriesRange.start.toInt()} - ${_currentFilter.caloriesRange.end.toInt()} cal',
+                          ),
+                          onDeleted: () {
+                            setState(() {
+                              _currentFilter = _currentFilter.copyWith(
+                                caloriesRange: VideoFilter.defaultCaloriesRange,
+                              );
+                            });
+                            _loadVideos(refresh: true);
+                          },
+                        ),
+                      if (_currentFilter.prepTimeRange !=
+                          VideoFilter.defaultPrepTimeRange)
+                        Chip(
+                          label: Text(
+                            '${_currentFilter.prepTimeRange.start.toInt()} - ${_currentFilter.prepTimeRange.end.toInt()} min',
+                          ),
+                          onDeleted: () {
+                            setState(() {
+                              _currentFilter = _currentFilter.copyWith(
+                                prepTimeRange: VideoFilter.defaultPrepTimeRange,
+                              );
+                            });
+                            _loadVideos(refresh: true);
+                          },
+                        ),
+                      if (_currentFilter.minSpiciness != 0 ||
+                          _currentFilter.maxSpiciness != 5)
+                        Chip(
+                          label: Text(
+                            '${_currentFilter.minSpiciness} - ${_currentFilter.maxSpiciness} 🌶️',
+                          ),
+                          onDeleted: () {
+                            setState(() {
+                              _currentFilter = _currentFilter.copyWith(
+                                minSpiciness: 0,
+                                maxSpiciness: 5,
+                              );
+                            });
+                            _loadVideos(refresh: true);
+                          },
+                        ),
+                      ..._currentFilter.hashtags.map(
+                        (tag) => Chip(
+                          label: Text('#$tag'),
+                          deleteIcon: const Icon(Icons.close, size: 18),
+                          onDeleted: () {
+                            setState(() {
+                              _currentFilter =
+                                  _currentFilter.removeHashtag(tag);
+                            });
+                            _loadVideos(refresh: true);
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Videos Grid
+              Expanded(
+                child: _error != null
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(_error!),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  _currentFilter = const VideoFilter();
+                                });
+                                _loadVideos(refresh: true);
+                              },
+                              child: const Text('Clear filters'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: () => _loadVideos(refresh: true),
+                        child: GridView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.all(8),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            childAspectRatio: 0.8,
+                            crossAxisSpacing: 8,
+                            mainAxisSpacing: 8,
+                          ),
+                          itemCount:
+                              _videos.length + (_isLoading && _hasMore ? 1 : 0),
+                          itemBuilder: (context, index) {
+                            if (index >= _videos.length) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+
+                            final video = _videos[index];
+                            return GestureDetector(
+                              onTap: () {
+                                MainNavigationScreen.jumpToVideo(
+                                  context,
+                                  video.id,
+                                  showBackButton: true,
+                                );
+                              },
+                              child: Card(
+                                clipBehavior: Clip.antiAlias,
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    Image.network(
+                                      video.thumbnailURL,
+                                      fit: BoxFit.cover,
+                                    ),
+                                    // Video metadata overlay
+                                    Positioned(
+                                      left: 0,
+                                      right: 0,
+                                      bottom: 0,
+                                      child: Container(
+                                        padding: const EdgeInsets.all(8),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.bottomCenter,
+                                            end: Alignment.topCenter,
+                                            colors: [
+                                              Colors.black.withOpacity(0.8),
+                                              Colors.transparent,
+                                            ],
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (video.budget > 0)
+                                              Text(
+                                                '\$${video.budget.toStringAsFixed(2)}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            if (video.calories > 0)
+                                              Text(
+                                                '${video.calories} cal',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            if (video.prepTimeMinutes > 0)
+                                              Text(
+                                                '${video.prepTimeMinutes} min',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            if (video.spiciness > 0)
+                                              Text(
+                                                '🌶️' * video.spiciness,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                ),
+                                              ),
                                           ],
                                         ),
                                       ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          if (video.budget > 0)
-                                            Text(
-                                              '\$${video.budget.toStringAsFixed(2)}',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
-                                          if (video.calories > 0)
-                                            Text(
-                                              '${video.calories} cal',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          if (video.prepTimeMinutes > 0)
-                                            Text(
-                                              '${video.prepTimeMinutes} min',
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          if (video.spiciness > 0)
-                                            Text(
-                                              '🌶️' * video.spiciness,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                        ],
-                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
-                    ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
