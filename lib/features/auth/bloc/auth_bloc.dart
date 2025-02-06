@@ -122,27 +122,47 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           // Only load profile if we're not already authenticated
           if (state is! Authenticated) {
             print('AuthBloc: Loading user profile');
-            final userProfile = await _authService.getUserProfile(user.uid);
+            // Try up to 3 times to load the profile
+            UserModel? userProfile;
+            int attempts = 0;
+            const maxAttempts = 3;
+
+            while (attempts < maxAttempts && userProfile == null) {
+              try {
+                userProfile = await _authService.getUserProfile(user.uid);
+                attempts++;
+                if (userProfile == null && attempts < maxAttempts) {
+                  await Future.delayed(
+                      Duration(milliseconds: 500)); // Wait before retrying
+                }
+              } catch (e) {
+                print(
+                    'AuthBloc: Error loading user profile (attempt ${attempts + 1}): $e');
+                if (attempts < maxAttempts) {
+                  await Future.delayed(
+                      Duration(milliseconds: 500)); // Wait before retrying
+                }
+              }
+            }
 
             if (userProfile != null) {
               print('AuthBloc: User profile loaded successfully');
               emit(Authenticated(userProfile));
             } else {
-              print('AuthBloc: User profile not found for uid: ${user.uid}');
-              // If no profile exists, sign out and show error
+              print(
+                  'AuthBloc: Failed to load user profile after $maxAttempts attempts');
+              // Instead of showing an error, just emit Unauthenticated
               await _authService.signOut();
-              emit(const AuthError(
-                  'Profile not found. Please try signing in again.'));
+              emit(Unauthenticated());
             }
           } else {
             print('AuthBloc: Already authenticated, skipping profile load');
           }
         } catch (e) {
-          print('AuthBloc: Error loading user profile: $e');
-          // If there's an error loading the profile, sign out and show error
+          print('AuthBloc: Error in auth state listener: $e');
+          // Instead of showing an error, just emit Unauthenticated
           await _authService.signOut();
-          emit(const AuthError(
-              'Error loading profile. Please try signing in again.'));
+          emit(Unauthenticated());
         }
       } else {
         print('AuthBloc: No authenticated user');
