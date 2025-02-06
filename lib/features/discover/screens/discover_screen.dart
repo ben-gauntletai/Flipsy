@@ -42,6 +42,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Future<void> _loadVideos({bool refresh = false}) async {
     if (_isLoading || (!_hasMore && !refresh)) return;
 
+    print('DiscoverScreen: Loading videos with filter');
+    print('DiscoverScreen: Current hashtags: ${_currentFilter.hashtags}');
+
     setState(() {
       _isLoading = true;
       if (refresh) {
@@ -104,6 +107,8 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         builder: (context, scrollController) => VideoFilterSheet(
           initialFilter: _currentFilter,
           onFilterChanged: (filter) {
+            print('DiscoverScreen: Filter changed');
+            print('DiscoverScreen: New hashtags: ${filter.hashtags}');
             setState(() {
               _currentFilter = filter;
             });
@@ -177,10 +182,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
 
             // Active Filters Chips
             if (_currentFilter.hasFilters)
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
+              Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
                     if (_currentFilter.budgetRange !=
                         VideoFilter.defaultBudgetRange)
@@ -199,75 +205,60 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                       ),
                     if (_currentFilter.caloriesRange !=
                         VideoFilter.defaultCaloriesRange)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Chip(
-                          label: Text(
-                            '${_currentFilter.caloriesRange.start.toInt()} - ${_currentFilter.caloriesRange.end.toInt()} cal',
-                          ),
-                          onDeleted: () {
-                            setState(() {
-                              _currentFilter = _currentFilter.copyWith(
-                                caloriesRange: VideoFilter.defaultCaloriesRange,
-                              );
-                            });
-                            _loadVideos(refresh: true);
-                          },
+                      Chip(
+                        label: Text(
+                          '${_currentFilter.caloriesRange.start.toInt()} - ${_currentFilter.caloriesRange.end.toInt()} cal',
                         ),
+                        onDeleted: () {
+                          setState(() {
+                            _currentFilter = _currentFilter.copyWith(
+                              caloriesRange: VideoFilter.defaultCaloriesRange,
+                            );
+                          });
+                          _loadVideos(refresh: true);
+                        },
                       ),
                     if (_currentFilter.prepTimeRange !=
                         VideoFilter.defaultPrepTimeRange)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Chip(
-                          label: Text(
-                            '${_currentFilter.prepTimeRange.start.toInt()} - ${_currentFilter.prepTimeRange.end.toInt()} min',
-                          ),
-                          onDeleted: () {
-                            setState(() {
-                              _currentFilter = _currentFilter.copyWith(
-                                prepTimeRange: VideoFilter.defaultPrepTimeRange,
-                              );
-                            });
-                            _loadVideos(refresh: true);
-                          },
+                      Chip(
+                        label: Text(
+                          '${_currentFilter.prepTimeRange.start.toInt()} - ${_currentFilter.prepTimeRange.end.toInt()} min',
                         ),
+                        onDeleted: () {
+                          setState(() {
+                            _currentFilter = _currentFilter.copyWith(
+                              prepTimeRange: VideoFilter.defaultPrepTimeRange,
+                            );
+                          });
+                          _loadVideos(refresh: true);
+                        },
                       ),
                     if (_currentFilter.minSpiciness != 0 ||
                         _currentFilter.maxSpiciness != 5)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Chip(
-                          label: Text(
-                            '${_currentFilter.minSpiciness} - ${_currentFilter.maxSpiciness} 🌶️',
-                          ),
-                          onDeleted: () {
-                            setState(() {
-                              _currentFilter = _currentFilter.copyWith(
-                                minSpiciness: 0,
-                                maxSpiciness: 5,
-                              );
-                            });
-                            _loadVideos(refresh: true);
-                          },
+                      Chip(
+                        label: Text(
+                          '${_currentFilter.minSpiciness} - ${_currentFilter.maxSpiciness} 🌶️',
                         ),
+                        onDeleted: () {
+                          setState(() {
+                            _currentFilter = _currentFilter.copyWith(
+                              minSpiciness: 0,
+                              maxSpiciness: 5,
+                            );
+                          });
+                          _loadVideos(refresh: true);
+                        },
                       ),
                     ..._currentFilter.hashtags.map(
-                      (tag) => Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: Chip(
-                          label: Text('#$tag'),
-                          onDeleted: () {
-                            setState(() {
-                              final newTags =
-                                  Set<String>.from(_currentFilter.hashtags)
-                                    ..remove(tag);
-                              _currentFilter =
-                                  _currentFilter.copyWith(hashtags: newTags);
-                            });
-                            _loadVideos(refresh: true);
-                          },
-                        ),
+                      (tag) => Chip(
+                        label: Text('#$tag'),
+                        deleteIcon: const Icon(Icons.close, size: 18),
+                        onDeleted: () {
+                          setState(() {
+                            _currentFilter = _currentFilter.removeHashtag(tag);
+                          });
+                          _loadVideos(refresh: true);
+                        },
                       ),
                     ),
                   ],

@@ -72,37 +72,37 @@ class VideoFilter extends Equatable {
   Map<String, dynamic> toFirestoreQuery() {
     final conditions = <String, dynamic>{};
 
-    // Only include non-default filters
+    // Only add non-default filters
     if (budgetRange != defaultBudgetRange) {
-      conditions['budget_range'] = {
-        'min': budgetRange.start,
-        'max': budgetRange.end,
+      conditions['budget'] = {
+        'start': budgetRange.start,
+        'end': budgetRange.end,
       };
     }
 
     if (caloriesRange != defaultCaloriesRange) {
-      conditions['calories_range'] = {
-        'min': caloriesRange.start.toInt(),
-        'max': caloriesRange.end.toInt(),
+      conditions['calories'] = {
+        'start': caloriesRange.start.toInt(),
+        'end': caloriesRange.end.toInt(),
       };
     }
 
     if (prepTimeRange != defaultPrepTimeRange) {
-      conditions['prep_time_range'] = {
-        'min': prepTimeRange.start.toInt(),
-        'max': prepTimeRange.end.toInt(),
+      conditions['prepTimeMinutes'] = {
+        'start': prepTimeRange.start.toInt(),
+        'end': prepTimeRange.end.toInt(),
       };
     }
 
-    if (minSpiciness != 0) {
-      conditions['min_spiciness'] = minSpiciness;
-    }
-
-    if (maxSpiciness != 5) {
-      conditions['max_spiciness'] = maxSpiciness;
+    if (minSpiciness != 0 || maxSpiciness != 5) {
+      conditions['spiciness'] = {
+        'min': minSpiciness,
+        'max': maxSpiciness,
+      };
     }
 
     if (hashtags.isNotEmpty) {
+      print('VideoFilter: Adding hashtags to query: $hashtags');
       conditions['hashtags'] = hashtags.toList();
     }
 
@@ -143,19 +143,58 @@ class VideoFilter extends Equatable {
 
     if (hashtags.isNotEmpty) {
       final description = video.description?.toLowerCase() ?? '';
+      final RegExp hashtagRegex = RegExp(r'#(\w+)');
+      final Set<String> videoHashtags = {};
+
+      for (final match in hashtagRegex.allMatches(description)) {
+        if (match.groupCount >= 1) {
+          final tag = match.group(1)!.toLowerCase();
+          videoHashtags.add(tag);
+        }
+      }
+
       bool hasMatchingHashtag = false;
       for (final tag in hashtags) {
-        if (description.contains('#$tag'.toLowerCase())) {
+        if (videoHashtags.contains(_normalizeHashtag(tag))) {
           hasMatchingHashtag = true;
           break;
         }
       }
+
       if (!hasMatchingHashtag) {
         return false;
       }
     }
 
     return true;
+  }
+
+  String _normalizeHashtag(String tag) {
+    // Remove leading # if present, trim whitespace, and convert to lowercase
+    final normalized = tag.replaceAll(RegExp(r'^#'), '').trim().toLowerCase();
+    print('VideoFilter: Normalizing hashtag: $tag -> $normalized');
+    return normalized;
+  }
+
+  VideoFilter addHashtag(String tag) {
+    final normalizedTag = _normalizeHashtag(tag);
+    if (normalizedTag.isEmpty) {
+      print('VideoFilter: Skipping empty hashtag');
+      return this;
+    }
+
+    print('VideoFilter: Adding hashtag: $tag (normalized: $normalizedTag)');
+    final newHashtags = Set<String>.from(hashtags)..add(normalizedTag);
+    print('VideoFilter: Updated hashtags: $newHashtags');
+    return copyWith(hashtags: newHashtags);
+  }
+
+  VideoFilter removeHashtag(String tag) {
+    final normalizedTag = _normalizeHashtag(tag);
+    print('VideoFilter: Removing hashtag: $tag (normalized: $normalizedTag)');
+    final newHashtags = Set<String>.from(hashtags)..remove(normalizedTag);
+    print('VideoFilter: Updated hashtags: $newHashtags');
+    return copyWith(hashtags: newHashtags);
   }
 
   @override
