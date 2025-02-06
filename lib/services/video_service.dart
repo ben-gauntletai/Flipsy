@@ -710,15 +710,11 @@ class VideoService {
 
         print('VideoService: Following users: $followedUserIds');
 
-        // Get videos from followed users
+        // Get videos from followed users - only filter by userId and status
         final videoQuery = await _firestore
             .collection('videos')
             .where('userId', whereIn: followedUserIds)
             .where('status', isEqualTo: 'active')
-            .where('privacy', whereIn: [
-              'everyone',
-              'followers'
-            ]) // Only get public and followers-only videos
             .orderBy('createdAt', descending: true)
             .limit(limit)
             .get();
@@ -729,7 +725,12 @@ class VideoService {
         final videos = videoQuery.docs
             .map((doc) {
               try {
-                return Video.fromFirestore(doc);
+                final video = Video.fromFirestore(doc);
+                // Filter privacy in memory - include only 'everyone' and 'followers' videos
+                if (video.privacy == 'private') {
+                  return null;
+                }
+                return video;
               } catch (e) {
                 print('VideoService: Error parsing video doc ${doc.id}: $e');
                 return null;
@@ -779,7 +780,7 @@ class VideoService {
 
       print('VideoService: Following users: $followedUserIds');
 
-      // Create the base query
+      // Create the base query - only filter by userId and status
       Query query = _firestore
           .collection('videos')
           .where('userId', whereIn: followedUserIds)
@@ -801,7 +802,12 @@ class VideoService {
       final videos = videoQuery.docs
           .map((doc) {
             try {
-              return Video.fromFirestore(doc);
+              final video = Video.fromFirestore(doc);
+              // Filter privacy in memory - include only 'everyone' and 'followers' videos
+              if (video.privacy == 'private') {
+                return null;
+              }
+              return video;
             } catch (e) {
               print('VideoService: Error parsing video doc ${doc.id}: $e');
               return null;
