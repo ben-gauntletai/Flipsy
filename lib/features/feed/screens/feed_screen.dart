@@ -939,6 +939,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   final CommentService _commentService = CommentService();
 
+  // Add new state variables for bookmark
+  bool _localBookmarkState = false;
+  int _bookmarkCount = 0;
+  StreamSubscription<bool>? _bookmarkStatusSubscription;
+  StreamSubscription<int>? _bookmarkCountSubscription;
+
   @override
   void initState() {
     super.initState();
@@ -973,6 +979,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     }, onError: (error) {
       print('VideoFeedItem: Error watching comment count: $error');
     });
+
+    // Initialize bookmark status and count
+    _initializeBookmarkStatus();
+    _initializeBookmarkCount();
   }
 
   void _initializeLikeStatus() {
@@ -1026,6 +1036,29 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       }
     }, onError: (error) {
       print('VideoFeedItem: Error watching like count: $error');
+    });
+  }
+
+  void _initializeBookmarkStatus() {
+    _bookmarkStatusSubscription = _videoService
+        .watchUserBookmarkStatus(widget.video.id)
+        .listen((isBookmarked) {
+      if (mounted) {
+        setState(() {
+          _localBookmarkState = isBookmarked;
+        });
+      }
+    });
+  }
+
+  void _initializeBookmarkCount() {
+    _bookmarkCountSubscription =
+        _videoService.watchVideoBookmarkCount(widget.video.id).listen((count) {
+      if (mounted) {
+        setState(() {
+          _bookmarkCount = count;
+        });
+      }
     });
   }
 
@@ -1144,6 +1177,31 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     });
   }
 
+  Future<void> _handleBookmarkAction() async {
+    try {
+      final success = _localBookmarkState
+          ? await _videoService.unbookmarkVideo(widget.video.id)
+          : await _videoService.bookmarkVideo(widget.video.id);
+
+      if (success && mounted) {
+        setState(() {
+          _localBookmarkState = !_localBookmarkState;
+          _bookmarkCount += _localBookmarkState ? 1 : -1;
+        });
+      }
+    } catch (e) {
+      print('VideoFeedItem: Error updating bookmark status: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Error updating bookmark status'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     print('VideoFeedItem: Disposing video ${widget.video.id}');
@@ -1153,6 +1211,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     _likeAnimationController.dispose();
     _likeStatusSubscription?.cancel();
     _initializationRetryTimer?.cancel();
+    _bookmarkStatusSubscription?.cancel();
+    _bookmarkCountSubscription?.cancel();
     super.dispose();
   }
 
@@ -1468,7 +1528,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                     ),
                   ),
                 ),
-                const SizedBox(height: 25),
+                const SizedBox(height: 20),
 
                 // Like Button with optimistic count
                 _buildActionButton(
@@ -1480,7 +1540,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   color: _localLikeState ? Colors.red : Colors.white,
                   onTap: _handleLikeAction,
                 ),
-                const SizedBox(height: 15),
+                const SizedBox(height: 20),
 
                 // Comment Button
                 _buildActionButton(
@@ -1489,15 +1549,19 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   iconSize: 28,
                   onTap: () => _showComments(context),
                 ),
-                const SizedBox(height: 15),
+                const SizedBox(height: 20),
 
-                // Share Button
+                // Bookmark Button
                 _buildActionButton(
-                  icon: FontAwesomeIcons.share,
-                  label: 'Share',
+                  icon: _localBookmarkState
+                      ? FontAwesomeIcons.solidBookmark
+                      : FontAwesomeIcons.bookmark,
+                  label: '',
                   iconSize: 28,
+                  color: _localBookmarkState ? Colors.yellow : Colors.white,
+                  onTap: _handleBookmarkAction,
                 ),
-                const SizedBox(height: 15),
+                const SizedBox(height: 12),
 
                 // More Button
                 GestureDetector(
@@ -1505,12 +1569,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                     // Add your more options logic here
                   },
                   child: const SizedBox(
-                    width: 45,
-                    height: 45,
+                    width: 40,
+                    height: 40,
                     child: Icon(
                       Icons.more_horiz,
                       color: Colors.white,
-                      size: 20,
+                      size: 18,
                     ),
                   ),
                 ),

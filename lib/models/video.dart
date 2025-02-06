@@ -11,6 +11,7 @@ class Video {
   final int likesCount;
   final int commentsCount;
   final int shareCount;
+  final int bookmarkCount;
   final double duration;
   final int width;
   final int height;
@@ -34,6 +35,7 @@ class Video {
     required this.likesCount,
     required this.commentsCount,
     required this.shareCount,
+    this.bookmarkCount = 0,
     required this.duration,
     required this.width,
     required this.height,
@@ -84,6 +86,7 @@ class Video {
       likesCount: (data['likesCount'] as num?)?.toInt() ?? 0,
       commentsCount: (data['commentsCount'] as num?)?.toInt() ?? 0,
       shareCount: (data['shareCount'] as num?)?.toInt() ?? 0,
+      bookmarkCount: (data['bookmarkCount'] as num?)?.toInt() ?? 0,
       duration: (data['duration'] as num?)?.toDouble() ?? 0.0,
       width: (data['width'] as num?)?.toInt() ?? 0,
       height: (data['height'] as num?)?.toInt() ?? 0,
@@ -113,6 +116,7 @@ class Video {
       'likesCount': likesCount,
       'commentsCount': commentsCount,
       'shareCount': shareCount,
+      'bookmarkCount': bookmarkCount,
       'duration': duration,
       'width': width,
       'height': height,
@@ -138,6 +142,7 @@ class Video {
     int? likesCount,
     int? commentsCount,
     int? shareCount,
+    int? bookmarkCount,
     double? duration,
     int? width,
     int? height,
@@ -161,6 +166,7 @@ class Video {
       likesCount: likesCount ?? this.likesCount,
       commentsCount: commentsCount ?? this.commentsCount,
       shareCount: shareCount ?? this.shareCount,
+      bookmarkCount: bookmarkCount ?? this.bookmarkCount,
       duration: duration ?? this.duration,
       width: width ?? this.width,
       height: height ?? this.height,

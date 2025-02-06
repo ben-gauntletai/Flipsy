@@ -843,6 +843,8 @@ class VideoService {
       final videos = videoQuery.docs
           .map((doc) {
             try {
+              final data = doc.data() as Map<String, dynamic>;
+              final videoId = data['videoId'] as String?;
               final video = Video.fromFirestore(doc);
               // Filter privacy in memory - include only 'everyone' and 'followers' videos
               if (video.privacy == 'private') {
@@ -1062,7 +1064,14 @@ class VideoService {
       final videos = snapshot.docs
           .map((doc) {
             try {
-              return Video.fromFirestore(doc);
+              final data = doc.data() as Map<String, dynamic>;
+              final videoId = data['videoId'] as String?;
+              final video = Video.fromFirestore(doc);
+              // Filter privacy in memory - include only 'everyone' and 'followers' videos
+              if (video.privacy == 'private') {
+                return null;
+              }
+              return video;
             } catch (e) {
               print('VideoService: Error parsing video doc ${doc.id}: $e');
               return null;
@@ -1077,6 +1086,215 @@ class VideoService {
     } catch (e) {
       print('VideoService: Error getting filtered video feed batch: $e');
       return [];
+    }
+  }
+
+  /// Bookmarks a video and returns true if successful
+  Future<bool> bookmarkVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Attempting to bookmark video $videoId');
+
+      bool success = false;
+      await _firestore.runTransaction((transaction) async {
+        // Check current bookmark status
+        final userBookmarkRef = _firestore
+            .collection('users')
+            .doc(_currentUserId)
+            .collection('bookmarkedVideos')
+            .doc(videoId);
+
+        final videoRef = _firestore.collection('videos').doc(videoId);
+
+        final bookmarkDoc = await transaction.get(userBookmarkRef);
+        final videoDoc = await transaction.get(videoRef);
+
+        if (!videoDoc.exists) {
+          print('VideoService: Video $videoId not found');
+          success = false;
+          return;
+        }
+
+        if (bookmarkDoc.exists) {
+          print('VideoService: Video already bookmarked');
+          success = true;
+          return;
+        }
+
+        // Add to user's bookmarked videos
+        transaction.set(userBookmarkRef, {
+          'videoId': videoId,
+          'bookmarkedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Increment video bookmark count
+        final currentBookmarks =
+            (videoDoc.data()?['bookmarkCount'] as int?) ?? 0;
+        transaction.update(videoRef, {
+          'bookmarkCount': currentBookmarks + 1,
+        });
+
+        success = true;
+      });
+
+      return success;
+    } catch (e) {
+      print('VideoService: Error bookmarking video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Removes bookmark from a video and returns true if successful
+  Future<bool> unbookmarkVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Attempting to unbookmark video $videoId');
+
+      bool success = false;
+      await _firestore.runTransaction((transaction) async {
+        // Check current bookmark status
+        final userBookmarkRef = _firestore
+            .collection('users')
+            .doc(_currentUserId)
+            .collection('bookmarkedVideos')
+            .doc(videoId);
+
+        final videoRef = _firestore.collection('videos').doc(videoId);
+
+        final bookmarkDoc = await transaction.get(userBookmarkRef);
+        final videoDoc = await transaction.get(videoRef);
+
+        if (!videoDoc.exists) {
+          print('VideoService: Video $videoId not found');
+          success = false;
+          return;
+        }
+
+        if (!bookmarkDoc.exists) {
+          print('VideoService: Video not bookmarked');
+          success = true;
+          return;
+        }
+
+        // Remove from user's bookmarked videos
+        transaction.delete(userBookmarkRef);
+
+        // Decrement video bookmark count
+        final currentBookmarks =
+            (videoDoc.data()?['bookmarkCount'] as int?) ?? 0;
+        transaction.update(videoRef, {
+          'bookmarkCount': math.max(0, currentBookmarks - 1),
+        });
+
+        success = true;
+      });
+
+      return success;
+    } catch (e) {
+      print('VideoService: Error unbookmarking video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Checks if the current user has bookmarked a video
+  Future<bool> hasUserBookmarkedVideo(String videoId) async {
+    if (_currentUserId.isEmpty) return false;
+
+    try {
+      print('VideoService: Checking if user bookmarked video $videoId');
+      final doc = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('bookmarkedVideos')
+          .doc(videoId)
+          .get();
+
+      return doc.exists;
+    } catch (e) {
+      print(
+          'VideoService: Error checking bookmark status for video $videoId: $e');
+      return false;
+    }
+  }
+
+  /// Stream of the current user's bookmark status for a video
+  Stream<bool> watchUserBookmarkStatus(String videoId) {
+    if (_currentUserId.isEmpty) {
+      return Stream.value(false);
+    }
+
+    return _firestore
+        .collection('users')
+        .doc(_currentUserId)
+        .collection('bookmarkedVideos')
+        .doc(videoId)
+        .snapshots()
+        .map((doc) => doc.exists);
+  }
+
+  /// Stream to watch a video's bookmark count in real-time
+  Stream<int> watchVideoBookmarkCount(String videoId) {
+    return _firestore
+        .collection('videos')
+        .doc(videoId)
+        .snapshots()
+        .map((snapshot) => (snapshot.data()?['bookmarkCount'] as int?) ?? 0);
+  }
+
+  /// Get bookmarked videos for the current user
+  Stream<List<Video>> getBookmarkedVideos(
+      {int limit = 10, DocumentSnapshot? startAfter}) {
+    if (_currentUserId.isEmpty) {
+      print('VideoService: No current user, returning empty list');
+      return Stream.value([]);
+    }
+
+    try {
+      print('VideoService: Getting bookmarked videos');
+      Query query = _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('bookmarkedVideos')
+          .orderBy('bookmarkedAt', descending: true);
+
+      if (startAfter != null) {
+        query = query.startAfterDocument(startAfter);
+      }
+
+      query = query.limit(limit);
+
+      return query.snapshots().handleError((error) {
+        print('VideoService: Error accessing bookmarked videos: $error');
+        // Return empty list on permission error or any other error
+        return [];
+      }).asyncMap((snapshot) async {
+        print('VideoService: Got ${snapshot.docs.length} bookmarked videos');
+
+        final List<Video> videos = [];
+        for (final doc in snapshot.docs) {
+          try {
+            final data = doc.data() as Map<String, dynamic>;
+            final videoId = data['videoId'] as String?;
+            if (videoId == null) continue;
+
+            final videoDoc =
+                await _firestore.collection('videos').doc(videoId).get();
+            if (videoDoc.exists) {
+              final video = Video.fromFirestore(videoDoc);
+              videos.add(video);
+            }
+          } catch (e) {
+            print('VideoService: Error fetching bookmarked video: $e');
+          }
+        }
+
+        return videos;
+      });
+    } catch (e) {
+      print('VideoService: Error getting bookmarked videos: $e');
+      return Stream.value([]);
     }
   }
 }

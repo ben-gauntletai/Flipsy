@@ -14,6 +14,12 @@ service cloud.firestore {
         allow read: if true;
         allow write: if request.auth != null && request.auth.uid == userId;
       }
+
+      // Bookmarked videos subcollection
+      match /bookmarkedVideos/{videoId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
     // Video document rules
@@ -23,7 +29,7 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         resource.data.userId == request.auth.uid ||
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likesCount', 'commentsCount', 'shareCount', 'views'])
+          .hasOnly(['likesCount', 'commentsCount', 'shareCount', 'views', 'bookmarkCount'])
       );
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
 

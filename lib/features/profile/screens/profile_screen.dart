@@ -29,13 +29,22 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen>
+    with SingleTickerProviderStateMixin {
   bool _isLoading = false;
   final _userService = UserService();
+  late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _handleFollowAction(bool isFollowing) async {
@@ -281,137 +290,125 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   countsSnapshot.data?['followersCount'] ?? 0;
               final totalLikes = countsSnapshot.data?['totalLikes'] ?? 0;
 
-              return LayoutBuilder(
-                builder: (context, constraints) {
-                  // Calculate dimensions for profile section and video grid
-                  final screenHeight = constraints.maxHeight;
-                  final screenWidth = constraints.maxWidth;
-
-                  // Calculate video item size for exactly 2 rows of 3 videos
-                  final videoWidth =
-                      (screenWidth - 2) / 3; // 1px spacing between items
-                  final videoHeight =
-                      videoWidth / 0.8; // maintain aspect ratio of 0.8
-                  final videoGridHeight =
-                      videoHeight * 2 + 1; // 2 rows with 1px spacing
-
-                  // Profile section takes remaining height
-                  final profileSectionHeight = screenHeight - videoGridHeight;
-
-                  return Column(
-                    children: [
-                      // Non-scrollable profile section with calculated height
-                      SizedBox(
-                        height: profileSectionHeight,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              // Profile Image
-                              UserAvatar(
-                                avatarURL: avatarURL,
-                                radius: profileSectionHeight *
-                                    0.15, // Proportional to section height
-                              ),
-                              // Display Name
-                              Text(
-                                displayName,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      color: Colors.grey[600],
-                                    ),
-                              ),
-                              if (bio.isNotEmpty)
-                                // Bio
-                                Text(
-                                  bio,
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.bodyMedium,
-                                  maxLines: 3,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              // Social Media Links
-                              _buildSocialLinks(
-                                userData['instagramLink'] as String?,
-                                userData['youtubeLink'] as String?,
-                              ),
-                              // Stats Row
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceEvenly,
-                                children: [
-                                  _buildStatColumn(context,
-                                      followingCount.toString(), 'Following'),
-                                  _buildStatColumn(context,
-                                      followersCount.toString(), 'Followers'),
-                                  _buildStatColumn(
-                                      context, totalLikes.toString(), 'Likes'),
-                                ],
-                              ),
-                              // Edit Profile Button or Follow Button
-                              if (isCurrentUser)
-                                OutlinedButton(
-                                  onPressed: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) =>
-                                            const EditProfileScreen(),
-                                      ),
-                                    );
-                                  },
-                                  style: OutlinedButton.styleFrom(
-                                    minimumSize: Size(screenWidth - 32, 36),
-                                  ),
-                                  child: const Text('Edit Profile'),
-                                )
-                              else
-                                StreamBuilder<bool>(
-                                  stream: _userService
-                                      .watchFollowStatus(widget.userId!),
-                                  builder: (context, followSnapshot) {
-                                    final isFollowing =
-                                        followSnapshot.data ?? false;
-
-                                    return ElevatedButton(
-                                      onPressed: _isLoading
-                                          ? null
-                                          : () =>
-                                              _handleFollowAction(isFollowing),
-                                      style: ElevatedButton.styleFrom(
-                                        minimumSize: Size(screenWidth - 32, 36),
-                                        backgroundColor: isFollowing
-                                            ? Colors.grey[200]
-                                            : Theme.of(context).primaryColor,
-                                        foregroundColor: isFollowing
-                                            ? Colors.black
-                                            : Colors.white,
-                                      ),
-                                      child: _isLoading
-                                          ? const SizedBox(
-                                              width: 20,
-                                              height: 20,
-                                              child: CircularProgressIndicator(
-                                                  strokeWidth: 2),
-                                            )
-                                          : Text(isFollowing
-                                              ? 'Following'
-                                              : 'Follow'),
-                                    );
-                                  },
-                                ),
-                              const Divider(height: 1),
-                            ],
-                          ),
+              return Column(
+                children: [
+                  // Profile section
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Profile Image
+                        UserAvatar(
+                          avatarURL: avatarURL,
+                          radius: 50,
                         ),
-                      ),
-                      // Scrollable videos section with exact height for 6 videos
-                      SizedBox(
-                        height: videoGridHeight,
-                        child: StreamBuilder<List<Video>>(
+                        const SizedBox(height: 12),
+                        // Display Name
+                        Text(
+                          displayName,
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: Colors.grey[600],
+                                  ),
+                        ),
+                        if (bio.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            bio,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        // Stats Row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _buildStatColumn(context, followingCount.toString(),
+                                'Following'),
+                            _buildStatColumn(context, followersCount.toString(),
+                                'Followers'),
+                            _buildStatColumn(
+                                context, totalLikes.toString(), 'Likes'),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // Edit Profile Button or Follow Button
+                        if (isCurrentUser)
+                          OutlinedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EditProfileScreen(),
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 36),
+                            ),
+                            child: const Text('Edit Profile'),
+                          )
+                        else
+                          StreamBuilder<bool>(
+                            stream:
+                                _userService.watchFollowStatus(widget.userId!),
+                            builder: (context, followSnapshot) {
+                              final isFollowing = followSnapshot.data ?? false;
+
+                              return ElevatedButton(
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => _handleFollowAction(isFollowing),
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 36),
+                                  backgroundColor: isFollowing
+                                      ? Colors.grey[200]
+                                      : Theme.of(context).primaryColor,
+                                  foregroundColor:
+                                      isFollowing ? Colors.black : Colors.white,
+                                ),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : Text(
+                                        isFollowing ? 'Following' : 'Follow'),
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Tab Bar
+                  TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Videos'),
+                      Tab(text: 'Bookmarked'),
+                    ],
+                    labelColor: Theme.of(context).primaryColor,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: Theme.of(context).primaryColor,
+                  ),
+                  // Tab Bar View
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        // Videos Tab
+                        StreamBuilder<List<Video>>(
                           stream: videoService.getUserVideos(targetUserId),
                           builder: (context, snapshot) {
                             if (snapshot.connectionState ==
@@ -425,10 +422,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    const Icon(Icons.error_outline,
-                                        size: 48, color: Colors.grey),
+                                    Icon(Icons.error_outline,
+                                        size: 48, color: Colors.grey[400]),
                                     const SizedBox(height: 16),
-                                    Text('Something went wrong',
+                                    Text('Error loading videos',
                                         style: Theme.of(context)
                                             .textTheme
                                             .titleMedium),
@@ -448,13 +445,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         size: 48, color: Colors.grey[400]),
                                     const SizedBox(height: 16),
                                     Text(
-                                      'No flips found',
+                                      'No videos found',
                                       style: Theme.of(context)
                                           .textTheme
-                                          .titleMedium
-                                          ?.copyWith(
-                                            color: Colors.grey[600],
-                                          ),
+                                          .titleMedium,
                                     ),
                                   ],
                                 ),
@@ -464,11 +458,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             return GridView.builder(
                               padding: const EdgeInsets.all(1),
                               gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 3,
-                                mainAxisSpacing: 1,
-                                crossAxisSpacing: 1,
                                 childAspectRatio: 0.8,
+                                crossAxisSpacing: 1,
+                                mainAxisSpacing: 1,
                               ),
                               itemCount: videos.length,
                               itemBuilder: (context, index) {
@@ -484,61 +478,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                   child: Stack(
                                     fit: StackFit.expand,
                                     children: [
-                                      if (video.thumbnailURL.isNotEmpty)
-                                        CachedNetworkImage(
-                                          imageUrl: video.thumbnailURL,
-                                          fit: BoxFit.cover,
-                                          placeholder: (context, url) =>
-                                              Container(
-                                            color: Colors.grey[300],
-                                            child: const Center(
-                                                child:
-                                                    CircularProgressIndicator()),
-                                          ),
-                                          errorWidget: (context, url, error) =>
-                                              Container(
-                                            color: Colors.grey[300],
-                                            child: const Icon(Icons.error),
-                                          ),
-                                        )
-                                      else
-                                        Container(
-                                          color: Colors.grey[300],
-                                          child:
-                                              const Icon(Icons.video_library),
+                                      Image.network(
+                                        video.thumbnailURL,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Positioned(
+                                        bottom: 8,
+                                        left: 8,
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              FontAwesomeIcons.heart,
+                                              color: Colors.white,
+                                              size: 14,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              video.likesCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      if (video.likesCount > 0)
-                                        Positioned(
-                                          bottom: 8,
-                                          left: 8,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color:
-                                                  Colors.black.withOpacity(0.6),
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(Icons.play_arrow,
-                                                    color: Colors.white,
-                                                    size: 16),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  video.likesCount.toString(),
-                                                  style: const TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 12),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
+                                      ),
                                     ],
                                   ),
                                 );
@@ -546,10 +510,113 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             );
                           },
                         ),
-                      ),
-                    ],
-                  );
-                },
+                        // Bookmarked Videos Tab
+                        StreamBuilder<List<Video>>(
+                          stream: videoService.getBookmarkedVideos(),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.error_outline,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text('Error loading bookmarked videos',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            final videos = snapshot.data ?? [];
+
+                            if (videos.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.bookmark_border,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No bookmarked videos',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            return GridView.builder(
+                              padding: const EdgeInsets.all(1),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 0.8,
+                                crossAxisSpacing: 1,
+                                mainAxisSpacing: 1,
+                              ),
+                              itemCount: videos.length,
+                              itemBuilder: (context, index) {
+                                final video = videos[index];
+                                return GestureDetector(
+                                  onTap: () {
+                                    MainNavigationScreen.jumpToVideo(
+                                      context,
+                                      video.id,
+                                      showBackButton: true,
+                                    );
+                                  },
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Image.network(
+                                        video.thumbnailURL,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Positioned(
+                                        bottom: 8,
+                                        left: 8,
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              FontAwesomeIcons.heart,
+                                              color: Colors.white,
+                                              size: 14,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              video.likesCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               );
             },
           );

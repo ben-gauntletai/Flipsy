@@ -17,13 +17,14 @@ Main collection for storing video metadata.
   likesCount: number;    // Number of likes
   commentsCount: number; // Number of comments
   shareCount: number;    // Number of shares
+  bookmarkCount: number; // Number of bookmarks
   duration: number;      // Video duration in seconds
   width: number;         // Video width in pixels
   height: number;        // Video height in pixels
   status: string;        // 'active' | 'deleted' | 'processing'
   allowComments: boolean; // Whether comments are enabled
   privacy: string;       // 'everyone' | 'followers' | 'private'
-  spiciness: number;     // Rating from 1-5 indicating content spiciness
+  spiciness: number;     // Rating from 0-5 indicating content spiciness (0 = not spicy)
   budget: number;        // Cost of the meal in local currency
   calories: number;      // Calorie count of the meal
   prepTimeMinutes: number; // Time taken to prepare the meal in minutes
@@ -46,6 +47,7 @@ Collection of all users in the application.
 - **totalLikes**: number
 - **followersCount**: number
 - **followingCount**: number
+- **bookmarkedCount**: number
 
 #### Sub-collections
 
@@ -54,6 +56,17 @@ Collection of videos liked by the user.
 
 - **videoId**: string (reference to videos collection)
 - **likedAt**: timestamp
+
+##### bookmarkedVideos
+Collection of videos bookmarked by the user.
+
+**Path:** `users/{userId}/bookmarkedVideos/{videoId}`
+```typescript
+{
+  videoId: string;         // Reference to videos collection
+  bookmarkedAt: timestamp; // When the video was bookmarked
+}
+```
 
 ### likes
 Subcollection of videos to track user likes.
@@ -154,6 +167,12 @@ service cloud.firestore {
       
       // Liked videos subcollection
       match /likedVideos/{videoId} {
+        allow read: if true;
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // Bookmarked videos subcollection
+      match /bookmarkedVideos/{videoId} {
         allow read: if true;
         allow write: if request.auth != null && request.auth.uid == userId;
       }
