@@ -34,7 +34,7 @@ class SpicinessSelector extends StatelessWidget {
                 }
               : null,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+            padding: const EdgeInsets.symmetric(horizontal: 2.0),
             child: Text(
               pepperEmoji,
               style: TextStyle(

@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
+import '../features/discover/models/video_filter.dart';
 
 class VideoService {
   static final VideoService _instance = VideoService._internal();
@@ -904,6 +905,178 @@ class VideoService {
     } catch (e) {
       print('VideoService: Error fetching video by ID: $e');
       return null;
+    }
+  }
+
+  // Get videos for feed with filters
+  Stream<List<Video>> getFilteredVideoFeed({
+    required VideoFilter filter,
+    int limit = 10,
+    DocumentSnapshot? startAfter,
+  }) {
+    print('VideoService: Getting filtered video feed');
+    try {
+      // Create the base query
+      Query query =
+          _firestore.collection('videos').where('status', isEqualTo: 'active');
+
+      // Apply budget range filter
+      if (filter.budgetRange != null) {
+        query = query
+            .where('budget', isGreaterThanOrEqualTo: filter.budgetRange!.start)
+            .where('budget', isLessThanOrEqualTo: filter.budgetRange!.end);
+      }
+
+      // Apply calories range filter
+      if (filter.caloriesRange != null) {
+        query = query
+            .where('calories',
+                isGreaterThanOrEqualTo: filter.caloriesRange!.start.toInt())
+            .where('calories',
+                isLessThanOrEqualTo: filter.caloriesRange!.end.toInt());
+      }
+
+      // Apply prep time range filter
+      if (filter.prepTimeRange != null) {
+        query = query
+            .where('prepTimeMinutes',
+                isGreaterThanOrEqualTo: filter.prepTimeRange!.start.toInt())
+            .where('prepTimeMinutes',
+                isLessThanOrEqualTo: filter.prepTimeRange!.end.toInt());
+      }
+
+      // Apply spiciness range filter
+      if (filter.minSpiciness != null || filter.maxSpiciness != null) {
+        query = query
+            .where('spiciness',
+                isGreaterThanOrEqualTo: filter.minSpiciness ?? 0)
+            .where('spiciness', isLessThanOrEqualTo: filter.maxSpiciness ?? 5);
+      }
+
+      // Apply hashtag filter
+      if (filter.hashtags.isNotEmpty) {
+        // Extract hashtags from description field
+        // Note: This is a simple implementation. For better hashtag support,
+        // consider creating a separate 'hashtags' array field in the video document
+        query = query.where('description',
+            arrayContainsAny: filter.hashtags.map((tag) => '#$tag').toList());
+      }
+
+      // If we're paginating, add the startAfter
+      if (startAfter != null) {
+        print('VideoService: Using startAfter document: ${startAfter.id}');
+        query = query.startAfterDocument(startAfter);
+      }
+
+      // Add ordering and limit
+      query = query.orderBy('createdAt', descending: true).limit(limit);
+
+      return query.snapshots().map((snapshot) {
+        print('VideoService: Got ${snapshot.docs.length} filtered videos');
+
+        final videos = snapshot.docs
+            .map((doc) {
+              try {
+                return Video.fromFirestore(doc);
+              } catch (e) {
+                print('VideoService: Error parsing video doc ${doc.id}: $e');
+                return null;
+              }
+            })
+            .where((video) => video != null)
+            .cast<Video>()
+            .toList();
+
+        print('VideoService: Successfully parsed ${videos.length} videos');
+        return videos;
+      });
+    } catch (e) {
+      print('VideoService: Error setting up filtered video feed: $e');
+      rethrow;
+    }
+  }
+
+  // Get a batch of filtered videos (non-stream version for pagination)
+  Future<List<Video>> getFilteredVideoFeedBatch({
+    required VideoFilter filter,
+    int limit = 10,
+    DocumentSnapshot? startAfter,
+  }) async {
+    print('VideoService: Getting filtered video feed batch');
+    try {
+      // Create the base query
+      Query query =
+          _firestore.collection('videos').where('status', isEqualTo: 'active');
+
+      // Apply budget range filter
+      if (filter.budgetRange != null) {
+        query = query
+            .where('budget', isGreaterThanOrEqualTo: filter.budgetRange!.start)
+            .where('budget', isLessThanOrEqualTo: filter.budgetRange!.end);
+      }
+
+      // Apply calories range filter
+      if (filter.caloriesRange != null) {
+        query = query
+            .where('calories',
+                isGreaterThanOrEqualTo: filter.caloriesRange!.start.toInt())
+            .where('calories', isLessThanOrEqualTo: filter.caloriesRange!.end);
+      }
+
+      // Apply prep time range filter
+      if (filter.prepTimeRange != null) {
+        query = query
+            .where('prepTimeMinutes',
+                isGreaterThanOrEqualTo: filter.prepTimeRange!.start.toInt())
+            .where('prepTimeMinutes',
+                isLessThanOrEqualTo: filter.prepTimeRange!.end);
+      }
+
+      // Apply spiciness range filter
+      if (filter.minSpiciness != null || filter.maxSpiciness != null) {
+        query = query
+            .where('spiciness',
+                isGreaterThanOrEqualTo: filter.minSpiciness ?? 0)
+            .where('spiciness', isLessThanOrEqualTo: filter.maxSpiciness ?? 5);
+      }
+
+      // Apply hashtag filter
+      if (filter.hashtags.isNotEmpty) {
+        // Extract hashtags from description field
+        query = query.where('description',
+            arrayContainsAny: filter.hashtags.map((tag) => '#$tag').toList());
+      }
+
+      // If we're paginating, add the startAfter
+      if (startAfter != null) {
+        print('VideoService: Using startAfter document: ${startAfter.id}');
+        query = query.startAfterDocument(startAfter);
+      }
+
+      // Add ordering and limit
+      query = query.orderBy('createdAt', descending: true).limit(limit);
+
+      final snapshot = await query.get();
+      print('VideoService: Got ${snapshot.docs.length} filtered videos');
+
+      final videos = snapshot.docs
+          .map((doc) {
+            try {
+              return Video.fromFirestore(doc);
+            } catch (e) {
+              print('VideoService: Error parsing video doc ${doc.id}: $e');
+              return null;
+            }
+          })
+          .where((video) => video != null)
+          .cast<Video>()
+          .toList();
+
+      print('VideoService: Successfully parsed ${videos.length} videos');
+      return videos;
+    } catch (e) {
+      print('VideoService: Error getting filtered video feed batch: $e');
+      return [];
     }
   }
 }

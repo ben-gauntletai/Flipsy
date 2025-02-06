@@ -264,7 +264,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             if (_error != null)
               Padding(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: Text(
                   _error!,
                   style: const TextStyle(color: Colors.red, fontSize: 13),
@@ -359,7 +359,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                         const Divider(height: 1),
                         // Description field remains full width
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                           child: TextField(
                             controller: _descriptionController,
                             decoration: const InputDecoration(
@@ -380,7 +380,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                         const Divider(height: 1),
                         // Cost and Calories in one row
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                           child: Row(
                             children: [
                               // Budget field
@@ -393,14 +393,14 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                     prefixText: '\$',
                                     border: OutlineInputBorder(),
                                     contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 16),
+                                        horizontal: 8, vertical: 12),
                                   ),
                                   keyboardType: TextInputType.numberWithOptions(
                                       decimal: true),
                                   enabled: !_isUploading,
                                 ),
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 8),
                               // Calories field
                               Expanded(
                                 child: TextField(
@@ -411,7 +411,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                     suffixText: 'cal',
                                     border: OutlineInputBorder(),
                                     contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 16),
+                                        horizontal: 8, vertical: 12),
                                   ),
                                   keyboardType: TextInputType.number,
                                   enabled: !_isUploading,
@@ -423,7 +423,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                         const Divider(height: 1),
                         // Prep Time and Spiciness in one row
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                           child: Row(
                             children: [
                               // Prep Time field
@@ -436,13 +436,13 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                     suffixText: 'min',
                                     border: OutlineInputBorder(),
                                     contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 16),
+                                        horizontal: 8, vertical: 12),
                                   ),
                                   keyboardType: TextInputType.number,
                                   enabled: !_isUploading,
                                 ),
                               ),
-                              const SizedBox(width: 12),
+                              const SizedBox(width: 8),
                               // Spiciness field
                               Expanded(
                                 child: Column(
@@ -450,7 +450,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                   children: [
                                     const Padding(
                                       padding:
-                                          EdgeInsets.only(left: 12, bottom: 4),
+                                          EdgeInsets.only(left: 8, bottom: 4),
                                       child: Text(
                                         'Spiciness',
                                         style: TextStyle(
@@ -497,7 +497,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                             ],
                           ),
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                              horizontal: 12, vertical: 8),
                           minLeadingWidth: 24,
                           horizontalTitleGap: 8,
                           dense: true,
@@ -513,7 +513,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                             CrossAxisAlignment.stretch,
                                         children: [
                                           Padding(
-                                            padding: const EdgeInsets.all(16),
+                                            padding: const EdgeInsets.all(12),
                                             child: Text(
                                               'Who can watch this video',
                                               style: TextStyle(
@@ -583,7 +583,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                           },
                           title: const Text('Allow comments'),
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 8),
+                              horizontal: 12, vertical: 8),
                           activeColor: const Color(0xFF00F2EA),
                           dense: true,
                         ),
@@ -596,7 +596,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             ),
             // Post button
             Container(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottomPadding),
+              padding: EdgeInsets.fromLTRB(12, 12, 12, 12 + bottomPadding),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border(
@@ -615,28 +615,32 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(2),
                   ),
+                  minimumSize: const Size(double.infinity, 0),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.celebration,
-                      size: 16,
-                      color:
-                          _videoFile != null ? Colors.white : Colors.grey[400],
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Post',
-                      style: TextStyle(
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.celebration,
+                        size: 16,
                         color: _videoFile != null
                             ? Colors.white
                             : Colors.grey[400],
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Text(
+                        'Post',
+                        style: TextStyle(
+                          color: _videoFile != null
+                              ? Colors.white
+                              : Colors.grey[400],
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
