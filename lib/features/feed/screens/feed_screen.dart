@@ -897,6 +897,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   final VideoService _videoService = VideoService();
   StreamSubscription<bool>? _likeStatusSubscription;
   StreamSubscription<int>? _commentCountSubscription;
+  StreamSubscription<int>? _likeCountSubscription;
   int _commentCount = 0;
 
   DateTime? _lastTapTime;
@@ -908,9 +909,11 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   final Queue<_LikeAction> _likeActionQueue = Queue<_LikeAction>();
   bool _isProcessingQueue = false;
 
-  // Track local state
+  // Track local state with timestamps
   int _localLikesCount = 0;
   bool _localLikeState = false;
+  DateTime? _lastLikeActionTime;
+  bool _isLikeActionPending = false;
 
   final CommentService _commentService = CommentService();
 
@@ -929,11 +932,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     // Initialize video controller
     _initializeController();
 
-    // Initialize like status
-    _initializeLikeStatus();
-
+    // Initialize like status and count
     _localLikesCount = widget.video.likesCount;
-    print('VideoFeedItem: Initializing with like count: $_localLikesCount');
+    _initializeLikeStatus();
+    _initializeLikeCount();
 
     // Initialize comment count
     _commentCount = widget.video.commentsCount;
@@ -951,32 +953,66 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     });
   }
 
-  Future<void> _initializeLikeStatus() async {
-    try {
-      final isLiked = await _videoService.hasUserLikedVideo(widget.video.id);
+  void _initializeLikeStatus() {
+    _likeStatusSubscription =
+        _videoService.watchUserLikeStatus(widget.video.id).listen((isLiked) {
       if (mounted) {
-        setState(() {
-          _isLiked = isLiked;
-          _localLikeState = isLiked;
-        });
-      }
+        final now = DateTime.now();
+        final timeSinceLastAction = _lastLikeActionTime != null
+            ? now.difference(_lastLikeActionTime!)
+            : null;
 
-      _likeStatusSubscription =
-          _videoService.watchUserLikeStatus(widget.video.id).listen((isLiked) {
-        if (mounted && !_isProcessingQueue) {
+        // Only update if:
+        // 1. We're not processing a queue
+        // 2. It's been more than 2 seconds since our last action (to avoid race conditions)
+        // 3. Or if we have no pending actions
+        if (!_isProcessingQueue &&
+            (!_isLikeActionPending ||
+                (timeSinceLastAction != null &&
+                    timeSinceLastAction.inSeconds > 2))) {
           setState(() {
             _isLiked = isLiked;
             _localLikeState = isLiked;
+            _isLikeActionPending = false;
           });
         }
-      });
-    } catch (e) {
-      print('VideoFeedItem: Error initializing like status: $e');
-    }
+      }
+    });
+  }
+
+  void _initializeLikeCount() {
+    _likeCountSubscription =
+        _videoService.watchVideoLikeCount(widget.video.id).listen((count) {
+      if (mounted) {
+        final now = DateTime.now();
+        final timeSinceLastAction = _lastLikeActionTime != null
+            ? now.difference(_lastLikeActionTime!)
+            : null;
+
+        // Update if:
+        // 1. We're not processing a queue and have no pending actions, or
+        // 2. It's been more than 2 seconds since our last action
+        if (!_isProcessingQueue && !_isLikeActionPending ||
+            (timeSinceLastAction != null &&
+                timeSinceLastAction.inSeconds > 2)) {
+          setState(() {
+            _localLikesCount = count;
+            print(
+                'VideoFeedItem: Updated like count to $count for video ${widget.video.id}');
+          });
+        }
+      }
+    }, onError: (error) {
+      print('VideoFeedItem: Error watching like count: $error');
+    });
   }
 
   Future<void> _handleLikeAction() async {
-    // Don't block new actions, just add them to queue
+    if (_isLikeActionPending) {
+      print('VideoFeedItem: Like action already pending, skipping');
+      return;
+    }
+
     final newLikeState = !_localLikeState;
     final action = _LikeAction(isLike: newLikeState);
 
@@ -984,8 +1020,13 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     setState(() {
       _localLikeState = newLikeState;
       _localLikesCount += newLikeState ? 1 : -1;
+      _isLikeActionPending = true;
+      _lastLikeActionTime = DateTime.now();
       _showHeartAnimation(isLike: newLikeState);
     });
+
+    print(
+        'VideoFeedItem: Applied optimistic update - new like count: $_localLikesCount');
 
     // Add to queue and process
     _likeActionQueue.add(action);
@@ -1000,6 +1041,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     if (_isProcessingQueue) return;
 
     _isProcessingQueue = true;
+    print('VideoFeedItem: Starting to process like action queue');
 
     try {
       while (_likeActionQueue.isNotEmpty) {
@@ -1017,6 +1059,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             setState(() {
               _localLikesCount += action.isLike ? -1 : 1;
               _localLikeState = !action.isLike;
+              _isLikeActionPending = false;
             });
 
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1025,6 +1068,15 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                 duration: Duration(seconds: 2),
               ),
             );
+          } else {
+            print('VideoFeedItem: Action completed successfully');
+            if (mounted) {
+              setState(() {
+                _isLikeActionPending = false;
+                // Force update the local state to match the action
+                _localLikeState = action.isLike;
+              });
+            }
           }
         } catch (e) {
           print('VideoFeedItem: Error processing like action: $e');
@@ -1032,6 +1084,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             setState(() {
               _localLikesCount += action.isLike ? -1 : 1;
               _localLikeState = !action.isLike;
+              _isLikeActionPending = false;
             });
 
             ScaffoldMessenger.of(context).showSnackBar(
@@ -1050,6 +1103,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       }
     } finally {
       _isProcessingQueue = false;
+      print('VideoFeedItem: Finished processing like action queue');
     }
   }
 
@@ -1072,6 +1126,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   void dispose() {
     print('VideoFeedItem: Disposing video ${widget.video.id}');
     _commentCountSubscription?.cancel();
+    _likeCountSubscription?.cancel();
     _doubleTapTimer?.cancel();
     _likeAnimationController.dispose();
     _likeStatusSubscription?.cancel();

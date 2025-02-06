@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:rxdart/rxdart.dart';
+import 'dart:async';
+import 'dart:math' as math;
 
 class UserService {
   static final UserService _instance = UserService._internal();
@@ -8,6 +11,7 @@ class UserService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Map<String, Map<String, dynamic>> _userCache = {};
+  final Map<String, Timer> _reconciliationTimers = {};
 
   UserService._internal();
 
@@ -16,6 +20,327 @@ class UserService {
   // Helper method to get follow document ID
   String _getFollowDocId(String followerId, String followingId) {
     return '${followerId}_$followingId';
+  }
+
+  // New method to reconcile follow counts
+  Future<void> reconcileFollowCounts(String userId) async {
+    print('\nUserService: Starting count reconciliation for user $userId');
+    try {
+      // Get actual follower count from follows collection
+      final followersQuery = await _firestore
+          .collection('follows')
+          .where('followingId', isEqualTo: userId)
+          .get();
+
+      // Get actual following count
+      final followingQuery = await _firestore
+          .collection('follows')
+          .where('followerId', isEqualTo: userId)
+          .get();
+
+      // Get actual total likes from videos
+      final videosQuery = await _firestore
+          .collection('videos')
+          .where('userId', isEqualTo: userId)
+          .where('status', isEqualTo: 'active')
+          .get();
+
+      int totalLikes = 0;
+      for (var doc in videosQuery.docs) {
+        totalLikes += (doc.data()['likesCount'] as int?) ?? 0;
+      }
+
+      final actualCounts = {
+        'followersCount': followersQuery.docs.length,
+        'followingCount': followingQuery.docs.length,
+        'totalLikes': totalLikes,
+      };
+
+      print('UserService: Actual counts for $userId:');
+      print('- Followers: ${actualCounts['followersCount']}');
+      print('- Following: ${actualCounts['followingCount']}');
+      print('- Total Likes: ${actualCounts['totalLikes']}');
+
+      // Get current counts
+      final userDoc = await _firestore.collection('users').doc(userId).get();
+      final currentCounts = {
+        'followersCount': userDoc.data()?['followersCount'] ?? 0,
+        'followingCount': userDoc.data()?['followingCount'] ?? 0,
+        'totalLikes': userDoc.data()?['totalLikes'] ?? 0,
+      };
+
+      // Check if counts are different
+      if (currentCounts['followersCount'] != actualCounts['followersCount'] ||
+          currentCounts['followingCount'] != actualCounts['followingCount'] ||
+          currentCounts['totalLikes'] != actualCounts['totalLikes']) {
+        print('UserService: Counts mismatch detected for $userId:');
+        print('Current counts: $currentCounts');
+        print('Actual counts: $actualCounts');
+
+        // Update user document with actual counts
+        await _firestore.collection('users').doc(userId).update(actualCounts);
+
+        // Update cache
+        if (_userCache.containsKey(userId)) {
+          _userCache[userId] = {
+            ..._userCache[userId]!,
+            ...actualCounts,
+          };
+        }
+
+        print('UserService: Successfully updated counts for $userId');
+      } else {
+        print('UserService: Counts are already accurate for $userId');
+      }
+    } catch (e) {
+      print('UserService: Error reconciling counts: $e');
+    }
+  }
+
+  // Schedule reconciliation with debounce
+  void _scheduleReconciliation(String userId) {
+    print('UserService: Scheduling reconciliation for $userId');
+
+    // Cancel existing timer if any
+    _reconciliationTimers[userId]?.cancel();
+
+    // Schedule new reconciliation
+    _reconciliationTimers[userId] = Timer(const Duration(seconds: 5), () {
+      reconcileFollowCounts(userId);
+      _reconciliationTimers.remove(userId);
+    });
+  }
+
+  // Real-time count tracking
+  Stream<Map<String, int>> watchUserCounts(String userId) {
+    print('UserService: Starting to watch counts for $userId');
+
+    // Watch followers
+    final followersStream = _firestore
+        .collection('follows')
+        .where('followingId', isEqualTo: userId)
+        .snapshots()
+        .map((snap) => snap.docs.length);
+
+    // Watch following
+    final followingStream = _firestore
+        .collection('follows')
+        .where('followerId', isEqualTo: userId)
+        .snapshots()
+        .map((snap) => snap.docs.length);
+
+    // Watch total likes by watching all user's videos
+    final totalLikesStream = _firestore
+        .collection('videos')
+        .where('userId', isEqualTo: userId)
+        .where('status', isEqualTo: 'active')
+        .snapshots()
+        .map((snap) {
+      int totalLikes = 0;
+      for (var doc in snap.docs) {
+        totalLikes += (doc.data()['likesCount'] as int?) ?? 0;
+      }
+      print('UserService: Calculated total likes for $userId: $totalLikes');
+      return totalLikes;
+    });
+
+    // Combine all streams
+    return Rx.combineLatest3(followersStream, followingStream, totalLikesStream,
+        (followers, following, totalLikes) {
+      final counts = {
+        'followersCount': followers,
+        'followingCount': following,
+        'totalLikes': totalLikes,
+      };
+      print('UserService: New counts for $userId: $counts');
+      return counts;
+    });
+  }
+
+  // Modified followUser method with optimistic updates
+  Future<bool> followUser(String userId) async {
+    print('\nUserService: Starting followUser');
+    print('UserService: Current user ID: $_currentUserId');
+    print('UserService: Target user ID: $userId');
+
+    if (_currentUserId.isEmpty) {
+      print('UserService: No current user ID');
+      return false;
+    }
+
+    // Prevent self-following
+    if (_currentUserId == userId) {
+      print('UserService: Cannot follow yourself');
+      return false;
+    }
+
+    try {
+      // Optimistically update cache for target user
+      if (_userCache.containsKey(userId)) {
+        _userCache[userId] = {
+          ..._userCache[userId]!,
+          'followersCount': (_userCache[userId]!['followersCount'] ?? 0) + 1,
+        };
+      }
+
+      // Optimistically update cache for current user
+      if (_userCache.containsKey(_currentUserId)) {
+        _userCache[_currentUserId] = {
+          ..._userCache[_currentUserId]!,
+          'followingCount':
+              (_userCache[_currentUserId]!['followingCount'] ?? 0) + 1,
+        };
+      }
+
+      print('UserService: Following user: $_currentUserId -> $userId');
+      final batch = _firestore.batch();
+
+      // Create follow document
+      final followDoc = _firestore
+          .collection('follows')
+          .doc(_getFollowDocId(_currentUserId, userId));
+      batch.set(followDoc, {
+        'followerId': _currentUserId,
+        'followingId': userId,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Create notification
+      final notificationRef = _firestore.collection('notifications').doc();
+      batch.set(notificationRef, {
+        'userId': userId,
+        'type': 'follow',
+        'sourceUserId': _currentUserId,
+        'createdAt': FieldValue.serverTimestamp(),
+        'read': false,
+      });
+
+      await batch.commit();
+      print('UserService: Successfully followed user and created notification');
+
+      // Schedule reconciliation for both users
+      _scheduleReconciliation(userId);
+      _scheduleReconciliation(_currentUserId);
+
+      return true;
+    } catch (e) {
+      print('UserService: Error following user: $e');
+
+      // Revert optimistic updates on failure
+      if (_userCache.containsKey(userId)) {
+        _userCache[userId] = {
+          ..._userCache[userId]!,
+          'followersCount': (_userCache[userId]!['followersCount'] ?? 1) - 1,
+        };
+      }
+
+      if (_userCache.containsKey(_currentUserId)) {
+        _userCache[_currentUserId] = {
+          ..._userCache[_currentUserId]!,
+          'followingCount':
+              (_userCache[_currentUserId]!['followingCount'] ?? 1) - 1,
+        };
+      }
+
+      return false;
+    }
+  }
+
+  // Modified unfollowUser method with optimistic updates
+  Future<bool> unfollowUser(String userId) async {
+    print('\nUserService: Starting unfollowUser');
+    print('UserService: Current user ID: $_currentUserId');
+    print('UserService: Target user ID: $userId');
+
+    if (_currentUserId.isEmpty) {
+      print('UserService: No current user ID');
+      return false;
+    }
+
+    try {
+      // Optimistically update cache for target user
+      if (_userCache.containsKey(userId)) {
+        _userCache[userId] = {
+          ..._userCache[userId]!,
+          'followersCount': math.max<int>(
+              0, (_userCache[userId]!['followersCount'] ?? 1) - 1),
+        };
+      }
+
+      // Optimistically update cache for current user
+      if (_userCache.containsKey(_currentUserId)) {
+        _userCache[_currentUserId] = {
+          ..._userCache[_currentUserId]!,
+          'followingCount': math.max<int>(
+              0, (_userCache[_currentUserId]!['followingCount'] ?? 1) - 1),
+        };
+      }
+
+      final functions = FirebaseFunctions.instance;
+      final callable = functions.httpsCallable('unfollowUser');
+
+      final result = await callable.call<Map<String, dynamic>>({
+        'followingId': userId,
+      });
+
+      print('UserService: Unfollow operation result: ${result.data}');
+
+      // Schedule reconciliation for both users
+      _scheduleReconciliation(userId);
+      _scheduleReconciliation(_currentUserId);
+
+      final success = result.data['success'] as bool;
+
+      if (!success) {
+        // Revert optimistic updates on failure
+        if (_userCache.containsKey(userId)) {
+          _userCache[userId] = {
+            ..._userCache[userId]!,
+            'followersCount': (_userCache[userId]!['followersCount'] ?? 0) + 1,
+          };
+        }
+
+        if (_userCache.containsKey(_currentUserId)) {
+          _userCache[_currentUserId] = {
+            ..._userCache[_currentUserId]!,
+            'followingCount':
+                (_userCache[_currentUserId]!['followingCount'] ?? 0) + 1,
+          };
+        }
+      }
+
+      return success;
+    } catch (e) {
+      print('UserService: Error unfollowing user: $e');
+
+      // Revert optimistic updates on error
+      if (_userCache.containsKey(userId)) {
+        _userCache[userId] = {
+          ..._userCache[userId]!,
+          'followersCount': (_userCache[userId]!['followersCount'] ?? 0) + 1,
+        };
+      }
+
+      if (_userCache.containsKey(_currentUserId)) {
+        _userCache[_currentUserId] = {
+          ..._userCache[_currentUserId]!,
+          'followingCount':
+              (_userCache[_currentUserId]!['followingCount'] ?? 0) + 1,
+        };
+      }
+
+      if (e is FirebaseFunctionsException) {
+        switch (e.code) {
+          case 'not-found':
+            throw 'Not following this user';
+          case 'permission-denied':
+            throw 'Permission denied';
+          default:
+            throw 'Failed to unfollow user';
+        }
+      }
+      rethrow;
+    }
   }
 
   // Get user data by ID
@@ -103,113 +428,6 @@ class UserService {
       _userCache[userId] = sanitizedData;
       return sanitizedData;
     });
-  }
-
-  Future<bool> followUser(String userId) async {
-    print('\nUserService: Starting followUser');
-    print('UserService: Current user ID: $_currentUserId');
-    print('UserService: Target user ID: $userId');
-
-    if (_currentUserId.isEmpty) {
-      print('UserService: No current user ID');
-      return false;
-    }
-
-    // Prevent self-following
-    if (_currentUserId == userId) {
-      print('UserService: Cannot follow yourself');
-      print('UserService: Current user: $_currentUserId');
-      print('UserService: Target user: $userId');
-      return false;
-    }
-
-    try {
-      print('UserService: Following user: $_currentUserId -> $userId');
-      final batch = _firestore.batch();
-
-      // Create follow document
-      final followDoc =
-          _firestore.collection('follows').doc('${_currentUserId}_$userId');
-      batch.set(followDoc, {
-        'followerId': _currentUserId,
-        'followingId': userId,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-
-      // Create notification for the followed user
-      final notificationRef = _firestore.collection('notifications').doc();
-      batch.set(notificationRef, {
-        'userId': userId,
-        'type': 'follow',
-        'sourceUserId': _currentUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'read': false,
-      });
-
-      // Update follower count for target user
-      final targetUserRef = _firestore.collection('users').doc(userId);
-      batch.update(targetUserRef, {
-        'followersCount': FieldValue.increment(1),
-      });
-
-      // Update following count for current user
-      final currentUserRef = _firestore.collection('users').doc(_currentUserId);
-      batch.update(currentUserRef, {
-        'followingCount': FieldValue.increment(1),
-      });
-
-      await batch.commit();
-      print('UserService: Successfully followed user and created notification');
-      return true;
-    } catch (e) {
-      print('UserService: Error following user: $e');
-      return false;
-    }
-  }
-
-  Future<bool> unfollowUser(String userId) async {
-    print('Attempting to unfollow user: $userId');
-    try {
-      final functions = FirebaseFunctions.instance;
-      final callable = functions.httpsCallable('unfollowUser');
-
-      // Clear cache before the operation to ensure fresh data
-      final currentUser = FirebaseAuth.instance.currentUser;
-      if (currentUser != null) {
-        print(
-            'Pre-emptively clearing cache for users: ${currentUser.uid} and $userId');
-        _userCache.remove(currentUser.uid);
-        _userCache.remove(userId);
-      }
-
-      final result = await callable.call<Map<String, dynamic>>({
-        'followingId': userId,
-      });
-
-      print('Unfollow operation result: ${result.data}');
-
-      // Force a refresh of the user data after the operation
-      if (currentUser != null) {
-        print('Forcing refresh of user data after unfollow operation');
-        await getUserData(currentUser.uid);
-        await getUserData(userId);
-      }
-
-      return result.data['success'] as bool;
-    } catch (e) {
-      print('Error unfollowing user $userId: $e');
-      if (e is FirebaseFunctionsException) {
-        switch (e.code) {
-          case 'not-found':
-            throw 'Not following this user';
-          case 'permission-denied':
-            throw 'Permission denied';
-          default:
-            throw 'Failed to unfollow user';
-        }
-      }
-      rethrow;
-    }
   }
 
   Future<bool> isFollowing(String userId) async {

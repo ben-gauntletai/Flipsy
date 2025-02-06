@@ -6,14 +6,22 @@ import 'package:video_compress/video_compress.dart';
 import '../models/video.dart';
 import 'package:uuid/uuid.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
+import 'dart:collection';
+import 'dart:math' as math;
 
 class VideoService {
+  static final VideoService _instance = VideoService._internal();
+  factory VideoService() => _instance;
+
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
-  final String _currentUserId;
+  final Map<String, Timer> _reconciliationTimers = {};
+  final Map<String, int> _localLikeCounts = {};
 
-  VideoService()
-      : _currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  VideoService._internal();
+
+  String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   // Generate and upload thumbnail
   Future<String> generateAndUploadThumbnail(
@@ -427,35 +435,110 @@ class VideoService {
     }
   }
 
+  // Add reconciliation for video likes
+  Future<void> reconcileVideoLikes(String videoId) async {
+    print('\nVideoService: Starting like reconciliation for video $videoId');
+    try {
+      // Get actual likes count from likedVideos collection
+      final likesQuery = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('likedVideos')
+          .doc(videoId)
+          .get();
+
+      final videoDoc = await _firestore.collection('videos').doc(videoId).get();
+      if (!videoDoc.exists) {
+        print('VideoService: Video $videoId not found');
+        return;
+      }
+
+      final actualLikeStatus = likesQuery.exists;
+      final videoData = videoDoc.data()!;
+      final currentLikesCount = videoData['likesCount'] as int? ?? 0;
+
+      print('VideoService: Like status for video $videoId:');
+      print('- User like status: $actualLikeStatus');
+      print('- Current likes count: $currentLikesCount');
+
+      // Store the reconciled count locally
+      _localLikeCounts[videoId] = currentLikesCount;
+    } catch (e) {
+      print('VideoService: Error reconciling likes: $e');
+    }
+  }
+
+  // Schedule reconciliation with debounce
+  void _scheduleLikeReconciliation(String videoId) {
+    print('VideoService: Scheduling like reconciliation for $videoId');
+
+    // Cancel existing timer if any
+    _reconciliationTimers[videoId]?.cancel();
+
+    // Schedule new reconciliation
+    _reconciliationTimers[videoId] = Timer(const Duration(seconds: 5), () {
+      reconcileVideoLikes(videoId);
+      _reconciliationTimers.remove(videoId);
+    });
+  }
+
   /// Likes a video and returns true if successful
   Future<bool> likeVideo(String videoId) async {
     if (_currentUserId.isEmpty) return false;
 
     try {
       print('VideoService: Attempting to like video $videoId');
-      final batch = _firestore.batch();
 
-      // Add to user's liked videos
-      final userLikeRef = _firestore
-          .collection('users')
-          .doc(_currentUserId)
-          .collection('likedVideos')
-          .doc(videoId);
+      bool success = false;
+      await _firestore.runTransaction((transaction) async {
+        // Check current like status
+        final userLikeRef = _firestore
+            .collection('users')
+            .doc(_currentUserId)
+            .collection('likedVideos')
+            .doc(videoId);
 
-      batch.set(userLikeRef, {
-        'videoId': videoId,
-        'likedAt': FieldValue.serverTimestamp(),
+        final videoRef = _firestore.collection('videos').doc(videoId);
+
+        final likeDoc = await transaction.get(userLikeRef);
+        final videoDoc = await transaction.get(videoRef);
+
+        if (!videoDoc.exists) {
+          print('VideoService: Video $videoId not found');
+          success = false;
+          return;
+        }
+
+        if (likeDoc.exists) {
+          print('VideoService: Video already liked');
+          success = true;
+          return;
+        }
+
+        // Add to user's liked videos
+        transaction.set(userLikeRef, {
+          'videoId': videoId,
+          'likedAt': FieldValue.serverTimestamp(),
+        });
+
+        // Increment video likes count
+        final currentLikes = (videoDoc.data()?['likesCount'] as int?) ?? 0;
+        transaction.update(videoRef, {
+          'likesCount': currentLikes + 1,
+        });
+
+        // Update local count
+        _localLikeCounts[videoId] = currentLikes + 1;
+
+        success = true;
       });
 
-      // Increment video likes count
-      final videoRef = _firestore.collection('videos').doc(videoId);
-      batch.update(videoRef, {
-        'likesCount': FieldValue.increment(1),
-      });
+      if (success) {
+        print('VideoService: Successfully liked video $videoId');
+        _scheduleLikeReconciliation(videoId);
+      }
 
-      await batch.commit();
-      print('VideoService: Successfully liked video $videoId');
-      return true;
+      return success;
     } catch (e) {
       print('VideoService: Error liking video $videoId: $e');
       return false;
@@ -468,26 +551,54 @@ class VideoService {
 
     try {
       print('VideoService: Attempting to unlike video $videoId');
-      final batch = _firestore.batch();
 
-      // Remove from user's liked videos
-      final userLikeRef = _firestore
-          .collection('users')
-          .doc(_currentUserId)
-          .collection('likedVideos')
-          .doc(videoId);
+      bool success = false;
+      await _firestore.runTransaction((transaction) async {
+        // Check current like status
+        final userLikeRef = _firestore
+            .collection('users')
+            .doc(_currentUserId)
+            .collection('likedVideos')
+            .doc(videoId);
 
-      batch.delete(userLikeRef);
+        final videoRef = _firestore.collection('videos').doc(videoId);
 
-      // Decrement video likes count
-      final videoRef = _firestore.collection('videos').doc(videoId);
-      batch.update(videoRef, {
-        'likesCount': FieldValue.increment(-1),
+        final likeDoc = await transaction.get(userLikeRef);
+        final videoDoc = await transaction.get(videoRef);
+
+        if (!videoDoc.exists) {
+          print('VideoService: Video $videoId not found');
+          success = false;
+          return;
+        }
+
+        if (!likeDoc.exists) {
+          print('VideoService: Video not liked');
+          success = true;
+          return;
+        }
+
+        // Remove from user's liked videos
+        transaction.delete(userLikeRef);
+
+        // Decrement video likes count
+        final currentLikes = (videoDoc.data()?['likesCount'] as int?) ?? 0;
+        transaction.update(videoRef, {
+          'likesCount': math.max(0, currentLikes - 1),
+        });
+
+        // Update local count
+        _localLikeCounts[videoId] = math.max(0, currentLikes - 1);
+
+        success = true;
       });
 
-      await batch.commit();
-      print('VideoService: Successfully unliked video $videoId');
-      return true;
+      if (success) {
+        print('VideoService: Successfully unliked video $videoId');
+        _scheduleLikeReconciliation(videoId);
+      }
+
+      return success;
     } catch (e) {
       print('VideoService: Error unliking video $videoId: $e');
       return false;
@@ -535,6 +646,15 @@ class VideoService {
         .doc(videoId)
         .snapshots()
         .map((snapshot) => (snapshot.data()?['commentsCount'] as int?) ?? 0);
+  }
+
+  /// Stream to watch a video's like count in real-time
+  Stream<int> watchVideoLikeCount(String videoId) {
+    return _firestore
+        .collection('videos')
+        .doc(videoId)
+        .snapshots()
+        .map((snapshot) => (snapshot.data()?['likesCount'] as int?) ?? 0);
   }
 
   // Get videos from users that the current user follows

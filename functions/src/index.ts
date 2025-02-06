@@ -603,6 +603,7 @@ export const onVideoLikeCountChange = onDocumentUpdated(
   async (event) => {
     const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
+    const videoRef = event.data?.after.ref;
 
     // Only proceed if likesCount has changed
     if (beforeData?.likesCount === afterData?.likesCount) {
@@ -616,7 +617,6 @@ export const onVideoLikeCountChange = onDocumentUpdated(
 
     try {
       const db = admin.firestore();
-      // Use uploaderId from either field
       const uploaderId = afterData?.userId || afterData?.uploaderId;
 
       if (!uploaderId) {
@@ -628,25 +628,72 @@ export const onVideoLikeCountChange = onDocumentUpdated(
       const likeDiff = (afterData?.likesCount || 0) - (beforeData?.likesCount || 0);
       console.log(`Updating user ${uploaderId} totalLikes by ${likeDiff}`);
 
-      // Update user's totalLikes using a transaction for consistency
-      const userRef = db.collection("users").doc(uploaderId);
-      await db.runTransaction(async (transaction) => {
-        const userDoc = await transaction.get(userRef);
-        if (!userDoc.exists) {
-          console.error(`User document ${uploaderId} not found`);
-          return;
+      let retryCount = 0;
+      const maxRetries = 3;
+
+      while (retryCount < maxRetries) {
+        try {
+          // Update user's totalLikes using a transaction for consistency
+          await db.runTransaction(async (transaction) => {
+            const userRef = db.collection("users").doc(uploaderId);
+            const userDoc = await transaction.get(userRef);
+
+            if (!userDoc.exists) {
+              console.error(`User document ${uploaderId} not found`);
+              return;
+            }
+
+            const currentTotalLikes = userDoc.data()?.totalLikes || 0;
+            const newTotalLikes = Math.max(0, currentTotalLikes + likeDiff);
+
+            // Verify the video still exists and has the expected like count
+            if (videoRef) {
+              const videoDoc = await transaction.get(videoRef);
+              if (!videoDoc.exists) {
+                console.error("Video no longer exists");
+                return;
+              }
+
+              const currentLikesCount = videoDoc.data()?.likesCount || 0;
+              if (currentLikesCount !== afterData?.likesCount) {
+                console.log("Like count changed during transaction, retrying");
+                throw new Error("Retry needed - like count changed");
+              }
+            }
+
+            transaction.update(userRef, { totalLikes: newTotalLikes });
+            console.log(`Successfully updated user ${uploaderId} totalLikes to ${newTotalLikes}`);
+          });
+
+          // If successful, break the retry loop
+          break;
+        } catch (e) {
+          retryCount++;
+          console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
+          if (retryCount === maxRetries) throw e;
+          // Wait before retrying (exponential backoff)
+          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
         }
-
-        const currentTotalLikes = userDoc.data()?.totalLikes || 0;
-        const newTotalLikes = Math.max(0, currentTotalLikes + likeDiff);
-
-        transaction.update(userRef, { totalLikes: newTotalLikes });
-        console.log(`Successfully updated user ${uploaderId} totalLikes to ${newTotalLikes}`);
-      });
+      }
     } catch (error) {
       console.error("Error in onVideoLikeCountChange:", error);
+
+      // Add to reconciliation queue for retry
+      try {
+        const db = admin.firestore();
+        await db.collection("reconciliation_queue").add({
+          userId: afterData?.userId || afterData?.uploaderId,
+          videoId: event.params.videoId,
+          type: "like_count_change",
+          expectedLikeCount: afterData?.likesCount,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log("Added to reconciliation queue for retry");
+      } catch (e) {
+        console.error("Error adding to reconciliation queue:", e);
+      }
     }
-  },
+  }
 );
 
 // Utility function to recalculate user's total likes
@@ -738,5 +785,142 @@ export const onVideoCreated = onDocumentCreated("videos/{videoId}", async (event
     console.log("Successfully processed video creation and notifications");
   } catch (error) {
     console.error("Error in onVideoCreated:", error);
+  }
+});
+
+// Function to handle video deletion and update total likes
+export const onVideoDeleted = onDocumentDeleted("videos/{videoId}", async (event) => {
+  const videoData = event.data?.data();
+  if (!videoData) {
+    console.log("No video data found for deletion event");
+    return;
+  }
+
+  const db = admin.firestore();
+  const userId = videoData.userId || videoData.uploaderId;
+
+  if (!userId) {
+    console.error("No user ID found for video", event.params.videoId);
+    return;
+  }
+
+  try {
+    // Use transaction to ensure atomic updates
+    await db.runTransaction(async (transaction) => {
+      // Get current user data
+      const userRef = db.collection("users").doc(userId);
+      const userDoc = await transaction.get(userRef);
+
+      if (!userDoc.exists) {
+        console.error(`User document ${userId} not found`);
+        return;
+      }
+
+      // Calculate new total likes
+      const currentTotalLikes = userDoc.data()?.totalLikes || 0;
+      const videoLikes = videoData.likesCount || 0;
+      const newTotalLikes = Math.max(0, currentTotalLikes - videoLikes);
+
+      console.log(`Updating total likes for user ${userId}:`, {
+        currentTotalLikes,
+        videoLikes,
+        newTotalLikes,
+      });
+
+      // Update user's total likes
+      transaction.update(userRef, {
+        totalLikes: newTotalLikes,
+      });
+
+      // Delete all likes for this video from users' likedVideos collections
+      const likesSnapshot = await db
+        .collectionGroup("likedVideos")
+        .where("videoId", "==", event.params.videoId)
+        .get();
+
+      likesSnapshot.docs.forEach((doc) => {
+        transaction.delete(doc.ref);
+      });
+    });
+
+    console.log(`Successfully processed video deletion for ${event.params.videoId}`);
+  } catch (error) {
+    console.error("Error in onVideoDeleted:", error);
+
+    // Add to reconciliation queue for retry
+    try {
+      await db.collection("reconciliation_queue").add({
+        userId,
+        videoId: event.params.videoId,
+        type: "video_deletion",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log("Added to reconciliation queue for retry");
+    } catch (e) {
+      console.error("Error adding to reconciliation queue:", e);
+    }
+  }
+});
+
+// Function to force reconciliation for all users
+export const forceReconcileAllUsers = onCall(async () => {
+  try {
+    const db = admin.firestore();
+    const usersSnapshot = await db.collection("users").get();
+
+    console.log(`Starting reconciliation for ${usersSnapshot.docs.length} users`);
+    const results: Record<string, {
+      success: boolean;
+      oldCount?: number;
+      newCount?: number;
+      unchanged?: boolean;
+      error?: string;
+    }> = {};
+
+    for (const userDoc of usersSnapshot.docs) {
+      const userId = userDoc.id;
+      try {
+        // Query all active videos by this user
+        const videosSnapshot = await db
+          .collection("videos")
+          .where("userId", "==", userId)
+          .where("status", "==", "active")
+          .get();
+
+        // Calculate total likes
+        let totalLikes = 0;
+        videosSnapshot.docs.forEach((doc) => {
+          totalLikes += (doc.data().likesCount || 0);
+        });
+
+        // Get current user data
+        const currentTotalLikes = userDoc.data().totalLikes || 0;
+
+        // Update if different
+        if (currentTotalLikes !== totalLikes) {
+          await userDoc.ref.update({ totalLikes });
+          results[userId] = {
+            success: true,
+            oldCount: currentTotalLikes,
+            newCount: totalLikes,
+          };
+          console.log(`Updated user ${userId}: ${currentTotalLikes} -> ${totalLikes} likes`);
+        } else {
+          results[userId] = { success: true, unchanged: true };
+          console.log(`No update needed for user ${userId}: ${totalLikes} likes`);
+        }
+      } catch (error: unknown) {
+        console.error(`Error reconciling user ${userId}:`, error);
+        results[userId] = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    return { success: true, results };
+  } catch (error: unknown) {
+    console.error("Error in forceReconcileAllUsers:", error);
+    throw new Error("Failed to reconcile users");
   }
 });
