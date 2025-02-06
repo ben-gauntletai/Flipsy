@@ -30,6 +30,9 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     super.initState();
     Future.microtask(() => _loadVideos());
     _scrollController.addListener(_onScroll);
+
+    // Run migration if needed
+    _migrateVideosToTags();
   }
 
   @override
@@ -119,6 +122,21 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _migrateVideosToTags() async {
+    try {
+      final result = await _videoService.migrateVideosToTags();
+      print('Migration result: $result');
+
+      if (result['updatedCount'] > 0) {
+        // Refresh the videos list if any videos were updated
+        await _loadVideos(refresh: true);
+      }
+    } catch (e) {
+      print('Error migrating videos: $e');
+      // Don't show error to user since this is a background operation
+    }
   }
 
   @override

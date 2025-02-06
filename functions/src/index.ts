@@ -924,3 +924,129 @@ export const forceReconcileAllUsers = onCall(async () => {
     throw new Error("Failed to reconcile users");
   }
 });
+
+// Helper functions for bucket calculation
+function calculateBudgetBucket(budget: number): string {
+  if (budget <= 10) return "0-10";
+  if (budget <= 25) return "10-25";
+  if (budget <= 50) return "25-50";
+  if (budget <= 100) return "50-100";
+  return "100+";
+}
+
+function calculateCaloriesBucket(calories: number): string {
+  if (calories <= 300) return "0-300";
+  if (calories <= 600) return "300-600";
+  if (calories <= 1000) return "600-1000";
+  if (calories <= 1500) return "1000-1500";
+  return "1500+";
+}
+
+function calculatePrepTimeBucket(prepTimeMinutes: number): string {
+  if (prepTimeMinutes <= 15) return "0-15";
+  if (prepTimeMinutes <= 30) return "15-30";
+  if (prepTimeMinutes <= 60) return "30-60";
+  if (prepTimeMinutes <= 120) return "60-120";
+  return "120+";
+}
+
+function generateTags(
+  budget: number,
+  calories: number,
+  prepTimeMinutes: number,
+  spiciness: number,
+  hashtags: string[],
+): string[] {
+  const tags: string[] = [];
+
+  // Add bucket tags
+  tags.push(`budget_${calculateBudgetBucket(budget)}`);
+  tags.push(`calories_${calculateCaloriesBucket(calories)}`);
+  tags.push(`prep_${calculatePrepTimeBucket(prepTimeMinutes)}`);
+
+  // Add spiciness tag
+  if (spiciness > 0) {
+    tags.push(`spicy_${spiciness}`);
+  }
+
+  // Add hashtags
+  tags.push(...hashtags.map((tag) => `tag_${tag}`));
+
+  return tags;
+}
+
+// Migration function to add tags to existing videos
+export const migrateVideosToTags = onCall(async (request: CallableRequest) => {
+  // Check if the caller is authenticated
+  if (!request.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "Must be authenticated to migrate videos",
+    );
+  }
+
+  try {
+    const db = admin.firestore();
+    const videosRef = db.collection("videos");
+    const snapshot = await videosRef.get();
+    let updatedCount = 0;
+    let errorCount = 0;
+    let skippedCount = 0;
+
+    console.log(`Starting migration of ${snapshot.size} videos to tag-based system`);
+
+    for (const doc of snapshot.docs) {
+      try {
+        const data = doc.data();
+
+        // Skip if tags already exist and are up to date
+        const currentTags = data.tags || [];
+        const newTags = generateTags(
+          data.budget || 0,
+          data.calories || 0,
+          data.prepTimeMinutes || 0,
+          data.spiciness || 0,
+          data.hashtags || [],
+        );
+
+        // Check if tags are different (need updating)
+        const needsUpdate = JSON.stringify(currentTags.sort()) !==
+          JSON.stringify(newTags.sort());
+
+        if (!needsUpdate) {
+          console.log(`Skipping video ${doc.id} - tags are up to date`);
+          skippedCount++;
+          continue;
+        }
+
+        await doc.ref.update({
+          tags: newTags,
+        });
+
+        updatedCount++;
+        console.log(`Updated video ${doc.id} with tags:`, newTags);
+      } catch (error) {
+        console.error(`Error updating video ${doc.id}:`, error);
+        errorCount++;
+      }
+    }
+
+    console.log(
+      `Migration completed. Updated: ${updatedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`
+    );
+    return {
+      success: true,
+      updatedCount,
+      skippedCount,
+      errorCount,
+      message: `Successfully migrated ${updatedCount} videos. ` +
+        `Skipped ${skippedCount}. Encountered ${errorCount} errors.`,
+    };
+  } catch (error) {
+    console.error("Error in migration:", error);
+    throw new functions.https.HttpsError(
+      "internal",
+      "An error occurred during migration",
+    );
+  }
+});

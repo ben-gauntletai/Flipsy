@@ -45,7 +45,7 @@ dependencies:
   cloud_firestore: ^4.13.6
   firebase_storage: ^11.5.6
   firebase_messaging: ^14.7.9
-  cloud_functions: ^4.6.5
+  cloud_functions: ^4.6.0
 
   # Media
   image_picker: ^1.0.5

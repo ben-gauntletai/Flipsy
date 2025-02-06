@@ -13,6 +13,7 @@ Main collection for storing video metadata.
   thumbnailURL: string;  // URL to thumbnail image in Storage
   description: string;   // Optional video description
   hashtags: string[];    // Array of hashtags extracted from description (stored in lowercase)
+  tags: string[];        // Array of searchable tags (e.g., 'budget_0-10', 'calories_300-600', 'prep_15-30', 'spicy_3', 'tag_pasta')
   createdAt: timestamp;  // When the video was uploaded
   updatedAt: timestamp;  // When the video was last updated
   likesCount: number;    // Number of likes
@@ -146,12 +147,9 @@ Stores user notifications.
 
 1. videos collection:
    - status ASC, createdAt DESC
-   - status ASC, budget ASC, createdAt DESC
-   - status ASC, calories ASC, createdAt DESC
-   - status ASC, prepTimeMinutes ASC, createdAt DESC
-   - status ASC, spiciness ASC, createdAt DESC
+   - status ASC, tags ARRAY_CONTAINS, createdAt DESC
 
-Note: We use simple composite indexes with status and createdAt, plus one field for each numeric filter. Hashtag filtering is performed using the `array-contains-any` query on the `hashtags` field, which does not require additional indexes. We handle additional filtering in memory to avoid complex index requirements.
+Note: We now use a tag-based filtering system where all filterable attributes are stored in a tags array. This approach allows for efficient querying using array-contains-any operations, which only requires a single index. The tags array includes bucket information (e.g., 'budget_0-10'), spiciness levels ('spicy_3'), and hashtags ('tag_pasta'). This significantly reduces the number of required indexes while still maintaining good query performance.
 
 2. users/likedVideos collection:
    - likedAt DESC
@@ -225,6 +223,61 @@ service cloud.firestore {
 - Counters (likesCount, followersCount, etc.) use atomic operations
 - Soft deletion is implemented using the status field where applicable
 - AI enhancements are stored as nested objects for flexibility
+
+# Database Schema
+
+## Videos Collection
+- Collection: `videos`
+- Document ID: Auto-generated
+- Fields:
+  - `id`: String - Unique identifier for the video
+  - `userId`: String - Reference to the user who created the video
+  - `title`: String - Title of the video
+  - `description`: String - Description of the video
+  - `videoURL`: String - URL to the video file in storage
+  - `thumbnailURL`: String - URL to the thumbnail image in storage
+  - `createdAt`: Timestamp - When the video was created
+  - `updatedAt`: Timestamp - When the video was last updated
+  - `status`: String - Status of the video (active, deleted)
+  - `privacy`: String - Privacy setting (everyone, followers, private)
+  - `budget`: Number - Estimated cost of the recipe
+  - `calories`: Number - Estimated calories per serving
+  - `prepTimeMinutes`: Number - Estimated preparation time in minutes
+  - `spiciness`: Number - Spiciness level (0-5)
+  - `hashtags`: Array<String> - List of hashtags extracted from description
+  - `tags`: Array<String> - List of searchable tags for filtering
+    - Format: `[category]_[value]`
+    - Categories:
+      - `budget`: Budget range (e.g., 'budget_0-10', 'budget_10-20', etc.)
+      - `calories`: Calorie range (e.g., 'calories_0-300', 'calories_300-600', etc.)
+      - `preptime`: Prep time range (e.g., 'preptime_0-15', 'preptime_15-30', etc.)
+      - `spiciness`: Spiciness level (e.g., 'spiciness_0', 'spiciness_1', etc.)
+  - `likeCount`: Number - Number of likes
+  - `commentCount`: Number - Number of comments
+  - `bookmarkCount`: Number - Number of bookmarks
+  - `viewCount`: Number - Number of views
+  - `metadata`: Map
+    - `duration`: Number - Duration in seconds
+    - `width`: Number - Video width in pixels
+    - `height`: Number - Video height in pixels
+    - `size`: Number - File size in bytes
+
+### Indexes
+1. Compound index on `status` ASC, `createdAt` DESC
+2. Compound index on `userId` ASC, `status` ASC, `createdAt` DESC
+3. Compound index on `status` ASC, `tags` ARRAY, `createdAt` DESC
+4. Compound index on `hashtags` ARRAY, `status` ASC, `createdAt` DESC
+
+### Notes
+- The `tags` field is used for efficient filtering of videos based on various criteria
+- Each tag follows the format `category_value` where:
+  - Budget ranges: 0-10, 10-20, 20-30, 30-40, 40-50, 50-75, 75-100, 100+
+  - Calories ranges: 0-300, 300-600, 600-900, 900-1200, 1200-1500, 1500+
+  - Prep time ranges: 0-15, 15-30, 30-45, 45-60, 60-90, 90-120, 120+
+  - Spiciness levels: 0, 1, 2, 3, 4, 5
+- Tags are generated automatically when a video is created or updated
+- The `arrayContainsAny` query is used to filter videos based on tags
+- Maximum of 10 tags per category to maintain query performance
 
 
 

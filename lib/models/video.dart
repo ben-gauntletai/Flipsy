@@ -24,6 +24,58 @@ class Video {
   final int calories; // Calorie count of the meal
   final int prepTimeMinutes; // Preparation time in minutes
   final List<String> hashtags; // Added field for hashtags
+  final List<String> tags; // Added field for combined tags
+
+  // Static methods for bucket calculation
+  static String calculateBudgetBucket(double budget) {
+    if (budget <= 10) return '0-10';
+    if (budget <= 25) return '10-25';
+    if (budget <= 50) return '25-50';
+    if (budget <= 100) return '50-100';
+    return '100+';
+  }
+
+  static String calculateCaloriesBucket(int calories) {
+    if (calories <= 300) return '0-300';
+    if (calories <= 600) return '300-600';
+    if (calories <= 1000) return '600-1000';
+    if (calories <= 1500) return '1000-1500';
+    return '1500+';
+  }
+
+  static String calculatePrepTimeBucket(int prepTimeMinutes) {
+    if (prepTimeMinutes <= 15) return '0-15';
+    if (prepTimeMinutes <= 30) return '15-30';
+    if (prepTimeMinutes <= 60) return '30-60';
+    if (prepTimeMinutes <= 120) return '60-120';
+    return '120+';
+  }
+
+  // Helper method to generate tags
+  static List<String> generateTags({
+    required double budget,
+    required int calories,
+    required int prepTimeMinutes,
+    required int spiciness,
+    required List<String> hashtags,
+  }) {
+    final tags = <String>[];
+
+    // Add bucket tags
+    tags.add('budget_${calculateBudgetBucket(budget)}');
+    tags.add('calories_${calculateCaloriesBucket(calories)}');
+    tags.add('prep_${calculatePrepTimeBucket(prepTimeMinutes)}');
+
+    // Add spiciness tag
+    if (spiciness > 0) {
+      tags.add('spicy_$spiciness');
+    }
+
+    // Add hashtags
+    tags.addAll(hashtags.map((tag) => 'tag_$tag'));
+
+    return tags;
+  }
 
   Video({
     required this.id,
@@ -48,8 +100,16 @@ class Video {
     this.budget = 0.0,
     this.calories = 0,
     this.prepTimeMinutes = 0,
-    this.hashtags = const [], // Default to empty list
-  });
+    this.hashtags = const [],
+    List<String>? tags,
+  }) : tags = tags ??
+            generateTags(
+              budget: budget,
+              calories: calories,
+              prepTimeMinutes: prepTimeMinutes,
+              spiciness: spiciness,
+              hashtags: hashtags,
+            );
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -83,6 +143,16 @@ class Video {
             .toList() ??
         [];
 
+    // Convert tags from dynamic to List<String>
+    final List<String> tags = (data['tags'] as List<dynamic>?)
+            ?.map((tag) => tag.toString())
+            .toList() ??
+        [];
+
+    final double budget = (data['budget'] as num?)?.toDouble() ?? 0.0;
+    final int calories = (data['calories'] as num?)?.toInt() ?? 0;
+    final int prepTimeMinutes = (data['prepTimeMinutes'] as num?)?.toInt() ?? 0;
+
     return Video(
       id: doc.id,
       userId: data['userId'] as String? ?? '',
@@ -103,10 +173,11 @@ class Video {
       allowComments: data['allowComments'] as bool? ?? true,
       privacy: data['privacy'] as String? ?? 'everyone',
       spiciness: (data['spiciness'] as num?)?.toInt() ?? 0,
-      budget: (data['budget'] as num?)?.toDouble() ?? 0.0,
-      calories: (data['calories'] as num?)?.toInt() ?? 0,
-      prepTimeMinutes: (data['prepTimeMinutes'] as num?)?.toInt() ?? 0,
+      budget: budget,
+      calories: calories,
+      prepTimeMinutes: prepTimeMinutes,
       hashtags: hashtags,
+      tags: tags,
     );
   }
 
@@ -138,6 +209,7 @@ class Video {
       'calories': calories,
       'prepTimeMinutes': prepTimeMinutes,
       'hashtags': hashtags,
+      'tags': tags,
     };
   }
 
@@ -179,6 +251,7 @@ class Video {
     int? calories,
     int? prepTimeMinutes,
     List<String>? hashtags,
+    List<String>? tags,
   }) {
     return Video(
       id: id ?? this.id,
@@ -204,10 +277,21 @@ class Video {
       calories: calories ?? this.calories,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       hashtags: hashtags ?? this.hashtags,
+      tags: tags ?? this.tags,
     );
   }
 
   factory Video.fromMap(Map<String, dynamic> map) {
+    final List<String> hashtags = (map['hashtags'] as List<dynamic>?)
+            ?.map((tag) => tag.toString())
+            .toList() ??
+        [];
+
+    final List<String> tags = (map['tags'] as List<dynamic>?)
+            ?.map((tag) => tag.toString())
+            .toList() ??
+        [];
+
     return Video(
       id: map['id'] as String,
       userId: map['userId'] as String,
@@ -228,6 +312,8 @@ class Video {
       duration: (map['duration'] as num?)?.toDouble() ?? 0.0,
       width: (map['width'] as num?)?.toInt() ?? 0,
       height: (map['height'] as num?)?.toInt() ?? 0,
+      hashtags: hashtags,
+      tags: tags,
     );
   }
 }

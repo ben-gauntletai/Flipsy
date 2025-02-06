@@ -10,6 +10,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
 import '../models/video_filter.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class VideoService {
   static final VideoService _instance = VideoService._internal();
@@ -17,6 +18,7 @@ class VideoService {
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
   final Map<String, Timer> _reconciliationTimers = {};
   final Map<String, int> _localLikeCounts = {};
   static const int _maxQueryLimit = 50;
@@ -171,6 +173,16 @@ class VideoService {
       final List<String> hashtags = Video.extractHashtags(description);
       print('VideoService: Extracted hashtags: $hashtags');
 
+      // Calculate bucket values
+      final budgetBucket = Video.calculateBudgetBucket(budget);
+      final caloriesBucket = Video.calculateCaloriesBucket(calories);
+      final prepTimeBucket = Video.calculatePrepTimeBucket(prepTimeMinutes);
+
+      print('VideoService: Calculated buckets:');
+      print('  - Budget bucket: $budgetBucket');
+      print('  - Calories bucket: $caloriesBucket');
+      print('  - Prep time bucket: $prepTimeBucket');
+
       // Use current timestamp for immediate feed update
       final now = DateTime.now();
 
@@ -196,6 +208,9 @@ class VideoService {
         'calories': calories,
         'prepTimeMinutes': prepTimeMinutes,
         'hashtags': hashtags,
+        'budgetBucket': budgetBucket,
+        'caloriesBucket': caloriesBucket,
+        'prepTimeBucket': prepTimeBucket,
       });
 
       print('VideoService: Created document with ID: ${videoDoc.id}');
@@ -915,46 +930,13 @@ class VideoService {
       Query query =
           _firestore.collection('videos').where('status', isEqualTo: 'active');
 
-      // Apply budget range filter
-      if (filter.budgetRange != null) {
-        query = query
-            .where('budget', isGreaterThanOrEqualTo: filter.budgetRange!.start)
-            .where('budget', isLessThanOrEqualTo: filter.budgetRange!.end);
-      }
+      // Generate filter tags
+      final filterTags = filter.generateFilterTags();
+      print('VideoService: Using filter tags: $filterTags');
 
-      // Apply calories range filter
-      if (filter.caloriesRange != null) {
-        query = query
-            .where('calories',
-                isGreaterThanOrEqualTo: filter.caloriesRange!.start.toInt())
-            .where('calories',
-                isLessThanOrEqualTo: filter.caloriesRange!.end.toInt());
-      }
-
-      // Apply prep time range filter
-      if (filter.prepTimeRange != null) {
-        query = query
-            .where('prepTimeMinutes',
-                isGreaterThanOrEqualTo: filter.prepTimeRange!.start.toInt())
-            .where('prepTimeMinutes',
-                isLessThanOrEqualTo: filter.prepTimeRange!.end.toInt());
-      }
-
-      // Apply spiciness range filter
-      if (filter.minSpiciness != null || filter.maxSpiciness != null) {
-        query = query
-            .where('spiciness',
-                isGreaterThanOrEqualTo: filter.minSpiciness ?? 0)
-            .where('spiciness', isLessThanOrEqualTo: filter.maxSpiciness ?? 5);
-      }
-
-      // Apply hashtag filter
-      if (filter.hashtags.isNotEmpty) {
-        // Extract hashtags from description field
-        // Note: This is a simple implementation. For better hashtag support,
-        // consider creating a separate 'hashtags' array field in the video document
-        query = query.where('description',
-            arrayContainsAny: filter.hashtags.map((tag) => '#$tag').toList());
+      // Apply tag-based filtering if there are any tags
+      if (filterTags.isNotEmpty) {
+        query = query.where('tags', arrayContainsAny: filterTags);
       }
 
       // If we're paginating, add the startAfter
@@ -1027,54 +1009,22 @@ class VideoService {
       Query<Map<String, dynamic>> query =
           _firestore.collection('videos').where('status', isEqualTo: 'active');
 
-      // Store conditions at a wider scope for use in memory filtering
-      final conditions = filter?.toFirestoreQuery() ?? {};
+      if (filter != null && filter.hasFilters) {
+        // Generate filter tags
+        final filterTags = filter.generateFilterTags();
+        print('VideoService: Using filter tags: $filterTags');
 
-      // Apply only one numeric filter in Firestore, handle others in memory
-      if (filter != null) {
-        // Try to apply the most selective filter first
-        if (conditions.containsKey('calories')) {
-          final caloriesRange = conditions['calories'];
-          query = query
-              .where('calories', isGreaterThanOrEqualTo: caloriesRange['start'])
-              .where('calories', isLessThanOrEqualTo: caloriesRange['end']);
-        } else if (conditions.containsKey('budget')) {
-          final budgetRange = conditions['budget'];
-          query = query
-              .where('budget', isGreaterThanOrEqualTo: budgetRange['start'])
-              .where('budget', isLessThanOrEqualTo: budgetRange['end']);
-        } else if (conditions.containsKey('prepTimeMinutes')) {
-          final prepTimeRange = conditions['prepTimeMinutes'];
-          query = query
-              .where('prepTimeMinutes',
-                  isGreaterThanOrEqualTo: prepTimeRange['start'])
-              .where('prepTimeMinutes',
-                  isLessThanOrEqualTo: prepTimeRange['end']);
-        } else if (conditions.containsKey('spiciness')) {
-          final spicinessRange = conditions['spiciness'];
-          query = query
-              .where('spiciness', isGreaterThanOrEqualTo: spicinessRange['min'])
-              .where('spiciness', isLessThanOrEqualTo: spicinessRange['max']);
-        }
-
-        // Apply hashtag filter using arrayContainsAny
-        if (conditions.containsKey('hashtags')) {
-          final hashtags = conditions['hashtags'] as List<String>;
-          if (hashtags.isNotEmpty) {
-            if (hashtags.length > VideoFilter.maxHashtags) {
-              throw Exception(
-                  'Maximum of ${VideoFilter.maxHashtags} hashtags allowed');
-            }
-            query = query.where('hashtags', arrayContainsAny: hashtags);
-          }
+        // Apply tag-based filtering if there are any tags
+        if (filterTags.isNotEmpty) {
+          query = query.where('tags', arrayContainsAny: filterTags);
         }
       }
 
       // Always add createdAt ordering
       query = query.orderBy('createdAt', descending: true);
 
-      // Get more videos than needed to account for additional memory filtering
-      query = query.limit(_maxQueryLimit);
+      // Get videos with limit
+      query = query.limit(10);
 
       if (startAfter != null) {
         query = query.startAfterDocument(startAfter);
@@ -1084,51 +1034,31 @@ class VideoService {
       final querySnapshot = await query.get();
       print('VideoService: Got ${querySnapshot.docs.length} videos');
 
-      // Convert to Video objects
-      List<Video> videos =
-          querySnapshot.docs.map((doc) => Video.fromFirestore(doc)).toList();
-
-      // Apply remaining filters in memory
-      if (filter != null) {
-        videos = videos.where((video) {
-          // Check budget if not already filtered in Firestore
-          if (filter.budgetRange != VideoFilter.defaultBudgetRange &&
-              !conditions.containsKey('budget') &&
-              (video.budget < filter.budgetRange.start ||
-                  video.budget > filter.budgetRange.end)) {
-            return false;
+      // Convert to Video objects and filter out any that might be invalid
+      List<Video> videos = [];
+      for (final doc in querySnapshot.docs) {
+        try {
+          if (!doc.exists) {
+            print('VideoService: Document ${doc.id} does not exist, skipping');
+            continue;
           }
 
-          // Check calories if not already filtered in Firestore
-          if (filter.caloriesRange != VideoFilter.defaultCaloriesRange &&
-              !conditions.containsKey('calories') &&
-              (video.calories < filter.caloriesRange.start ||
-                  video.calories > filter.caloriesRange.end)) {
-            return false;
+          final data = doc.data();
+          if (data['status'] != 'active') {
+            print('VideoService: Video ${doc.id} is not active, skipping');
+            continue;
           }
 
-          // Check prep time if not already filtered in Firestore
-          if (filter.prepTimeRange != VideoFilter.defaultPrepTimeRange &&
-              !conditions.containsKey('prepTimeMinutes') &&
-              (video.prepTimeMinutes < filter.prepTimeRange.start ||
-                  video.prepTimeMinutes > filter.prepTimeRange.end)) {
-            return false;
-          }
-
-          // Check spiciness if not already filtered in Firestore
-          if ((filter.minSpiciness != 0 || filter.maxSpiciness != 5) &&
-              !conditions.containsKey('spiciness') &&
-              (video.spiciness < filter.minSpiciness ||
-                  video.spiciness > filter.maxSpiciness)) {
-            return false;
-          }
-
-          return true;
-        }).toList();
+          final video = Video.fromFirestore(doc);
+          videos.add(video);
+        } catch (e) {
+          print('VideoService: Error parsing video ${doc.id}: $e');
+          continue;
+        }
       }
 
-      // Take only the first 10 videos after all filtering
-      videos = videos.take(10).toList();
+      print(
+          'VideoService: Successfully processed ${videos.length} valid videos');
 
       // Cache the results
       _queryCache[cacheKey] = videos;
@@ -1348,6 +1278,38 @@ class VideoService {
     } catch (e) {
       print('VideoService: Error getting bookmarked videos: $e');
       return Stream.value([]);
+    }
+  }
+
+  // Call the migration function to update videos with bucket fields
+  Future<Map<String, dynamic>> migrateVideosToBuckets() async {
+    try {
+      print('VideoService: Starting video bucket migration');
+
+      final callable = _functions.httpsCallable('migrateVideosToBuckets');
+      final result = await callable.call();
+
+      print('VideoService: Migration completed: ${result.data}');
+      return result.data as Map<String, dynamic>;
+    } catch (e) {
+      print('VideoService: Error in migration: $e');
+      rethrow;
+    }
+  }
+
+  // Call the migration function to update videos with tags
+  Future<Map<String, dynamic>> migrateVideosToTags() async {
+    try {
+      print('VideoService: Starting video tag migration');
+
+      final callable = _functions.httpsCallable('migrateVideosToTags');
+      final result = await callable.call();
+
+      print('VideoService: Migration completed: ${result.data}');
+      return result.data as Map<String, dynamic>;
+    } catch (e) {
+      print('VideoService: Error in migration: $e');
+      rethrow;
     }
   }
 }
