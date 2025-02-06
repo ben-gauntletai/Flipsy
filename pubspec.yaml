@@ -51,7 +51,7 @@ dependencies:
   image_picker: ^1.0.5
   video_player: ^2.8.1
   chewie: ^1.7.4
-  path_provider: ^2.1.1
+  path_provider: ^2.1.2
   video_compress: ^3.1.2
 
   # State Management
@@ -73,6 +73,10 @@ dependencies:
   # Comment system
   flutter_mentions: ^2.0.1
   timeago: ^3.6.0
+
+  http: ^1.2.0
+
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:

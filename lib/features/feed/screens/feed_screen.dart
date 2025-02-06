@@ -16,6 +16,8 @@ import '../../../services/comment_service.dart';
 import '../../../features/auth/bloc/auth_bloc.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../features/navigation/screens/main_navigation_screen.dart';
+import '../../../services/video_cache_service.dart';
+import 'dart:io';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -40,7 +42,8 @@ class VideoControllerManager {
   final Map<int, String> _controllerUrls = {};
   final Map<int, Completer<void>> _initializationCompleters = {};
   final Map<int, bool> _initializationStarted = {};
-  final Set<int> _disposingControllers = {}; // Track controllers being disposed
+  final Set<int> _disposingControllers = {};
+  final VideoCacheService _cacheService = VideoCacheService();
   final int preloadForward;
   final int keepPrevious;
   int _currentIndex = -1;
@@ -48,7 +51,21 @@ class VideoControllerManager {
   VideoControllerManager({
     this.preloadForward = 2,
     this.keepPrevious = 1,
-  });
+  }) {
+    _initializeCache();
+  }
+
+  Future<void> _initializeCache() async {
+    try {
+      debugPrint('VideoControllerManager: Initializing cache service');
+      await _cacheService.ensureInitialized();
+      debugPrint(
+          'VideoControllerManager: Cache service initialized successfully');
+    } catch (e) {
+      debugPrint(
+          'VideoControllerManager: Error initializing cache service: $e');
+    }
+  }
 
   bool shouldBeLoaded(int index) {
     return index >= _currentIndex - keepPrevious &&
@@ -58,14 +75,18 @@ class VideoControllerManager {
   Future<void> updateCurrentIndex(int newIndex, List<Video> videos) async {
     print(
         'VideoControllerManager: Updating current index to $newIndex with ${videos.length} videos');
-    print(
-        'VideoControllerManager: Current controllers: ${_controllers.keys.toList()}');
-    print('VideoControllerManager: Current URLs: $_controllerUrls');
 
     if (newIndex < 0 || newIndex >= videos.length) {
       print('VideoControllerManager: Invalid index $newIndex');
       return;
     }
+
+    // Preload videos in the window
+    final startIdx = math.max(0, newIndex - keepPrevious);
+    final endIdx = math.min(videos.length - 1, newIndex + preloadForward);
+    final videosToPreload =
+        videos.sublist(startIdx, endIdx + 1).map((v) => v.videoURL).toList();
+    _cacheService.preloadVideos(videosToPreload);
 
     // Initialize current index first
     try {
@@ -81,12 +102,6 @@ class VideoControllerManager {
     _currentIndex = newIndex;
 
     // Initialize controllers in the window
-    final startIdx = math.max(0, newIndex - keepPrevious);
-    final endIdx = math.min(videos.length - 1, newIndex + preloadForward);
-
-    print(
-        'VideoControllerManager: Initializing controllers from $startIdx to $endIdx');
-
     for (int i = startIdx; i <= endIdx; i++) {
       if (i != newIndex && i >= 0 && i < videos.length) {
         try {
@@ -112,20 +127,15 @@ class VideoControllerManager {
         await _disposeController(index);
       }
     }
-
-    print(
-        'VideoControllerManager: After update - Controllers: ${_controllers.keys.toList()}');
-    print('VideoControllerManager: After update - URLs: $_controllerUrls');
   }
 
   Future<void> _initializeController(int index, Video video) async {
-    print(
+    debugPrint(
         'VideoControllerManager: Entering _initializeController for index $index');
-    print('VideoControllerManager: Video URL: ${video.videoURL}');
+    debugPrint('VideoControllerManager: Video URL: ${video.videoURL}');
 
-    // Don't initialize if the controller is being disposed
     if (_disposingControllers.contains(index)) {
-      print(
+      debugPrint(
           'VideoControllerManager: Controller $index is being disposed, skipping initialization');
       return;
     }
@@ -133,11 +143,11 @@ class VideoControllerManager {
     // Check if we need to reinitialize due to URL change
     if (_controllers.containsKey(index)) {
       if (_controllerUrls[index] != video.videoURL) {
-        print(
+        debugPrint(
             'VideoControllerManager: URL changed for index $index, reinitializing');
         await _disposeController(index);
       } else if (_controllers[index]!.value.isInitialized) {
-        print(
+        debugPrint(
             'VideoControllerManager: Controller exists with same URL and is initialized');
         return;
       }
@@ -146,16 +156,16 @@ class VideoControllerManager {
     // If initialization is in progress, wait for it
     if (_initializationStarted[index] == true &&
         _initializationCompleters.containsKey(index)) {
-      print(
+      debugPrint(
           'VideoControllerManager: Waiting for existing initialization for index $index');
       try {
         await _initializationCompleters[index]!.future;
-        // Check URL after waiting
         if (_controllerUrls[index] == video.videoURL) {
           return;
         }
       } catch (e) {
-        print('VideoControllerManager: Previous initialization failed: $e');
+        debugPrint(
+            'VideoControllerManager: Previous initialization failed: $e');
       }
     }
 
@@ -164,19 +174,30 @@ class VideoControllerManager {
 
     VideoPlayerController? controller;
     try {
-      controller = VideoPlayerController.network(
-        video.videoURL,
+      debugPrint(
+          'VideoControllerManager: Attempting to get cached video for ${video.videoURL}');
+      final cachedPath = await _cacheService.getCachedVideoPath(video.videoURL);
+
+      if (cachedPath == null) {
+        throw Exception('Failed to get cached video path');
+      }
+
+      debugPrint(
+          'VideoControllerManager: Using cached video from: $cachedPath');
+      controller = VideoPlayerController.file(
+        File(cachedPath),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
 
       _controllers[index] = controller;
       _controllerUrls[index] = video.videoURL;
 
+      debugPrint('VideoControllerManager: Initializing controller');
       await controller.initialize();
+      debugPrint('VideoControllerManager: Controller initialized successfully');
 
-      // Double check the controller hasn't been disposed during initialization
       if (_disposingControllers.contains(index)) {
-        print(
+        debugPrint(
             'VideoControllerManager: Controller was disposed during initialization');
         await controller.dispose();
         return;
@@ -185,9 +206,10 @@ class VideoControllerManager {
       if (!_initializationCompleters[index]!.isCompleted) {
         _initializationCompleters[index]?.complete();
       }
-    } catch (e) {
-      print(
+    } catch (e, stack) {
+      debugPrint(
           'VideoControllerManager: Error initializing controller for index $index: $e');
+      debugPrint('Stack trace: $stack');
 
       if (controller != null && !_disposingControllers.contains(index)) {
         await controller.dispose();
