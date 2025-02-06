@@ -178,16 +178,21 @@ class VideoControllerManager {
           'VideoControllerManager: Attempting to get cached video for ${video.videoURL}');
       final cachedPath = await _cacheService.getCachedVideoPath(video.videoURL);
 
-      if (cachedPath == null) {
-        throw Exception('Failed to get cached video path');
+      if (cachedPath != null) {
+        debugPrint(
+            'VideoControllerManager: Using cached video from: $cachedPath');
+        controller = VideoPlayerController.file(
+          File(cachedPath),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
+      } else {
+        debugPrint(
+            'VideoControllerManager: No cached version available, using network URL');
+        controller = VideoPlayerController.networkUrl(
+          Uri.parse(video.videoURL),
+          videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+        );
       }
-
-      debugPrint(
-          'VideoControllerManager: Using cached video from: $cachedPath');
-      controller = VideoPlayerController.file(
-        File(cachedPath),
-        videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-      );
 
       _controllers[index] = controller;
       _controllerUrls[index] = video.videoURL;

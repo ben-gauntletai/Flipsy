@@ -9,6 +9,10 @@
         android:label="flipsy"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Add logger configuration -->
+        <meta-data
+            android:name="android.app.debug.log.filter"
+            android:value="*Codec*:S *codec*:S *CODEC*:S CCodec:S c2.*:S C2.*:S MediaCodec:S ACodec:S CodecBase:S C2Store:S CCodecConfig:S CCodecBuffers:S CCodecBufferChannel:S DMCodecAdapterFactory:S Codec2:S Codec2Client:S MediaCodecList:S ReflectedParamUpdater:S ColorUtils:S GraphicsTracker:S ExoPlayer:S" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

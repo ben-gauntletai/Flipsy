@@ -187,6 +187,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video uploaded successfully!')),
         );
+        _resetForm(); // Reset all form fields and state
       }
     } catch (e) {
       print('Error in upload process: $e');
@@ -203,11 +204,23 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
           _isCompleting = false;
         });
       }
-      // Resume video playback if upload was canceled
-      if (_videoController?.value.isInitialized ?? false) {
-        _videoController?.play();
-      }
     }
+  }
+
+  void _resetForm() {
+    setState(() {
+      _videoFile = null;
+      _descriptionController.clear();
+      _budgetController.clear();
+      _caloriesController.clear();
+      _prepTimeController.clear();
+      _allowComments = true;
+      _privacy = 'everyone';
+      _spiciness = 0;
+      _error = null;
+      _videoController?.dispose();
+      _videoController = null;
+    });
   }
 
   void _cancelUpload() {

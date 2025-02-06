@@ -9,7 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
-import '../features/discover/models/video_filter.dart';
+import '../models/video_filter.dart';
 
 class VideoService {
   static final VideoService _instance = VideoService._internal();
@@ -19,6 +19,10 @@ class VideoService {
   final FirebaseStorage _storage = FirebaseStorage.instance;
   final Map<String, Timer> _reconciliationTimers = {};
   final Map<String, int> _localLikeCounts = {};
+  static const int _maxQueryLimit = 50;
+  final Map<String, List<Video>> _queryCache = {};
+  final Map<String, DateTime> _queryCacheTimestamps = {};
+  static const Duration _cacheDuration = Duration(minutes: 5);
 
   VideoService._internal();
 
@@ -101,47 +105,31 @@ class VideoService {
   Future<String> uploadVideo({
     required File videoFile,
     required String userId,
-    String? description,
     Function(double)? onProgress,
+    String? description,
     bool allowComments = true,
     String privacy = 'everyone',
     int spiciness = 0,
   }) async {
-    print('VideoService: Starting video upload');
     try {
-      // Get video metadata
-      final metadata = await getVideoMetadata(videoFile);
-      final duration = metadata['duration'] as double;
-      final width = metadata['width'] as int;
-      final height = metadata['height'] as int;
+      print('VideoService: Starting video upload');
 
-      // Upload video file
-      final String videoURL = await _uploadVideoFile(
+      // Upload video file directly without compression
+      final videoURL = await _uploadVideoFile(
         videoFile,
         userId,
         onProgress: onProgress,
       );
+      print('VideoService: Video uploaded successfully: $videoURL');
 
-      print('VideoService: Video uploaded successfully');
-      print('VideoService: Creating video document');
+      // Generate and upload thumbnail
+      print('VideoService: Generating and uploading thumbnail');
+      final thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
+      print('VideoService: Thumbnail uploaded successfully: $thumbnailURL');
 
-      // Create video document
-      final video = await createVideoDocument(
-        userId: userId,
-        videoURL: videoURL,
-        description: description,
-        duration: duration,
-        width: width,
-        height: height,
-        videoFile: videoFile,
-        allowComments: allowComments,
-        privacy: privacy,
-        spiciness: spiciness,
-      );
-
-      return video.id;
+      return videoURL;
     } catch (e) {
-      print('VideoService: Error uploading video: $e');
+      print('VideoService: Error in upload process: $e');
       rethrow;
     }
   }
@@ -149,10 +137,10 @@ class VideoService {
   Future<Video> createVideoDocument({
     required String userId,
     required String videoURL,
-    String? description,
     required double duration,
     required int width,
     required int height,
+    String? description,
     File? videoFile,
     bool allowComments = true,
     String privacy = 'everyone',
@@ -162,29 +150,41 @@ class VideoService {
     int prepTimeMinutes = 0,
   }) async {
     try {
-      print('VideoService: Generating thumbnail');
-      String thumbnailURL;
+      print('VideoService: Creating video document');
+      print('VideoService: Video URL: $videoURL');
+      print('VideoService: User ID: $userId');
+      print('VideoService: Dimensions: ${width}x$height');
+      print('VideoService: Duration: $duration seconds');
+      print('VideoService: Privacy: $privacy');
+      print('VideoService: Description: $description');
+      print('VideoService: Video file exists: ${videoFile != null}');
+
+      // Generate and upload thumbnail if videoFile is provided
+      String thumbnailURL = '';
       if (videoFile != null) {
+        print('VideoService: Generating and uploading thumbnail');
         thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
-      } else {
-        // Fallback to a default thumbnail if no video file is provided
-        thumbnailURL =
-            'https://via.placeholder.com/320x480.png?text=Video+Thumbnail';
+        print('VideoService: Thumbnail uploaded successfully: $thumbnailURL');
       }
 
-      print('VideoService: Thumbnail URL: $thumbnailURL');
+      // Extract hashtags from description
+      final List<String> hashtags = Video.extractHashtags(description);
+      print('VideoService: Extracted hashtags: $hashtags');
 
-      // Use server timestamp for both createdAt and updatedAt
-      final videoData = {
+      // Use current timestamp for immediate feed update
+      final now = DateTime.now();
+
+      final videoDoc = await _firestore.collection('videos').add({
         'userId': userId,
         'videoURL': videoURL,
         'thumbnailURL': thumbnailURL,
         'description': description,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
+        'createdAt': now, // Use current timestamp first
+        'updatedAt': now,
         'likesCount': 0,
         'commentsCount': 0,
         'shareCount': 0,
+        'bookmarkCount': 0,
         'duration': duration,
         'width': width,
         'height': height,
@@ -195,47 +195,40 @@ class VideoService {
         'budget': budget,
         'calories': calories,
         'prepTimeMinutes': prepTimeMinutes,
-      };
+        'hashtags': hashtags,
+      });
 
-      print('VideoService: Creating document with data: $videoData');
+      print('VideoService: Created document with ID: ${videoDoc.id}');
 
-      final DocumentReference docRef =
-          await _firestore.collection('videos').add(videoData);
-      print('VideoService: Created document with ID: ${docRef.id}');
+      // Update with server timestamp after creation
+      await videoDoc.update({
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
-      // Wait for the server timestamp to be set by listening to the document
-      DocumentSnapshot doc;
-      int attempts = 0;
-      const maxAttempts = 5;
-      const delay = Duration(milliseconds: 200);
-
-      do {
-        await Future.delayed(delay);
-        doc = await docRef.get();
-        attempts++;
-
-        final data = doc.data() as Map<String, dynamic>?;
-        if (data != null) {
-          print(
-              'VideoService: Attempt $attempts - createdAt: ${data['createdAt']}');
-        }
-      } while (attempts < maxAttempts &&
-          (doc.data() as Map<String, dynamic>?)?.containsKey('createdAt') !=
-              true);
-
-      if (attempts >= maxAttempts) {
-        print(
-            'VideoService: Warning - Server timestamp not resolved after $maxAttempts attempts');
+      // Get the document immediately after creation
+      final doc = await videoDoc.get();
+      if (!doc.exists) {
+        throw Exception('Video document was not created properly');
       }
 
       final video = Video.fromFirestore(doc);
-      print(
-          'VideoService: Created video object with createdAt: ${video.createdAt}');
+      print('VideoService: Created video object:');
+      print('  - ID: ${video.id}');
+      print('  - URL: ${video.videoURL}');
+      print('  - Thumbnail: ${video.thumbnailURL}');
+      print('  - Status: ${video.status}');
+      print('  - Privacy: ${video.privacy}');
+
+      // Clear query cache to ensure new video appears in feed
+      _queryCache.clear();
+      _queryCacheTimestamps.clear();
+      print('VideoService: Cleared query cache for immediate feed update');
 
       return video;
     } catch (e) {
       print('VideoService: Error creating video document: $e');
-      throw Exception('Failed to create video document: $e');
+      rethrow;
     }
   }
 
@@ -998,124 +991,150 @@ class VideoService {
     }
   }
 
+  void _clearExpiredCache() {
+    final now = DateTime.now();
+    final expiredKeys = _queryCacheTimestamps.entries
+        .where((entry) => now.difference(entry.value) > _cacheDuration)
+        .map((entry) => entry.key)
+        .toList();
+
+    for (final key in expiredKeys) {
+      _queryCache.remove(key);
+      _queryCacheTimestamps.remove(key);
+    }
+  }
+
   Future<List<Video>> getFilteredVideoFeedBatch({
     VideoFilter? filter,
     DocumentSnapshot? startAfter,
   }) async {
-    print('VideoService: ===== Starting filtered video feed batch =====');
-    print(
-        'VideoService: Current filter state: ${filter?.toFirestoreQuery() ?? {}}');
+    print('VideoService: Getting filtered video feed batch');
+    print('VideoService: Current filter state: ${filter?.toFirestoreQuery()}');
 
     try {
-      // Start with base query for active videos
-      Query query = _firestore
-          .collection('videos')
-          .where('status', isEqualTo: 'active')
-          .orderBy('createdAt', descending: true);
+      // Clear expired cache entries
+      _clearExpiredCache();
 
-      // Apply numeric filters in Firestore query
+      // Generate cache key
+      final cacheKey = '${filter?.toFirestoreQuery()}_${startAfter?.id}';
+
+      // Check cache first
+      if (_queryCache.containsKey(cacheKey)) {
+        print('VideoService: Returning cached results for key: $cacheKey');
+        return _queryCache[cacheKey]!;
+      }
+
+      Query<Map<String, dynamic>> query =
+          _firestore.collection('videos').where('status', isEqualTo: 'active');
+
+      // Store conditions at a wider scope for use in memory filtering
+      final conditions = filter?.toFirestoreQuery() ?? {};
+
+      // Apply only one numeric filter in Firestore, handle others in memory
       if (filter != null) {
-        final conditions = filter.toFirestoreQuery();
-
-        // Budget filter
-        if (conditions.containsKey('budget')) {
-          query = query
-              .where('budget',
-                  isGreaterThanOrEqualTo: conditions['budget']['start'])
-              .where('budget',
-                  isLessThanOrEqualTo: conditions['budget']['end']);
-        }
-
-        // Calories filter
+        // Try to apply the most selective filter first
         if (conditions.containsKey('calories')) {
+          final caloriesRange = conditions['calories'];
           query = query
-              .where('calories',
-                  isGreaterThanOrEqualTo: conditions['calories']['start'])
-              .where('calories',
-                  isLessThanOrEqualTo: conditions['calories']['end']);
-        }
-
-        // Prep time filter
-        if (conditions.containsKey('prepTimeMinutes')) {
+              .where('calories', isGreaterThanOrEqualTo: caloriesRange['start'])
+              .where('calories', isLessThanOrEqualTo: caloriesRange['end']);
+        } else if (conditions.containsKey('budget')) {
+          final budgetRange = conditions['budget'];
+          query = query
+              .where('budget', isGreaterThanOrEqualTo: budgetRange['start'])
+              .where('budget', isLessThanOrEqualTo: budgetRange['end']);
+        } else if (conditions.containsKey('prepTimeMinutes')) {
+          final prepTimeRange = conditions['prepTimeMinutes'];
           query = query
               .where('prepTimeMinutes',
-                  isGreaterThanOrEqualTo: conditions['prepTimeMinutes']
-                      ['start'])
+                  isGreaterThanOrEqualTo: prepTimeRange['start'])
               .where('prepTimeMinutes',
-                  isLessThanOrEqualTo: conditions['prepTimeMinutes']['end']);
+                  isLessThanOrEqualTo: prepTimeRange['end']);
+        } else if (conditions.containsKey('spiciness')) {
+          final spicinessRange = conditions['spiciness'];
+          query = query
+              .where('spiciness', isGreaterThanOrEqualTo: spicinessRange['min'])
+              .where('spiciness', isLessThanOrEqualTo: spicinessRange['max']);
         }
 
-        // Spiciness filter
-        if (conditions.containsKey('spiciness')) {
-          query = query
-              .where('spiciness',
-                  isGreaterThanOrEqualTo: conditions['spiciness']['min'])
-              .where('spiciness',
-                  isLessThanOrEqualTo: conditions['spiciness']['max']);
+        // Apply hashtag filter using arrayContainsAny
+        if (conditions.containsKey('hashtags')) {
+          final hashtags = conditions['hashtags'] as List<String>;
+          if (hashtags.isNotEmpty) {
+            if (hashtags.length > VideoFilter.maxHashtags) {
+              throw Exception(
+                  'Maximum of ${VideoFilter.maxHashtags} hashtags allowed');
+            }
+            query = query.where('hashtags', arrayContainsAny: hashtags);
+          }
         }
       }
 
-      print('VideoService: Base query created for active videos');
+      // Always add createdAt ordering
+      query = query.orderBy('createdAt', descending: true);
 
-      // Apply pagination if needed
+      // Get more videos than needed to account for additional memory filtering
+      query = query.limit(_maxQueryLimit);
+
       if (startAfter != null) {
         query = query.startAfterDocument(startAfter);
       }
 
-      // Limit the batch size
-      query = query.limit(10);
-
-      print('VideoService: Executing query...');
+      print('VideoService: Executing query');
       final querySnapshot = await query.get();
-      print(
-          'VideoService: Got ${querySnapshot.docs.length} documents from Firestore');
+      print('VideoService: Got ${querySnapshot.docs.length} videos');
 
-      final List<Video> videos = [];
+      // Convert to Video objects
+      List<Video> videos =
+          querySnapshot.docs.map((doc) => Video.fromFirestore(doc)).toList();
 
-      // Process each video
-      for (final doc in querySnapshot.docs) {
-        final video = Video.fromFirestore(doc);
-        bool passesFilters = true;
-
-        // Apply hashtag filtering in memory
-        if (filter != null && filter.hashtags.isNotEmpty) {
-          final description = video.description?.toLowerCase() ?? '';
-          print('VideoService: Checking hashtags in description: $description');
-
-          // Extract hashtags from description
-          final RegExp hashtagRegex = RegExp(r'#(\w+)');
-          final Set<String> videoHashtags = hashtagRegex
-              .allMatches(description)
-              .map((match) => match.group(1)!.toLowerCase())
-              .toSet();
-
-          print('VideoService: Found hashtags in video: $videoHashtags');
-          print('VideoService: Filtering for hashtags: ${filter.hashtags}');
-
-          // Check if any of the filter hashtags match
-          bool hasMatchingHashtag = false;
-          for (final filterTag in filter.hashtags) {
-            if (videoHashtags.contains(filterTag.toLowerCase())) {
-              print('VideoService: Found matching hashtag: $filterTag');
-              hasMatchingHashtag = true;
-              break;
-            }
+      // Apply remaining filters in memory
+      if (filter != null) {
+        videos = videos.where((video) {
+          // Check budget if not already filtered in Firestore
+          if (filter.budgetRange != VideoFilter.defaultBudgetRange &&
+              !conditions.containsKey('budget') &&
+              (video.budget < filter.budgetRange.start ||
+                  video.budget > filter.budgetRange.end)) {
+            return false;
           }
 
-          passesFilters = hasMatchingHashtag;
-        }
+          // Check calories if not already filtered in Firestore
+          if (filter.caloriesRange != VideoFilter.defaultCaloriesRange &&
+              !conditions.containsKey('calories') &&
+              (video.calories < filter.caloriesRange.start ||
+                  video.calories > filter.caloriesRange.end)) {
+            return false;
+          }
 
-        if (passesFilters) {
-          print('VideoService: Video ${video.id} passed all filters');
-          videos.add(video);
-        } else {
-          print('VideoService: Video ${video.id} did not pass hashtag filter');
-        }
+          // Check prep time if not already filtered in Firestore
+          if (filter.prepTimeRange != VideoFilter.defaultPrepTimeRange &&
+              !conditions.containsKey('prepTimeMinutes') &&
+              (video.prepTimeMinutes < filter.prepTimeRange.start ||
+                  video.prepTimeMinutes > filter.prepTimeRange.end)) {
+            return false;
+          }
+
+          // Check spiciness if not already filtered in Firestore
+          if ((filter.minSpiciness != 0 || filter.maxSpiciness != 5) &&
+              !conditions.containsKey('spiciness') &&
+              (video.spiciness < filter.minSpiciness ||
+                  video.spiciness > filter.maxSpiciness)) {
+            return false;
+          }
+
+          return true;
+        }).toList();
       }
 
-      print('VideoService: ${videos.length} videos passed all filters');
-      print('VideoService: Returning ${videos.length} videos');
-      print('VideoService: ===== End of filtered video feed batch =====');
+      // Take only the first 10 videos after all filtering
+      videos = videos.take(10).toList();
+
+      // Cache the results
+      _queryCache[cacheKey] = videos;
+      _queryCacheTimestamps[cacheKey] = DateTime.now();
+
+      print('VideoService: Returning ${videos.length} videos after filtering');
       return videos;
     } catch (e) {
       print('VideoService: Error getting filtered videos: $e');

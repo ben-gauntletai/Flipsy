@@ -12,6 +12,7 @@ Main collection for storing video metadata.
   videoURL: string;      // URL to video file in Storage
   thumbnailURL: string;  // URL to thumbnail image in Storage
   description: string;   // Optional video description
+  hashtags: string[];    // Array of hashtags extracted from description (stored in lowercase)
   createdAt: timestamp;  // When the video was uploaded
   updatedAt: timestamp;  // When the video was last updated
   likesCount: number;    // Number of likes
@@ -144,13 +145,13 @@ Stores user notifications.
 ### Required Indexes
 
 1. videos collection:
-   - status, createdAt DESC
-   - userId, createdAt DESC
-   - status, likesCount DESC
-   - status, budget, createdAt DESC
-   - status, calories, createdAt DESC
-   - status, prepTimeMinutes, createdAt DESC
-   - status, spiciness, createdAt DESC
+   - status ASC, createdAt DESC
+   - status ASC, budget ASC, createdAt DESC
+   - status ASC, calories ASC, createdAt DESC
+   - status ASC, prepTimeMinutes ASC, createdAt DESC
+   - status ASC, spiciness ASC, createdAt DESC
+
+Note: We use simple composite indexes with status and createdAt, plus one field for each numeric filter. Hashtag filtering is performed using the `array-contains-any` query on the `hashtags` field, which does not require additional indexes. We handle additional filtering in memory to avoid complex index requirements.
 
 2. users/likedVideos collection:
    - likedAt DESC

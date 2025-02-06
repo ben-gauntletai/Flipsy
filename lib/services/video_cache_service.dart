@@ -3,8 +3,12 @@ import 'package:path_provider/path_provider.dart' as path_provider;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:video_compress/video_compress.dart';
+import 'package:video_player/video_player.dart';
+import 'package:path/path.dart' as p;
 
 class VideoCacheService {
   static final VideoCacheService _instance = VideoCacheService._internal();
@@ -12,6 +16,14 @@ class VideoCacheService {
 
   bool _isInitialized = false;
   final Completer<void> _initCompleter = Completer<void>();
+  static const int _maxConcurrentDownloads = 3;
+  final Set<String> _activeDownloads = {};
+  final Queue<String> _downloadQueue = Queue<String>();
+  final Map<String, String> _cachedVideos = {};
+  final Map<String, DateTime> _lastAccessed = {};
+  final Map<String, int> _downloadedBytes = {};
+  final Map<String, int> _totalBytes = {};
+  static const int _maxCacheSize = 5 * 1024 * 1024 * 1024;
 
   VideoCacheService._internal() {
     _initialize();
@@ -26,6 +38,9 @@ class VideoCacheService {
       _isInitialized = true;
       _initCompleter.complete();
       debugPrint('VideoCacheService: Initialization completed successfully');
+
+      // Start periodic cache maintenance
+      Timer.periodic(const Duration(minutes: 30), (_) => _maintainCacheSize());
     } catch (e, stack) {
       debugPrint('VideoCacheService: Error during initialization: $e');
       debugPrint('Stack trace: $stack');
@@ -39,15 +54,6 @@ class VideoCacheService {
     }
   }
 
-  // Increased maximum cache size to 5GB
-  static const int _maxCacheSize = 5 * 1024 * 1024 * 1024;
-
-  final Map<String, String> _cachedVideos = {};
-  final Map<String, DateTime> _lastAccessed = {};
-  final Map<String, int> _downloadedBytes = {};
-  final Map<String, int> _totalBytes = {};
-  final Map<String, Completer<String>> _downloadCompleters = {};
-
   // Generate a consistent filename for a URL
   String _getFileNameForUrl(String url) {
     final bytes = utf8.encode(url);
@@ -57,28 +63,33 @@ class VideoCacheService {
   }
 
   Future<String> getCacheDirectory() async {
+    String cachePath;
     if (Platform.isAndroid) {
       // On Android, use external storage for persistence
       final List<Directory>? extDirs =
           await path_provider.getExternalStorageDirectories();
       if (extDirs != null && extDirs.isNotEmpty) {
-        final Directory cacheDir =
-            Directory('${extDirs.first.path}/flipsy_video_cache');
-        if (!await cacheDir.exists()) {
-          await cacheDir.create(recursive: true);
-        }
-        return cacheDir.path;
+        cachePath = '${extDirs.first.path}/flipsy_video_cache';
+      } else {
+        // Fallback to application documents directory
+        final Directory appDir =
+            await path_provider.getApplicationDocumentsDirectory();
+        cachePath = '${appDir.path}/video_cache';
       }
+    } else {
+      // For other platforms, use application documents directory
+      final Directory appDir =
+          await path_provider.getApplicationDocumentsDirectory();
+      cachePath = '${appDir.path}/video_cache';
     }
 
-    // Fallback to application documents directory
-    final Directory appDir =
-        await path_provider.getApplicationDocumentsDirectory();
-    final Directory cacheDir = Directory('${appDir.path}/video_cache');
+    debugPrint('VideoCacheService: Using cache directory: $cachePath');
+    final cacheDir = Directory(cachePath);
     if (!await cacheDir.exists()) {
+      debugPrint('VideoCacheService: Creating cache directory');
       await cacheDir.create(recursive: true);
     }
-    return cacheDir.path;
+    return cachePath;
   }
 
   // Load existing cached videos on initialization
@@ -86,141 +97,181 @@ class VideoCacheService {
     try {
       final cacheDir = await getCacheDirectory();
       final mappingFile = File('$cacheDir/url_mapping.json');
+      debugPrint('VideoCacheService: Loading cache from: ${mappingFile.path}');
 
       if (await mappingFile.exists()) {
         final String content = await mappingFile.readAsString();
+        debugPrint('VideoCacheService: Read mapping file content: $content');
         final Map<String, dynamic> mapping = jsonDecode(content);
 
         // Verify each cached file exists
         for (var entry in mapping.entries) {
           final data = entry.value as Map<String, dynamic>;
           final String filePath = data['path'] as String;
+          debugPrint('VideoCacheService: Checking cached file: $filePath');
 
-          if (await File(filePath).exists()) {
+          final file = File(filePath);
+          if (await file.exists()) {
+            final fileSize = await file.length();
+            debugPrint(
+                'VideoCacheService: Found cached file: $filePath (${fileSize ~/ 1024}KB)');
             _cachedVideos[entry.key] = filePath;
             _lastAccessed[entry.key] = DateTime.parse(data['lastAccessed']);
+          } else {
+            debugPrint('VideoCacheService: Cached file not found: $filePath');
           }
         }
-        debugPrint('Loaded ${_cachedVideos.length} videos from existing cache');
+        debugPrint(
+            'VideoCacheService: Loaded ${_cachedVideos.length} videos from existing cache');
+      } else {
+        debugPrint('VideoCacheService: No existing cache mapping file found');
       }
-    } catch (e) {
-      debugPrint('Error loading existing cache: $e');
+    } catch (e, stack) {
+      debugPrint('VideoCacheService: Error loading existing cache: $e');
+      debugPrint('Stack trace: $stack');
     }
   }
 
   Future<String?> getCachedVideoPath(String videoUrl) async {
     try {
-      await ensureInitialized();
-      debugPrint('VideoCacheService: Getting cached path for: $videoUrl');
+      print('\n=== VideoCacheService: getCachedVideoPath ===');
+      print('Input URL: $videoUrl');
 
+      await ensureInitialized();
+      print('Cache Status:');
+      print('- Cached videos: ${_cachedVideos.length}');
+      print('- Active downloads: ${_activeDownloads.length}');
+      print('- Download queue: ${_downloadQueue.length}');
+
+      // If video is already cached, return the cached path
       if (_cachedVideos.containsKey(videoUrl)) {
         _lastAccessed[videoUrl] = DateTime.now();
         final cachePath = _cachedVideos[videoUrl]!;
+        print('Found cache entry: $cachePath');
 
-        if (await File(cachePath).exists()) {
-          debugPrint('VideoCacheService: Cache hit: $videoUrl -> $cachePath');
+        final file = File(cachePath);
+        if (await file.exists()) {
+          final fileSize = await file.length();
+          print('Cache hit details:');
+          print('- File exists: true');
+          print('- File size: ${fileSize ~/ 1024}KB');
+          print('- Last accessed: ${_lastAccessed[videoUrl]}');
+          await _persistUrlMapping();
           return cachePath;
         } else {
-          debugPrint(
-              'VideoCacheService: Cached file not found, removing from cache: $cachePath');
+          print('Cache miss reason: File does not exist');
+          print('Removing invalid cache entry');
           _cachedVideos.remove(videoUrl);
           _lastAccessed.remove(videoUrl);
+          await _persistUrlMapping();
         }
+      } else {
+        print('Cache miss reason: URL not in cache map');
       }
 
-      if (_downloadCompleters.containsKey(videoUrl)) {
-        debugPrint(
-            'VideoCacheService: Waiting for ongoing download: $videoUrl');
-        return _downloadCompleters[videoUrl]!.future;
+      // Start caching in the background if not already in progress
+      if (!_activeDownloads.contains(videoUrl)) {
+        print('Starting background caching');
+        unawaited(_startBackgroundCaching(videoUrl));
+      } else {
+        print('Background caching already in progress');
       }
 
-      debugPrint('VideoCacheService: Starting new download for: $videoUrl');
-      final completer = Completer<String>();
-      _downloadCompleters[videoUrl] = completer;
-
-      _downloadAndCacheVideo(videoUrl).then((cachePath) {
-        if (cachePath != null) {
-          debugPrint(
-              'VideoCacheService: Download completed successfully: $cachePath');
-          completer.complete(cachePath);
-        } else {
-          debugPrint('VideoCacheService: Download failed');
-          completer.completeError('Failed to download video');
-        }
-        _downloadCompleters.remove(videoUrl);
-      }).catchError((error, stack) {
-        debugPrint('VideoCacheService: Download error: $error');
-        debugPrint('Stack trace: $stack');
-        completer.completeError(error);
-        _downloadCompleters.remove(videoUrl);
-      });
-
-      return completer.future;
+      print('Returning null while caching');
+      return null;
     } catch (e, stack) {
-      debugPrint('VideoCacheService: Error in getCachedVideoPath: $e');
-      debugPrint('Stack trace: $stack');
-      rethrow;
+      print('ERROR in getCachedVideoPath:');
+      print('- Error: $e');
+      print('- Stack: $stack');
+      return null;
+    } finally {
+      print('=== End getCachedVideoPath ===\n');
     }
   }
 
-  Future<String?> _downloadAndCacheVideo(String url) async {
-    debugPrint('VideoCacheService: Starting download: $url');
-    final fileName = _getFileNameForUrl(url);
-    final cacheDir = await getCacheDirectory();
-    final filePath = '$cacheDir/$fileName';
-    final file = File(filePath);
+  Future<void> _startBackgroundCaching(String videoUrl) async {
+    print('\n=== VideoCacheService: _startBackgroundCaching ===');
+    print('URL to cache: $videoUrl');
+
+    if (_activeDownloads.contains(videoUrl)) {
+      print('Download already in progress, skipping');
+      return;
+    }
 
     try {
-      final client = http.Client();
-      final request = http.Request('GET', Uri.parse(url));
-      final response = await client.send(request);
+      _activeDownloads.add(videoUrl);
+      print('Added to active downloads (total: ${_activeDownloads.length})');
 
-      _totalBytes[url] = response.contentLength ?? 0;
-      _downloadedBytes[url] = 0;
+      final cacheDir = await getCacheDirectory();
+      final fileName = _getFileNameForUrl(videoUrl);
+      final filePath = p.join(cacheDir, fileName);
+      print('Cache details:');
+      print('- Directory: $cacheDir');
+      print('- Filename: $fileName');
+      print('- Full path: $filePath');
 
-      final totalSize = (_totalBytes[url] ?? 0) ~/ 1024;
-      debugPrint('VideoCacheService: Total size to download: ${totalSize}KB');
-
-      final sink = file.openWrite();
-      await response.stream.listen(
-        (chunk) {
-          sink.add(chunk);
-          _downloadedBytes[url] = (_downloadedBytes[url] ?? 0) + chunk.length;
-          final downloaded = (_downloadedBytes[url] ?? 0);
-          final total = (_totalBytes[url] ?? 1);
-          final progress = (downloaded / total) * 100;
-          final downloadedKB = downloaded ~/ 1024;
-          final totalKB = total ~/ 1024;
-          debugPrint(
-              'VideoCacheService: Download progress: ${progress.toStringAsFixed(1)}% - ${downloadedKB}KB/${totalKB}KB');
-        },
-        onDone: () async {
-          await sink.flush();
-          await sink.close();
-        },
-        onError: (error) {
-          debugPrint('VideoCacheService: Download error: $error');
-          sink.close();
-          file.deleteSync();
-          throw error;
-        },
-        cancelOnError: true,
-      ).asFuture();
-
-      _cachedVideos[url] = filePath;
-      _lastAccessed[url] = DateTime.now();
-
-      debugPrint('VideoCacheService: Download completed: $url');
-      return filePath;
-    } catch (e) {
-      debugPrint('VideoCacheService: Download failed: $e');
+      final file = File(filePath);
       if (await file.exists()) {
-        await file.delete();
+        print('Existing file found, verifying...');
+        try {
+          final controller = VideoPlayerController.file(file);
+          print('Created controller');
+          await controller.initialize();
+          print('Controller initialized');
+          await controller.dispose();
+          print('Existing file is valid');
+
+          _cachedVideos[videoUrl] = filePath;
+          _lastAccessed[videoUrl] = DateTime.now();
+          await _persistUrlMapping();
+          print('Cache entry updated');
+          return;
+        } catch (e) {
+          print('Existing file verification failed: $e');
+          print('Will re-download file');
+          await file.delete();
+        }
       }
-      return null;
+
+      print('Downloading video...');
+      final response = await http.get(Uri.parse(videoUrl));
+      print('Download response: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        print('Writing ${response.bodyBytes.length} bytes to file');
+        await file.writeAsBytes(response.bodyBytes);
+        print('File written successfully');
+
+        print('Verifying downloaded file');
+        try {
+          final controller = VideoPlayerController.file(file);
+          print('Created verification controller');
+          await controller.initialize();
+          print('Verification controller initialized');
+          await controller.dispose();
+          print('File verification successful');
+
+          _cachedVideos[videoUrl] = filePath;
+          _lastAccessed[videoUrl] = DateTime.now();
+          await _persistUrlMapping();
+          print('Cache entry added');
+        } catch (e) {
+          print('File verification failed: $e');
+          await file.delete();
+          print('Invalid file deleted');
+        }
+      } else {
+        print('Download failed with status: ${response.statusCode}');
+      }
+    } catch (e, stack) {
+      print('ERROR in background caching:');
+      print('- Error: $e');
+      print('- Stack: $stack');
     } finally {
-      _downloadedBytes.remove(url);
-      _totalBytes.remove(url);
+      _activeDownloads.remove(videoUrl);
+      print(
+          'Removed from active downloads (remaining: ${_activeDownloads.length})');
+      print('=== End _startBackgroundCaching ===\n');
     }
   }
 
@@ -281,6 +332,10 @@ class VideoCacheService {
     try {
       final cacheDir = await getCacheDirectory();
       final mappingFile = File('$cacheDir/url_mapping.json');
+      final tempMappingFile = File('$cacheDir/url_mapping.json.tmp');
+      debugPrint(
+          'VideoCacheService: Persisting URL mapping to: ${mappingFile.path}');
+
       final Map<String, dynamic> mapping = {};
       for (var entry in _cachedVideos.entries) {
         mapping[entry.key] = {
@@ -288,9 +343,26 @@ class VideoCacheService {
           'lastAccessed': _lastAccessed[entry.key]?.toIso8601String(),
         };
       }
-      await mappingFile.writeAsString(jsonEncode(mapping));
-    } catch (e) {
-      debugPrint('Error persisting URL mapping: $e');
+
+      final String jsonContent = jsonEncode(mapping);
+
+      // Write to temporary file first
+      await tempMappingFile.writeAsString(jsonContent, flush: true);
+
+      // Verify the content was written correctly
+      final verificationContent = await tempMappingFile.readAsString();
+      if (verificationContent != jsonContent) {
+        throw Exception('URL mapping file verification failed');
+      }
+
+      // Rename temp file to actual file (atomic operation)
+      await tempMappingFile.rename(mappingFile.path);
+
+      debugPrint(
+          'VideoCacheService: Successfully persisted URL mapping with ${mapping.length} entries');
+    } catch (e, stack) {
+      debugPrint('VideoCacheService: Error persisting URL mapping: $e');
+      debugPrint('Stack trace: $stack');
     }
   }
 
@@ -301,14 +373,41 @@ class VideoCacheService {
       if (await mappingFile.exists()) {
         final String content = await mappingFile.readAsString();
         final Map<String, dynamic> mapping = jsonDecode(content);
+        debugPrint(
+            'VideoCacheService: Loading ${mapping.length} entries from URL mapping');
+
         for (var entry in mapping.entries) {
           final data = entry.value as Map<String, dynamic>;
-          _cachedVideos[entry.key] = data['path'];
-          _lastAccessed[entry.key] = DateTime.parse(data['lastAccessed']);
+          final String filePath = data['path'] as String;
+          final file = File(filePath);
+
+          if (await file.exists()) {
+            _cachedVideos[entry.key] = filePath;
+            _lastAccessed[entry.key] = DateTime.parse(data['lastAccessed']);
+            debugPrint(
+                'VideoCacheService: Loaded cache entry for ${entry.key}');
+          } else {
+            debugPrint(
+                'VideoCacheService: Skipping missing cache file: $filePath');
+          }
         }
+        debugPrint(
+            'VideoCacheService: Successfully loaded ${_cachedVideos.length} valid cache entries');
       }
     } catch (e) {
       debugPrint('Error loading URL mapping: $e');
+      // If the mapping file is corrupted, try to recover by clearing it
+      try {
+        final cacheDir = await getCacheDirectory();
+        final mappingFile = File('$cacheDir/url_mapping.json');
+        if (await mappingFile.exists()) {
+          await mappingFile.delete();
+          debugPrint('VideoCacheService: Deleted corrupted mapping file');
+        }
+      } catch (e) {
+        debugPrint(
+            'VideoCacheService: Error cleaning up corrupted mapping file: $e');
+      }
     }
   }
 
@@ -322,7 +421,6 @@ class VideoCacheService {
       }
       _cachedVideos.clear();
       _lastAccessed.clear();
-      _downloadCompleters.clear();
       await _persistUrlMapping(); // Update the mapping file
       debugPrint('Cache cleared successfully');
     } catch (e) {
@@ -330,13 +428,30 @@ class VideoCacheService {
     }
   }
 
-  // Preload a list of videos in the background
-  Future<void> preloadVideos(List<String> videoUrls) async {
+  // Preload a list of videos in the background with priority
+  Future<void> preloadVideos(List<String> videoUrls,
+      {bool highPriority = false}) async {
+    if (highPriority) {
+      // Clear existing queue for high priority downloads
+      _downloadQueue.clear();
+    }
+
     for (final url in videoUrls) {
-      if (!_cachedVideos.containsKey(url) &&
-          !_downloadCompleters.containsKey(url)) {
+      if (!_cachedVideos.containsKey(url) && !_activeDownloads.contains(url)) {
         debugPrint('Preloading video: $url');
-        getCachedVideoPath(url); // Don't await, let it download in background
+        if (highPriority) {
+          // Add to front of queue for high priority
+          _downloadQueue.addFirst(url);
+        } else {
+          // Add to back of queue for normal priority
+          _downloadQueue.add(url);
+        }
+
+        // Start download if possible
+        if (_activeDownloads.length < _maxConcurrentDownloads) {
+          final nextUrl = _downloadQueue.removeFirst();
+          unawaited(_startBackgroundCaching(nextUrl));
+        }
       }
     }
   }

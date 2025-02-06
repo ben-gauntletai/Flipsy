@@ -23,6 +23,7 @@ class Video {
   final double budget; // Cost of the meal in local currency
   final int calories; // Calorie count of the meal
   final int prepTimeMinutes; // Preparation time in minutes
+  final List<String> hashtags; // Added field for hashtags
 
   Video({
     required this.id,
@@ -47,6 +48,7 @@ class Video {
     this.budget = 0.0,
     this.calories = 0,
     this.prepTimeMinutes = 0,
+    this.hashtags = const [], // Default to empty list
   });
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
@@ -75,6 +77,12 @@ class Video {
       print('Video.fromFirestore: Using current time for updatedAt');
     }
 
+    // Convert hashtags from dynamic to List<String>
+    final List<String> hashtags = (data['hashtags'] as List<dynamic>?)
+            ?.map((tag) => tag.toString())
+            .toList() ??
+        [];
+
     return Video(
       id: doc.id,
       userId: data['userId'] as String? ?? '',
@@ -98,6 +106,7 @@ class Video {
       budget: (data['budget'] as num?)?.toDouble() ?? 0.0,
       calories: (data['calories'] as num?)?.toInt() ?? 0,
       prepTimeMinutes: (data['prepTimeMinutes'] as num?)?.toInt() ?? 0,
+      hashtags: hashtags,
     );
   }
 
@@ -128,7 +137,22 @@ class Video {
       'budget': budget,
       'calories': calories,
       'prepTimeMinutes': prepTimeMinutes,
+      'hashtags': hashtags,
     };
+  }
+
+  // Helper method to extract hashtags from description
+  static List<String> extractHashtags(String? description) {
+    if (description == null || description.isEmpty) {
+      return [];
+    }
+
+    final RegExp hashtagRegex = RegExp(r'#(\w+)');
+    return hashtagRegex
+        .allMatches(description.toLowerCase())
+        .map((match) => match.group(1)!)
+        .toSet()
+        .toList();
   }
 
   Video copyWith({
@@ -154,6 +178,7 @@ class Video {
     double? budget,
     int? calories,
     int? prepTimeMinutes,
+    List<String>? hashtags,
   }) {
     return Video(
       id: id ?? this.id,
@@ -178,6 +203,7 @@ class Video {
       budget: budget ?? this.budget,
       calories: calories ?? this.calories,
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
+      hashtags: hashtags ?? this.hashtags,
     );
   }
 

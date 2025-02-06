@@ -1,3 +1,5 @@
+import org.gradle.api.GradleException
+
 def localProperties = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 if (localPropertiesFile.exists()) {
@@ -41,6 +43,10 @@ android {
         jvmTarget = '1.8'
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
     }
@@ -52,6 +58,11 @@ android {
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
         multiDexEnabled true
+        buildConfigField "boolean", "FILTER_LOGS", "true"
+        resValue "string", "log_config", "@xml/log_config"
+        ndk {
+            cFlags "-DNDEBUG"
+        }
     }
 
     buildTypes {
@@ -64,6 +75,8 @@ android {
                 testers="benjamin.wen.2001@gmail.com"
                 groups="testers"
             }
+            manifestPlaceholders = [enableLogging: "false"]
+            buildConfigField "boolean", "FILTER_LOGS", "true"
         }
         debug {
             firebaseAppDistribution {
@@ -71,6 +84,10 @@ android {
                 testers="benjamin.wen.2001@gmail.com"
                 groups="testers"
             }
+            manifestPlaceholders = [enableLogging: "false"]
+            buildConfigField "boolean", "FILTER_LOGS", "true"
+            jniDebuggable false
+            renderscriptDebuggable false
         }
     }
 }

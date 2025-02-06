@@ -3,7 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../services/video_service.dart';
 import '../../../models/video.dart';
 import '../widgets/video_filter_sheet.dart';
-import '../models/video_filter.dart';
+import '../../../models/video_filter.dart';
 import '../../navigation/screens/main_navigation_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
@@ -106,11 +106,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         expand: false,
         builder: (context, scrollController) => VideoFilterSheet(
           initialFilter: _currentFilter,
-          onFilterChanged: (filter) {
+          onFilterChanged: (VideoFilter? newFilter) {
             print('DiscoverScreen: Filter changed');
-            print('DiscoverScreen: New hashtags: ${filter.hashtags}');
+            print('DiscoverScreen: New hashtags: ${newFilter?.hashtags ?? {}}');
             setState(() {
-              _currentFilter = filter;
+              if (newFilter != null) {
+                _currentFilter = newFilter;
+              }
             });
             _loadVideos(refresh: true);
           },

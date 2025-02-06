@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../models/video_filter.dart';
+import '../../../models/video_filter.dart';
 
 class VideoFilterSheet extends StatefulWidget {
   final VideoFilter initialFilter;
@@ -20,19 +20,65 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
   late VideoFilter _tempFilter; // Temporary filter for storing changes
   final TextEditingController _hashtagController = TextEditingController();
   final FocusNode _hashtagFocusNode = FocusNode();
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _hashtagSectionKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _currentFilter = widget.initialFilter;
     _tempFilter = widget.initialFilter; // Initialize temp filter
+
+    // Add focus listener
+    _hashtagFocusNode.addListener(_handleHashtagFocus);
   }
 
   @override
   void dispose() {
     _hashtagController.dispose();
     _hashtagFocusNode.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  void _handleHashtagFocus() {
+    if (_hashtagFocusNode.hasFocus) {
+      print('VideoFilterSheet: Hashtag field focused');
+      _scrollToBottom();
+    }
+  }
+
+  void _scrollToBottom() {
+    print('VideoFilterSheet: Scrolling to bottom');
+
+    // Add a delay to account for keyboard animation
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+
+      try {
+        if (_scrollController.hasClients) {
+          // Get the maximum scroll extent after keyboard is shown
+          final maxScroll = _scrollController.position.maxScrollExtent;
+          print('VideoFilterSheet: Scrolling to position $maxScroll');
+
+          _scrollController
+              .animateTo(
+            maxScroll,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          )
+              .then((_) {
+            print('VideoFilterSheet: Scroll completed successfully');
+          }).catchError((error) {
+            print('VideoFilterSheet: Error during scroll: $error');
+          });
+        } else {
+          print('VideoFilterSheet: ScrollController has no clients');
+        }
+      } catch (e) {
+        print('VideoFilterSheet: Exception during scroll attempt: $e');
+      }
+    });
   }
 
   void _addHashtag(String hashtag) {
@@ -45,7 +91,10 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
     print('VideoFilterSheet: Current hashtags: ${_tempFilter.hashtags}');
 
     _hashtagController.clear();
-    _hashtagFocusNode.requestFocus(); // Keep focus for adding more hashtags
+    _hashtagFocusNode.requestFocus();
+
+    // Add a small delay before scrolling after adding hashtag
+    Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
   }
 
   void _removeHashtag(String hashtag) {
@@ -101,21 +150,22 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
               // Scrollable content
               Expanded(
                 child: ListView(
+                  controller: _scrollController,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   children: [
                     // Budget Range
                     _buildRangeSlider(
                       title: 'Budget Range',
                       subtitle:
-                          '\$${_tempFilter.budgetRange?.start.toStringAsFixed(0) ?? "0"} - \$${_tempFilter.budgetRange?.end.toStringAsFixed(0) ?? "100"}',
-                      range: _tempFilter.budgetRange ??
-                          VideoFilter.defaultBudgetRange,
+                          '\$${_tempFilter.budgetRange.start.toStringAsFixed(0)} - \$${_tempFilter.budgetRange.end.toStringAsFixed(0)}',
+                      range: _tempFilter.budgetRange.toRangeValues(),
                       min: VideoFilter.defaultBudgetRange.start,
                       max: VideoFilter.defaultBudgetRange.end,
                       onChanged: (range) {
                         setState(() {
-                          _tempFilter =
-                              _tempFilter.copyWith(budgetRange: range);
+                          _tempFilter = _tempFilter.copyWith(
+                            budgetRange: NumericRange.fromRangeValues(range),
+                          );
                         });
                       },
                     ),
@@ -124,15 +174,15 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
                     _buildRangeSlider(
                       title: 'Calories Range',
                       subtitle:
-                          '${_tempFilter.caloriesRange?.start.toInt() ?? "0"} - ${_tempFilter.caloriesRange?.end.toInt() ?? "2000"} cal',
-                      range: _tempFilter.caloriesRange ??
-                          VideoFilter.defaultCaloriesRange,
+                          '${_tempFilter.caloriesRange.start.toInt()} - ${_tempFilter.caloriesRange.end.toInt()} cal',
+                      range: _tempFilter.caloriesRange.toRangeValues(),
                       min: VideoFilter.defaultCaloriesRange.start,
                       max: VideoFilter.defaultCaloriesRange.end,
                       onChanged: (range) {
                         setState(() {
-                          _tempFilter =
-                              _tempFilter.copyWith(caloriesRange: range);
+                          _tempFilter = _tempFilter.copyWith(
+                            caloriesRange: NumericRange.fromRangeValues(range),
+                          );
                         });
                       },
                     ),
@@ -141,15 +191,15 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
                     _buildRangeSlider(
                       title: 'Prep Time Range',
                       subtitle:
-                          '${_tempFilter.prepTimeRange?.start.toInt() ?? "0"} - ${_tempFilter.prepTimeRange?.end.toInt() ?? "180"} min',
-                      range: _tempFilter.prepTimeRange ??
-                          VideoFilter.defaultPrepTimeRange,
+                          '${_tempFilter.prepTimeRange.start.toInt()} - ${_tempFilter.prepTimeRange.end.toInt()} min',
+                      range: _tempFilter.prepTimeRange.toRangeValues(),
                       min: VideoFilter.defaultPrepTimeRange.start,
                       max: VideoFilter.defaultPrepTimeRange.end,
                       onChanged: (range) {
                         setState(() {
-                          _tempFilter =
-                              _tempFilter.copyWith(prepTimeRange: range);
+                          _tempFilter = _tempFilter.copyWith(
+                            prepTimeRange: NumericRange.fromRangeValues(range),
+                          );
                         });
                       },
                     ),
@@ -158,10 +208,10 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
                     _buildRangeSlider(
                       title: 'Spiciness Range',
                       subtitle:
-                          '${_tempFilter.minSpiciness ?? 0} - ${_tempFilter.maxSpiciness ?? 5} peppers',
+                          '${_tempFilter.minSpiciness} - ${_tempFilter.maxSpiciness} peppers',
                       range: RangeValues(
-                        (_tempFilter.minSpiciness ?? 0).toDouble(),
-                        (_tempFilter.maxSpiciness ?? 5).toDouble(),
+                        _tempFilter.minSpiciness.toDouble(),
+                        _tempFilter.maxSpiciness.toDouble(),
                       ),
                       min: VideoFilter.defaultSpicinessRange.start,
                       max: VideoFilter.defaultSpicinessRange.end,
@@ -177,56 +227,65 @@ class _VideoFilterSheetState extends State<VideoFilterSheet> {
                     ),
                     const Divider(),
                     // Hashtags
-                    const Text(
-                      'Hashtags',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
+                    Container(
+                      key: _hashtagSectionKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Hashtags',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _hashtagController,
+                            focusNode: _hashtagFocusNode,
+                            decoration: InputDecoration(
+                              hintText: 'Add hashtag (e.g., spicy, quick)',
+                              prefixText: '#',
+                              border: OutlineInputBorder(),
+                              suffixIcon: IconButton(
+                                icon: const Icon(Icons.add),
+                                onPressed: () {
+                                  if (_hashtagController.text.isNotEmpty) {
+                                    _addHashtag(_hashtagController.text);
+                                  }
+                                },
+                              ),
+                            ),
+                            onSubmitted: (value) {
+                              if (value.isNotEmpty) {
+                                _addHashtag(value);
+                              }
+                            },
+                            textInputAction: TextInputAction.done,
+                            onEditingComplete: () {
+                              if (_hashtagController.text.isNotEmpty) {
+                                _addHashtag(_hashtagController.text);
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _tempFilter.hashtags.map((hashtag) {
+                              return Chip(
+                                label: Text('#$hashtag'),
+                                onDeleted: () => _removeHashtag(hashtag),
+                                backgroundColor: Theme.of(context)
+                                    .colorScheme
+                                    .primaryContainer,
+                              );
+                            }).toList(),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _hashtagController,
-                      focusNode: _hashtagFocusNode,
-                      decoration: InputDecoration(
-                        hintText: 'Add hashtag (e.g., spicy, quick)',
-                        prefixText: '#',
-                        border: OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          icon: const Icon(Icons.add),
-                          onPressed: () {
-                            if (_hashtagController.text.isNotEmpty) {
-                              _addHashtag(_hashtagController.text);
-                            }
-                          },
-                        ),
-                      ),
-                      onSubmitted: (value) {
-                        if (value.isNotEmpty) {
-                          _addHashtag(value);
-                        }
-                      },
-                      textInputAction: TextInputAction.done,
-                      onEditingComplete: () {
-                        if (_hashtagController.text.isNotEmpty) {
-                          _addHashtag(_hashtagController.text);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: _tempFilter.hashtags.map((hashtag) {
-                        return Chip(
-                          label: Text('#$hashtag'),
-                          onDeleted: () => _removeHashtag(hashtag),
-                          backgroundColor:
-                              Theme.of(context).colorScheme.primaryContainer,
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 16),
                   ],
                 ),
               ),

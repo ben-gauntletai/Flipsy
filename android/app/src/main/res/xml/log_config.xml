@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<log-config>
+    <!-- Global media system logs -->
+    <filter tag="*Codec*" level="silent" />
+    <filter tag="*codec*" level="silent" />
+    <filter tag="*CODEC*" level="silent" />
+    <filter tag="ExoPlayer*" level="silent" />
+    
+    <!-- Specific system patterns -->
+    <filter tag="c2.*" level="silent" />
+    <filter tag="C2.*" level="silent" />
+    
+    <!-- Surface and Graphics -->
+    <filter tag="*Surface*" level="silent" />
+    <filter tag="*Graphics*" level="silent" />
+    <filter tag="*Color*" level="silent" />
+    <filter tag="*Param*" level="silent" />
+    
+    <!-- System components -->
+    <filter tag="*loader" level="silent" />
+    <filter tag="*HEAPS" level="silent" />
+    <filter tag="*Binder" level="silent" />
+    <filter tag="*Buffer*" level="silent" />
+    <filter tag="*Provider*" level="silent" />
+    <filter tag="*Api*" level="silent" />
+    <filter tag="*Flag*" level="silent" />
+    <filter tag="*Installer" level="silent" />
+    <filter tag="*Reporter" level="silent" />
+    
+    <!-- Firebase and Network -->
+    <filter tag="FA" level="silent" />
+    <filter tag="*Channel*" level="silent" />
+    <filter tag="*Module*" level="silent" />
+    <filter tag="*Crypto*" level="silent" />
+    <filter tag="Firestore" level="warn" />
+    <filter tag="*Stats" level="silent" />
+    
+    <!-- App specific logs -->
+    <filter tag="untletai.flipsy" level="info" />
+</log-config> 
