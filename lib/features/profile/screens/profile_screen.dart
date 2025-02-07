@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:async';
 import '../../auth/bloc/auth_bloc.dart';
 import '../../../services/video_service.dart';
 import '../../../models/video.dart';
@@ -33,13 +34,14 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen>
     with SingleTickerProviderStateMixin {
-  bool _isLoading = false;
   final _userService = UserService();
   late TabController _tabController;
   final VideoService _videoService = VideoService();
   List<Collection> _collections = [];
   bool _isLoadingCollections = true;
   bool _isDisposed = false;
+  bool _isLoading = false;
+  StreamSubscription<List<Collection>>? _collectionsSubscription;
 
   String? get _currentUserId {
     final authState = context.read<AuthBloc>().state;
@@ -50,62 +52,58 @@ class _ProfileScreenState extends State<ProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _loadCollections();
+    _startListeningToCollections();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
     _tabController.dispose();
+    _collectionsSubscription?.cancel();
+    _videoService.cancelVideoCountSubscriptions();
     super.dispose();
   }
 
-  Future<void> _loadCollections() async {
-    if (_isDisposed) return;
-
-    try {
-      final userId = widget.userId ?? _currentUserId;
-      if (userId == null) {
-        print('\nProfileScreen: No userId available for loading collections');
-        return;
-      }
-
-      print('\nProfileScreen: Starting to load collections for user $userId');
-      print('ProfileScreen: Current collections count: ${_collections.length}');
-      setState(() {
-        _isLoadingCollections = true;
-      });
-
-      final collections = await _videoService.getUserCollections(userId);
-      print('ProfileScreen: Loaded ${collections.length} collections');
-      print('ProfileScreen: Collection details:');
-      for (var collection in collections) {
-        print('- ID: ${collection.id}');
-        print('  Name: ${collection.name}');
-        print('  Video Count: ${collection.videoCount}');
-        print('  Created At: ${collection.createdAt}');
-      }
-
-      if (!_isDisposed && mounted) {
-        print('ProfileScreen: Updating state with collections');
-        setState(() {
-          _collections = collections;
-          _isLoadingCollections = false;
-        });
-        print(
-            'ProfileScreen: State updated with ${_collections.length} collections');
-        print(
-            'ProfileScreen: Collection IDs in state: ${_collections.map((c) => c.id).join(', ')}');
-      }
-    } catch (e, stackTrace) {
-      print('ProfileScreen: Error loading collections: $e');
-      print('ProfileScreen: Stack trace: $stackTrace');
-      if (!_isDisposed && mounted) {
-        setState(() {
-          _isLoadingCollections = false;
-        });
-      }
+  void _startListeningToCollections() {
+    print('\nProfileScreen: Starting to listen to collections');
+    final userId = widget.userId ?? _currentUserId;
+    if (userId == null) {
+      print('ProfileScreen: No userId available for loading collections');
+      return;
     }
+
+    print('ProfileScreen: Setting up collection stream for user $userId');
+    _collectionsSubscription =
+        _videoService.watchUserCollections(userId).listen(
+      (collections) {
+        if (!_isDisposed && mounted) {
+          print('\nProfileScreen: Received collections update');
+          print('ProfileScreen: Number of collections: ${collections.length}');
+
+          for (var collection in collections) {
+            print('Collection ${collection.id}:');
+            print('- Name: ${collection.name}');
+            print('- Video count: ${collection.videoCount}');
+            print('- Updated at: ${collection.updatedAt}');
+          }
+
+          setState(() {
+            _collections = collections;
+            _isLoadingCollections = false;
+          });
+        }
+      },
+      onError: (error, stackTrace) {
+        print('\nProfileScreen: Error watching collections:');
+        print('Error: $error');
+        print('Stack trace: $stackTrace');
+        if (!_isDisposed && mounted) {
+          setState(() {
+            _isLoadingCollections = false;
+          });
+        }
+      },
+    );
   }
 
   Future<void> _handleFollowAction(bool isFollowing) async {
@@ -356,7 +354,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                         'ProfileScreen: Collection IDs: ${_collections.map((c) => c.id).join(', ')}');
 
                     // Reload collections to ensure consistency
-                    _loadCollections();
+                    _startListeningToCollections();
 
                     Navigator.pop(context);
                   }

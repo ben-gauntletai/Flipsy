@@ -49,33 +49,48 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
 
   void _startListeningToCollections() {
     print(
-        'CollectionSelectionSheet: Starting to listen to collections for user $_currentUserId');
-    _collectionsSubscription = _videoService
-        .watchUserCollections(_currentUserId)
-        .listen((collections) {
-      if (mounted) {
-        setState(() {
-          _collections = collections;
+        '\nCollectionSelectionSheet: Starting to listen to collections for user $_currentUserId');
+    _collectionsSubscription =
+        _videoService.watchUserCollections(_currentUserId).listen(
+      (collections) {
+        if (mounted) {
+          print('\nCollectionSelectionSheet: Received collections update');
           print(
-              'CollectionSelectionSheet: Updated collections, count: ${collections.length}');
-        });
-        _checkVideoInCollections();
-      }
-    }, onError: (error) {
-      print('CollectionSelectionSheet: Error watching collections: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Error loading collections'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    });
+              'CollectionSelectionSheet: Number of collections: ${collections.length}');
+
+          for (var collection in collections) {
+            print('Collection ${collection.id}:');
+            print('- Name: ${collection.name}');
+            print('- Video count: ${collection.videoCount}');
+            print('- Updated at: ${collection.updatedAt}');
+          }
+
+          setState(() {
+            _collections = collections;
+          });
+
+          // Re-check video presence in collections after update
+          _checkVideoInCollections();
+        }
+      },
+      onError: (error, stackTrace) {
+        print('\nCollectionSelectionSheet: Error watching collections:');
+        print('Error: $error');
+        print('Stack trace: $stackTrace');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Error loading collections'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      },
+    );
   }
 
   void _checkVideoInCollections() {
-    print('CollectionSelectionSheet: Checking video in collections');
+    print('\nCollectionSelectionSheet: Checking video in collections');
     // Cancel existing subscriptions
     for (var subscription in _videoSubscriptions.values) {
       subscription.cancel();
@@ -84,24 +99,28 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
 
     // Start new subscriptions for each collection
     for (var collection in _collections) {
+      print('Checking video ${widget.video.id} in collection ${collection.id}');
       final subscription = _firestore
           .collection('collections')
           .doc(collection.id)
           .collection('videos')
           .doc(widget.video.id)
           .snapshots()
-          .listen((snapshot) {
-        if (mounted) {
-          setState(() {
-            _videoInCollection[collection.id] = snapshot.exists;
+          .listen(
+        (snapshot) {
+          if (mounted) {
+            final exists = snapshot.exists;
             print(
-                'CollectionSelectionSheet: Video ${widget.video.id} in collection ${collection.id}: ${snapshot.exists}');
-          });
-        }
-      }, onError: (error) {
-        print(
-            'CollectionSelectionSheet: Error checking video in collection ${collection.id}: $error');
-      });
+                'Video ${widget.video.id} exists in collection ${collection.id}: $exists');
+            setState(() {
+              _videoInCollection[collection.id] = exists;
+            });
+          }
+        },
+        onError: (error) {
+          print('Error checking video in collection ${collection.id}: $error');
+        },
+      );
 
       _videoSubscriptions[collection.id] = subscription;
     }
@@ -113,6 +132,7 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
     for (var subscription in _videoSubscriptions.values) {
       subscription.cancel();
     }
+    _videoService.cancelVideoCountSubscriptions();
     super.dispose();
   }
 

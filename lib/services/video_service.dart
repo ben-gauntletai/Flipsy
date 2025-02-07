@@ -1572,7 +1572,7 @@ class VideoService {
   }) async {
     print(
         '\nVideoService: Starting to add video $videoId to collection $collectionId');
-    print('VideoService: Current user: ${_currentUserId}');
+    print('VideoService: Current user: $_currentUserId');
 
     try {
       // First verify the collection exists and user owns it
@@ -1587,6 +1587,11 @@ class VideoService {
 
       final collectionData = collectionDoc.data();
       final collectionOwnerId = collectionData?['userId'] as String?;
+      final currentVideoCount = collectionData?['videoCount'] as int? ?? 0;
+      print(
+          'VideoService: Current video count in collection: $currentVideoCount');
+      print('VideoService: Collection owner: $collectionOwnerId');
+      print('VideoService: Current user: $_currentUserId');
 
       // Only check if the user owns the collection
       if (collectionData == null || collectionOwnerId != _currentUserId) {
@@ -1618,6 +1623,13 @@ class VideoService {
         return;
       }
 
+      print('VideoService: Starting batch operation');
+      print('VideoService: Current video count: $currentVideoCount');
+
+      // Use current timestamp for immediate updates
+      final now = DateTime.now();
+      final timestamp = Timestamp.fromDate(now);
+
       // Use a batch to ensure both operations succeed or fail together
       final batch = _firestore.batch();
 
@@ -1626,7 +1638,7 @@ class VideoService {
       final collectionVideoRef =
           collectionRef.collection('videos').doc(videoId);
       batch.set(collectionVideoRef, {
-        'addedAt': FieldValue.serverTimestamp(),
+        'addedAt': timestamp,
         'addedBy': _currentUserId,
         'videoId': videoId,
         'thumbnailURL': videoData['thumbnailURL'],
@@ -1634,15 +1646,25 @@ class VideoService {
 
       // Update collection's video count and thumbnail
       print('VideoService: Updating collection metadata');
+      print('VideoService: Incrementing video count from $currentVideoCount');
       batch.update(collectionRef, {
         'videoCount': FieldValue.increment(1),
-        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedAt': timestamp,
         'thumbnailUrl': videoData['thumbnailURL'],
       });
 
       // Commit both operations
       await batch.commit();
-      print('VideoService: Successfully added video to collection');
+      print('VideoService: Successfully committed batch operations');
+
+      // Verify the update
+      final updatedDoc = await collectionRef.get();
+      final updatedCount = updatedDoc.data()?['videoCount'] as int? ?? 0;
+      print('VideoService: Updated video count in collection: $updatedCount');
+
+      // Force a refresh of the collection stream
+      print('VideoService: Forcing collection stream refresh');
+      await _firestore.collection('collections').doc(collectionId).get();
     } catch (e, stackTrace) {
       print('VideoService: Error adding video to collection:');
       print('Error: $e');
@@ -1801,6 +1823,9 @@ class VideoService {
           print('- Name: ${collection.name}');
           print('- Video Count: ${collection.videoCount}');
           print('- Is Private: ${collection.isPrivate}');
+
+          // Start watching video count for this collection
+          _watchCollectionVideoCount(collection.id);
         } catch (e, stackTrace) {
           print('VideoService: Error processing collection document ${doc.id}');
           print('Error: $e');
@@ -1818,5 +1843,37 @@ class VideoService {
       print('Stack trace: $stackTrace');
       return <Collection>[];
     });
+  }
+
+  // Add this method to watch video count for a specific collection
+  Stream<int> watchCollectionVideoCount(String collectionId) {
+    return _firestore
+        .collection('collections')
+        .doc(collectionId)
+        .snapshots()
+        .map((doc) => (doc.data()?['videoCount'] as int?) ?? 0);
+  }
+
+  // Keep track of video count subscriptions
+  final Map<String, StreamSubscription<int>> _videoCountSubscriptions = {};
+
+  void _watchCollectionVideoCount(String collectionId) {
+    // Cancel existing subscription if any
+    _videoCountSubscriptions[collectionId]?.cancel();
+
+    // Start new subscription
+    _videoCountSubscriptions[collectionId] =
+        watchCollectionVideoCount(collectionId).listen((count) {
+      print(
+          'VideoService: Collection $collectionId video count updated to: $count');
+    });
+  }
+
+  // Don't forget to cancel subscriptions when they're no longer needed
+  void cancelVideoCountSubscriptions() {
+    for (var subscription in _videoCountSubscriptions.values) {
+      subscription.cancel();
+    }
+    _videoCountSubscriptions.clear();
   }
 }

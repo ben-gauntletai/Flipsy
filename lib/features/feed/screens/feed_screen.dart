@@ -19,6 +19,7 @@ import '../../../features/navigation/screens/main_navigation_screen.dart';
 import '../../../services/video_cache_service.dart';
 import 'dart:io';
 import '../../../features/video/widgets/collection_selection_sheet.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1760,8 +1761,20 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   Future<void> _showCollectionSelectionSheet(BuildContext context) async {
     try {
-      final collections =
-          await _videoService.getUserCollections(widget.video.userId);
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId == null) {
+        print('Error: No user logged in');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Please log in to add to collections')),
+          );
+        }
+        return;
+      }
+
+      print('\nFeedScreen: Loading collections for user $currentUserId');
+      final collections = await _videoService.getUserCollections(currentUserId);
 
       if (!mounted) return;
 

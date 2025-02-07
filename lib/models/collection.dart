@@ -2,36 +2,39 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Collection {
   final String id;
-  final String name;
   final String userId;
-  final bool isPrivate;
-  final int videoCount;
-  final String? thumbnailUrl;
+  final String name;
   final DateTime createdAt;
   final DateTime updatedAt;
+  final int videoCount;
+  final bool isPrivate;
+  final String? thumbnailUrl;
 
   Collection({
     required this.id,
-    required this.name,
     required this.userId,
-    required this.isPrivate,
-    required this.videoCount,
-    this.thumbnailUrl,
+    required this.name,
     required this.createdAt,
     required this.updatedAt,
+    required this.videoCount,
+    required this.isPrivate,
+    this.thumbnailUrl,
   });
 
   factory Collection.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
+    final createdAtTimestamp = data['createdAt'] as Timestamp?;
+    final updatedAtTimestamp = data['updatedAt'] as Timestamp?;
+
     return Collection(
       id: doc.id,
-      name: data['name'] as String,
       userId: data['userId'] as String,
-      isPrivate: data['isPrivate'] as bool,
-      videoCount: data['videoCount'] as int,
+      name: data['name'] as String,
+      createdAt: createdAtTimestamp?.toDate() ?? DateTime.now(),
+      updatedAt: updatedAtTimestamp?.toDate() ?? DateTime.now(),
+      videoCount: data['videoCount'] as int? ?? 0,
+      isPrivate: data['isPrivate'] as bool? ?? false,
       thumbnailUrl: data['thumbnailUrl'] as String?,
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
-      updatedAt: (data['updatedAt'] as Timestamp).toDate(),
     );
   }
 
@@ -49,23 +52,23 @@ class Collection {
 
   Collection copyWith({
     String? id,
-    String? name,
     String? userId,
-    bool? isPrivate,
-    int? videoCount,
-    String? thumbnailUrl,
+    String? name,
     DateTime? createdAt,
     DateTime? updatedAt,
+    int? videoCount,
+    bool? isPrivate,
+    String? thumbnailUrl,
   }) {
     return Collection(
       id: id ?? this.id,
-      name: name ?? this.name,
       userId: userId ?? this.userId,
-      isPrivate: isPrivate ?? this.isPrivate,
-      videoCount: videoCount ?? this.videoCount,
-      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
+      name: name ?? this.name,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      videoCount: videoCount ?? this.videoCount,
+      isPrivate: isPrivate ?? this.isPrivate,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
     );
   }
 }
