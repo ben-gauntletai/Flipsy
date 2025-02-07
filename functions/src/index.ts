@@ -7,14 +7,23 @@
  * See a full list of supported triggers at https://firebase.google.com/docs/functions
  */
 
-import * as functions from "firebase-functions";
-import * as admin from "firebase-admin";
+import * as functions from "firebase-functions/v2";
+import { CallableRequest, onCall } from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
   onDocumentDeleted,
   onDocumentUpdated,
+  DocumentSnapshot,
 } from "firebase-functions/v2/firestore";
-import { CallableRequest, onCall } from "firebase-functions/v2/https";
+import * as admin from "firebase-admin";
+import OpenAI from "openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+
+// Custom type for vision messages
+// type VisionContent = {
+//   type: "image";
+//   image_url: string;
+// };
 
 // Start writing functions
 // https://firebase.google.com/docs/functions/typescript
@@ -1035,3 +1044,264 @@ export const migrateVideosToTags = functions.https.onRequest(async (req, res) =>
     res.status(500).json({ error: "An error occurred during migration" });
   }
 });
+
+// Cloud function to analyze video and store description
+export const analyzeVideo = onDocumentCreated(
+  {
+    document: "videos/{videoId}",
+    secrets: ["OPENAI_API_KEY"],
+  },
+  async (event: { data: DocumentSnapshot | undefined; params: { videoId: string } }) => {
+    try {
+      console.log("analyzeVideo function started", { videoId: event.params.videoId });
+
+      const snapshot = event.data;
+      if (!snapshot) {
+        console.error("No data associated with the event");
+        return;
+      }
+
+      const videoData = snapshot.data();
+      console.log("Video data retrieved:", {
+        hasData: !!videoData,
+        hasThumbnail: !!videoData?.thumbnailURL,
+        videoId: event.params.videoId,
+      });
+
+      if (!videoData || !videoData.thumbnailURL) {
+        console.error("No video data or thumbnail URL found", {
+          videoId: event.params.videoId,
+          videoData: videoData ? "exists" : "null",
+          thumbnailURL: videoData?.thumbnailURL ? "exists" : "null",
+        });
+        return;
+      }
+
+      console.log("Getting OpenAI API key from environment...");
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        console.error("OpenAI API key not found in environment variables");
+        throw new Error("OpenAI API key not configured");
+      }
+
+      console.log("Initializing OpenAI client...");
+      const openai = new OpenAI({
+        apiKey: apiKey,
+      });
+
+      const systemPrompt =
+        "You are a cooking video analyzer. Describe what is happening in this " +
+        "thumbnail from a cooking video. Focus on the cooking techniques, " +
+        "ingredients, and overall dish being prepared. Be concise but descriptive, " +
+        "and highlight any unique or interesting aspects of the preparation method " +
+        "or presentation.";
+
+      console.log("Preparing messages for OpenAI...");
+      const messages: ChatCompletionMessageParam[] = [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Please analyze this cooking video thumbnail:",
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: videoData.thumbnailURL,
+              },
+            },
+          ],
+        },
+      ];
+
+      console.log("Calling OpenAI API...", {
+        thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
+      });
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages,
+        max_tokens: 300,
+      });
+
+      console.log("OpenAI API response received", {
+        hasChoices: !!response.choices.length,
+        firstChoice: !!response.choices[0]?.message?.content,
+      });
+
+      // Store the AI-generated description
+      console.log("Storing AI-generated description...");
+      const db = admin.firestore();
+      await db.collection("videos").doc(event.params.videoId).update({
+        aiEnhancements: {
+          description: response.choices[0].message.content || "",
+          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      });
+
+      console.log("Successfully analyzed video and stored description", {
+        videoId: event.params.videoId,
+        descriptionLength: response.choices[0].message.content?.length || 0,
+      });
+    } catch (error: unknown) {
+      console.error("Error in analyzeVideo:", error);
+      if (error instanceof Error) {
+        console.error("Error details:", {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+          videoId: event.params.videoId,
+        });
+      } else {
+        console.error("Unknown error type:", error);
+      }
+      throw error;
+    }
+  },
+);
+// export const analyzeExistingVideos = onCall(
+//   {
+//     secrets: ["OPENAI_API_KEY"],
+//   },
+//   async () => {
+//     try {
+//       console.log("analyzeExistingVideos function started");
+
+//       // Get all active videos
+//       const db = admin.firestore();
+//       const videosSnapshot = await db.collection("videos")
+//         .where("status", "==", "active")
+//         .get();
+
+//       console.log(`Found ${videosSnapshot.docs.length} active videos to analyze`);
+
+//       let processedCount = 0;
+//       let skippedCount = 0;
+//       let errorCount = 0;
+
+//       for (const doc of videosSnapshot.docs) {
+//         try {
+//           const videoData = doc.data();
+//           if (!videoData.thumbnailURL) {
+//             console.log(`Skipping video ${doc.id} - no thumbnail URL`);
+//             skippedCount++;
+//             continue;
+//           }
+
+//           // Skip if already has AI enhancements and no force flag
+//           if (videoData.aiEnhancements?.description) {
+//             console.log(`Skipping video ${doc.id} - already has AI description`);
+//             skippedCount++;
+//             continue;
+//           }
+
+//           console.log("Getting OpenAI API key from environment...");
+//           const apiKey = process.env.OPENAI_API_KEY;
+//           if (!apiKey) {
+//             console.error("OpenAI API key not found in environment variables");
+//             throw new functions.https.HttpsError(
+//               "failed-precondition",
+//               "OpenAI API key not configured",
+//             );
+//           }
+
+//           console.log("Initializing OpenAI client...");
+//           const openai = new OpenAI({
+//             apiKey: apiKey,
+//           });
+
+//           const systemPrompt =
+//             "You are a cooking video analyzer. Describe what is happening in this " +
+//             "thumbnail from a cooking video. Focus on the cooking techniques, " +
+//             "ingredients, and overall dish being prepared. Be concise but descriptive, " +
+//             "and highlight any unique or interesting aspects of the preparation method " +
+//             "or presentation.";
+
+//           console.log("Preparing messages for OpenAI...");
+//           const messages: ChatCompletionMessageParam[] = [
+//             {
+//               role: "system",
+//               content: systemPrompt,
+//             },
+//             {
+//               role: "user",
+//               content: [
+//                 {
+//                   type: "text",
+//                   text: "Please analyze this cooking video thumbnail:",
+//                 },
+//                 {
+//                   type: "image_url",
+//                   image_url: {
+//                     url: videoData.thumbnailURL,
+//                   },
+//                 },
+//               ],
+//             },
+//           ];
+
+//           console.log("Calling OpenAI API...", {
+//             thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
+//           });
+
+//           const response = await openai.chat.completions.create({
+//             model: "gpt-4o-mini",
+//             messages,
+//             max_tokens: 300,
+//           });
+
+//           console.log("OpenAI API response received", {
+//             hasChoices: !!response.choices.length,
+//             firstChoice: !!response.choices[0]?.message?.content,
+//           });
+
+//           // Store the AI-generated description
+//           console.log("Storing AI-generated description...");
+//           await db.collection("videos").doc(doc.id).update({
+//             aiEnhancements: {
+//               description: response.choices[0].message.content || "",
+//               generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+//             },
+//           });
+
+//           console.log("Successfully analyzed video and stored description", {
+//             videoId: doc.id,
+//             descriptionLength: response.choices[0].message.content?.length || 0,
+//           });
+
+//           processedCount++;
+//         } catch (error) {
+//           console.error(`Error processing video ${doc.id}:`, error);
+//           errorCount++;
+//         }
+//       }
+
+//       return {
+//         success: true,
+//         totalVideos: videosSnapshot.docs.length,
+//         processedCount,
+//         skippedCount,
+//         errorCount,
+//       };
+//     } catch (error: unknown) {
+//       console.error("Error in analyzeExistingVideos:", error);
+//       if (error instanceof functions.https.HttpsError) {
+//         throw error;
+//       }
+//       if (error instanceof Error) {
+//         console.error("Error details:", {
+//           name: error.name,
+//           message: error.message,
+//           stack: error.stack,
+//         });
+//       }
+//       throw new functions.https.HttpsError("internal", "Failed to analyze videos");
+//     }
+//   }
+// );
+

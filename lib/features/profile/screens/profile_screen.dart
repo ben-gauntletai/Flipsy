@@ -15,6 +15,7 @@ import '../../feed/screens/feed_screen.dart';
 import '../../navigation/screens/main_navigation_screen.dart';
 import 'followers_screen.dart';
 import '../widgets/collections_grid.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class ProfileScreen extends StatefulWidget {
   final String? userId; // If null, show current user's profile
@@ -448,6 +449,37 @@ class _ProfileScreenState extends State<ProfileScreen>
     _updateTabController(false);
   }
 
+  Future<void> _analyzeAllVideos() async {
+    try {
+      final functions = FirebaseFunctions.instance;
+      final result =
+          await functions.httpsCallable('analyzeExistingVideos').call();
+
+      if (mounted) {
+        final data = result.data as Map<String, dynamic>;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content:
+                Text('Analysis started: ${data['totalVideos']} videos found\n'
+                    'Processed: ${data['processedCount']}, '
+                    'Skipped: ${data['skippedCount']}, '
+                    'Errors: ${data['errorCount']}'),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = context.watch<AuthBloc>().state;
@@ -485,12 +517,24 @@ class _ProfileScreenState extends State<ProfileScreen>
         ),
         actions: [
           if (isCurrentUser)
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () {
-                context.read<AuthBloc>().add(SignOutRequested());
+            PopupMenuButton<String>(
+              onSelected: (value) async {
+                if (value == 'logout') {
+                  context.read<AuthBloc>().add(SignOutRequested());
+                }
               },
-              tooltip: 'Logout',
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'logout',
+                  child: Row(
+                    children: [
+                      Icon(Icons.logout),
+                      SizedBox(width: 8),
+                      Text('Logout'),
+                    ],
+                  ),
+                ),
+              ],
             ),
         ],
       ),

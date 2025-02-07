@@ -6,9 +6,14 @@ import 'package:flipsy/features/auth/screens/login_screen.dart';
 import 'package:flipsy/services/auth_service.dart';
 import 'package:flipsy/firebase_options.dart';
 import 'package:flipsy/features/navigation/screens/main_navigation_screen.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'services/config_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize environment variables
+  await ConfigService().init();
 
   try {
     print('Initializing Firebase...');
