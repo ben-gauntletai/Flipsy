@@ -575,4 +575,56 @@ class UserService {
           0, (sum, doc) => sum + (doc.data()['likesCount'] as int? ?? 0));
     });
   }
+
+  // Search for users by display name
+  Future<List<Map<String, dynamic>>> searchUsers(String query) async {
+    print('\nUserService: Searching for users with query: $query');
+    try {
+      // Create a query that searches for display names that start with the search query
+      final querySnapshot = await _firestore
+          .collection('users')
+          .where('displayName', isGreaterThanOrEqualTo: query)
+          .where('displayName', isLessThan: '${query}z')
+          .limit(10)
+          .get();
+
+      print('UserService: Found ${querySnapshot.docs.length} users');
+
+      // Get real-time counts for each user
+      final userResults = await Future.wait(querySnapshot.docs.map((doc) async {
+        final data = doc.data();
+
+        // Get real follower count
+        final followersQuery = await _firestore
+            .collection('follows')
+            .where('followingId', isEqualTo: doc.id)
+            .get();
+
+        // Get real total likes from videos
+        final videosQuery = await _firestore
+            .collection('videos')
+            .where('userId', isEqualTo: doc.id)
+            .where('status', isEqualTo: 'active')
+            .get();
+
+        int totalLikes = 0;
+        for (var videoDoc in videosQuery.docs) {
+          totalLikes += (videoDoc.data()['likesCount'] as int?) ?? 0;
+        }
+
+        return {
+          'id': doc.id,
+          'displayName': data['displayName'] ?? 'Unknown User',
+          'avatarURL': data['avatarURL'],
+          'followersCount': followersQuery.docs.length,
+          'totalLikes': totalLikes,
+        };
+      }));
+
+      return userResults;
+    } catch (e) {
+      print('UserService: Error searching users: $e');
+      return [];
+    }
+  }
 }

@@ -5,6 +5,8 @@ import '../../../models/video.dart';
 import '../widgets/video_filter_sheet.dart';
 import '../../../models/video_filter.dart';
 import '../../navigation/screens/main_navigation_screen.dart';
+import '../../../services/user_service.dart';
+import '../../profile/screens/profile_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
@@ -15,15 +17,18 @@ class DiscoverScreen extends StatefulWidget {
 
 class _DiscoverScreenState extends State<DiscoverScreen> {
   final VideoService _videoService = VideoService();
+  final UserService _userService = UserService();
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
   VideoFilter _currentFilter = const VideoFilter();
   List<Video> _videos = [];
+  List<Map<String, dynamic>> _users = [];
   bool _isLoading = false;
   bool _hasMore = true;
   DocumentSnapshot? _lastDocument;
   String? _error;
+  bool _isSearchingUsers = false;
 
   @override
   void initState() {
@@ -139,28 +144,55 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     }
   }
 
-  void _handleSearch(String value) {
-    // Remove any leading # if present
+  void _handleSearch(String value) async {
     final searchText = value.trim();
     if (searchText.isEmpty) {
+      setState(() {
+        _users = [];
+        _isSearchingUsers = false;
+      });
       return;
     }
 
-    try {
-      // Try to add the hashtag to the filter
+    // If search starts with @, search for users
+    if (searchText.startsWith('@')) {
       setState(() {
-        _currentFilter = _currentFilter.addHashtag(searchText);
-        _searchController.clear(); // Clear the search field after adding
+        _isSearchingUsers = true;
+        _isLoading = true;
       });
-      _loadVideos(refresh: true);
-    } catch (e) {
-      // Show error if hashtag is invalid or we've reached the maximum
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-          duration: const Duration(seconds: 2),
-        ),
-      );
+
+      try {
+        final userQuery = searchText.substring(1); // Remove @ symbol
+        final users = await _userService.searchUsers(userQuery);
+        setState(() {
+          _users = users;
+          _isLoading = false;
+        });
+      } catch (e) {
+        setState(() {
+          _error = 'Error searching users: $e';
+          _isLoading = false;
+        });
+      }
+    } else {
+      // Handle hashtag search as before
+      setState(() {
+        _isSearchingUsers = false;
+      });
+      try {
+        setState(() {
+          _currentFilter = _currentFilter.addHashtag(searchText);
+          _searchController.clear();
+        });
+        _loadVideos(refresh: true);
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString()),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
     }
   }
 
@@ -168,14 +200,11 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   Widget build(BuildContext context) {
     return WillPopScope(
       onWillPop: () async {
-        // First check if there's any modal or dialog to dismiss
         final navigator = Navigator.of(context);
         if (navigator.canPop()) {
           navigator.pop();
           return false;
         }
-
-        // Let the MainNavigationScreen handle the back button
         return true;
       },
       child: Scaffold(
@@ -187,18 +216,12 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Row(
                   children: [
-                    // Search Field
                     Expanded(
                       child: TextField(
                         controller: _searchController,
                         decoration: InputDecoration(
-                          hintText: 'Search hashtags (e.g. pasta)',
-                          prefixIcon: const Icon(Icons.tag),
-                          prefixText: '#',
-                          prefixStyle: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 16,
-                          ),
+                          hintText: 'Search @users or #hashtags',
+                          prefixIcon: const Icon(Icons.search),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
@@ -208,51 +231,51 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           ),
                         ),
                         onSubmitted: _handleSearch,
-                        // Add text change listener to remove # if user types it
                         onChanged: (value) {
-                          if (value.startsWith('#')) {
-                            _searchController.text = value.substring(1);
-                            _searchController.selection =
-                                TextSelection.fromPosition(
-                              TextPosition(
-                                  offset: _searchController.text.length),
-                            );
+                          if (value.isEmpty) {
+                            setState(() {
+                              _users = [];
+                              _isSearchingUsers = false;
+                            });
+                          } else if (value.startsWith('@')) {
+                            _handleSearch(value);
                           }
                         },
                       ),
                     ),
                     const SizedBox(width: 8),
-                    // Filter Button
-                    IconButton.filled(
-                      onPressed: _showFilterSheet,
-                      icon: Stack(
-                        children: [
-                          const Icon(Icons.tune),
-                          if (_currentFilter.hasFilters)
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: Colors.red,
-                                  shape: BoxShape.circle,
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 8,
-                                  minHeight: 8,
+                    // Only show filter button when not searching users
+                    if (!_isSearchingUsers)
+                      IconButton.filled(
+                        onPressed: _showFilterSheet,
+                        icon: Stack(
+                          children: [
+                            const Icon(Icons.tune),
+                            if (_currentFilter.hasFilters)
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 8,
+                                    minHeight: 8,
+                                  ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
                   ],
                 ),
               ),
 
-              // Active Filters Chips
-              if (_currentFilter.hasFilters)
+              // Active Filters Chips (only show when not searching users)
+              if (!_isSearchingUsers && _currentFilter.hasFilters)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Wrap(
@@ -337,7 +360,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                   ),
                 ),
 
-              // Videos Grid
+              // Content Area
               Expanded(
                 child: _error != null
                     ? Center(
@@ -350,6 +373,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                               onPressed: () {
                                 setState(() {
                                   _currentFilter = const VideoFilter();
+                                  _error = null;
                                 });
                                 _loadVideos(refresh: true);
                               },
@@ -358,112 +382,155 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                           ],
                         ),
                       )
-                    : RefreshIndicator(
-                        onRefresh: () => _loadVideos(refresh: true),
-                        child: GridView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.all(8),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            childAspectRatio: 0.8,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
+                    : _isSearchingUsers
+                        ? _buildUserSearchResults()
+                        : RefreshIndicator(
+                            onRefresh: () => _loadVideos(refresh: true),
+                            child: _buildVideoGrid(),
                           ),
-                          itemCount:
-                              _videos.length + (_isLoading && _hasMore ? 1 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= _videos.length) {
-                              return const Center(
-                                child: CircularProgressIndicator(),
-                              );
-                            }
-
-                            final video = _videos[index];
-                            return GestureDetector(
-                              onTap: () {
-                                MainNavigationScreen.jumpToVideo(
-                                  context,
-                                  video.id,
-                                  showBackButton: true,
-                                );
-                              },
-                              child: Card(
-                                clipBehavior: Clip.antiAlias,
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    Image.network(
-                                      video.thumbnailURL,
-                                      fit: BoxFit.cover,
-                                    ),
-                                    // Video metadata overlay
-                                    Positioned(
-                                      left: 0,
-                                      right: 0,
-                                      bottom: 0,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(8),
-                                        decoration: BoxDecoration(
-                                          gradient: LinearGradient(
-                                            begin: Alignment.bottomCenter,
-                                            end: Alignment.topCenter,
-                                            colors: [
-                                              Colors.black.withOpacity(0.8),
-                                              Colors.transparent,
-                                            ],
-                                          ),
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            if (video.budget > 0)
-                                              Text(
-                                                '\$${video.budget.toStringAsFixed(2)}',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            if (video.calories > 0)
-                                              Text(
-                                                '${video.calories} cal',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            if (video.prepTimeMinutes > 0)
-                                              Text(
-                                                '${video.prepTimeMinutes} min',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                            if (video.spiciness > 0)
-                                              Text(
-                                                '🌶️' * video.spiciness,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildUserSearchResults() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_users.isEmpty) {
+      return const Center(
+        child: Text('No users found'),
+      );
+    }
+
+    return ListView.builder(
+      itemCount: _users.length,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      itemBuilder: (context, index) {
+        final user = _users[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundImage: user['avatarURL'] != null
+                ? NetworkImage(user['avatarURL'])
+                : null,
+            child: user['avatarURL'] == null
+                ? Text(user['displayName'][0].toUpperCase())
+                : null,
+          ),
+          title: Text(user['displayName']),
+          subtitle: Text(
+            '${user['followersCount']} followers • ${user['totalLikes']} likes',
+          ),
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => ProfileScreen(userId: user['id']),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildVideoGrid() {
+    return GridView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        childAspectRatio: 0.8,
+        crossAxisSpacing: 8,
+        mainAxisSpacing: 8,
+      ),
+      itemCount: _videos.length + (_isLoading && _hasMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= _videos.length) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        final video = _videos[index];
+        return GestureDetector(
+          onTap: () {
+            MainNavigationScreen.jumpToVideo(
+              context,
+              video.id,
+              showBackButton: true,
+            );
+          },
+          child: Card(
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image.network(
+                  video.thumbnailURL,
+                  fit: BoxFit.cover,
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.8),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (video.budget > 0)
+                          Text(
+                            '\$${video.budget.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        if (video.calories > 0)
+                          Text(
+                            '${video.calories} cal',
+                            style: const TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
+                        if (video.prepTimeMinutes > 0)
+                          Text(
+                            '${video.prepTimeMinutes} min',
+                            style: const TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
+                        if (video.spiciness > 0)
+                          Text(
+                            '🌶️' * video.spiciness,
+                            style: const TextStyle(
+                              color: Colors.white,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
