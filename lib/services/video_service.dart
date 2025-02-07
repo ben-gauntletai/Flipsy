@@ -1466,7 +1466,7 @@ class VideoService {
   }
 
   Future<List<Collection>> getUserCollections(String userId) async {
-    print('VideoService: Getting collections for user $userId');
+    print('\nVideoService: Getting collections for user $userId');
     try {
       print('VideoService: Building query for collections');
       final query = _firestore
@@ -1477,6 +1477,12 @@ class VideoService {
       print('VideoService: Executing query');
       final snapshot = await query.get();
       print('VideoService: Got ${snapshot.docs.length} collection documents');
+
+      for (var doc in snapshot.docs) {
+        print('VideoService: Collection document data:');
+        print('- ID: ${doc.id}');
+        print('- Data: ${doc.data()}');
+      }
 
       final collections = snapshot.docs.map((doc) {
         try {
@@ -1509,7 +1515,7 @@ class VideoService {
     bool isPrivate = false,
   }) async {
     try {
-      print('VideoService: Starting collection creation');
+      print('\nVideoService: Starting collection creation');
       print('VideoService: userId=$userId, name=$name, isPrivate=$isPrivate');
 
       final collectionRef = _firestore.collection('collections').doc();
@@ -1541,6 +1547,15 @@ class VideoService {
       print('VideoService: Setting collection data in Firestore');
       await collectionRef.set(data);
       print('VideoService: Successfully created collection in Firestore');
+
+      // Verify the collection was created
+      final verifyDoc = await collectionRef.get();
+      print(
+          'VideoService: Verification - Collection exists: ${verifyDoc.exists}');
+      if (verifyDoc.exists) {
+        print(
+            'VideoService: Verification - Collection data: ${verifyDoc.data()}');
+      }
 
       return collection;
     } catch (e, stackTrace) {

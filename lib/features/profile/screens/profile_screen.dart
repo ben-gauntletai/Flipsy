@@ -288,25 +288,36 @@ class _ProfileScreenState extends State<ProfileScreen>
     try {
       final userId = widget.userId ?? _currentUserId;
       if (userId == null) {
-        print('ProfileScreen: No userId available for loading collections');
+        print('\nProfileScreen: No userId available for loading collections');
         return;
       }
 
-      print('ProfileScreen: Starting to load collections for user $userId');
+      print('\nProfileScreen: Starting to load collections for user $userId');
+      print('ProfileScreen: Current collections count: ${_collections.length}');
       setState(() {
         _isLoadingCollections = true;
       });
 
       final collections = await _videoService.getUserCollections(userId);
       print('ProfileScreen: Loaded ${collections.length} collections');
+      print('ProfileScreen: Collection details:');
+      for (var collection in collections) {
+        print('- ID: ${collection.id}');
+        print('  Name: ${collection.name}');
+        print('  Video Count: ${collection.videoCount}');
+        print('  Created At: ${collection.createdAt}');
+      }
 
       if (!_isDisposed && mounted) {
+        print('ProfileScreen: Updating state with collections');
         setState(() {
           _collections = collections;
           _isLoadingCollections = false;
         });
         print(
-            'ProfileScreen: Updated state with ${_collections.length} collections');
+            'ProfileScreen: State updated with ${_collections.length} collections');
+        print(
+            'ProfileScreen: Collection IDs in state: ${_collections.map((c) => c.id).join(', ')}');
       }
     } catch (e, stackTrace) {
       print('ProfileScreen: Error loading collections: $e');
@@ -370,12 +381,12 @@ class _ProfileScreenState extends State<ProfileScreen>
                   final userId = widget.userId ?? _currentUserId;
                   if (userId == null) {
                     print(
-                        'ProfileScreen: No userId available for creating collection');
+                        '\nProfileScreen: No userId available for creating collection');
                     return;
                   }
 
                   print(
-                      'ProfileScreen: Creating collection for user $userId with name: $name');
+                      '\nProfileScreen: Creating collection for user $userId with name: $name');
                   final collection = await _videoService.createCollection(
                     userId: userId,
                     name: name,
@@ -385,11 +396,21 @@ class _ProfileScreenState extends State<ProfileScreen>
                       'ProfileScreen: Successfully created collection with ID: ${collection.id}');
 
                   if (mounted) {
+                    print(
+                        'ProfileScreen: Current collections before update: ${_collections.length}');
                     setState(() {
                       _collections = [collection, ..._collections];
                     });
                     print(
                         'ProfileScreen: Updated collections list with new collection');
+                    print(
+                        'ProfileScreen: New collections count: ${_collections.length}');
+                    print(
+                        'ProfileScreen: Collection IDs: ${_collections.map((c) => c.id).join(', ')}');
+
+                    // Reload collections to ensure consistency
+                    _loadCollections();
+
                     Navigator.pop(context);
                   }
                 } catch (e, stackTrace) {
