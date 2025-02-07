@@ -1126,6 +1126,7 @@ class VideoService {
         print('1. No videos match the status=active condition');
         print('2. No videos have the required tags');
         print('3. Index might be missing or not yet built');
+        return [];
       }
 
       // Convert to Video objects and filter out any that might be invalid
@@ -1202,7 +1203,7 @@ class VideoService {
       return videos;
     } catch (e) {
       print('VideoService: Error getting filtered videos: $e');
-      rethrow;
+      return [];
     }
   }
 
@@ -1569,28 +1570,83 @@ class VideoService {
     required String collectionId,
     required String videoId,
   }) async {
-    print('\nAdding video $videoId to collection $collectionId');
+    print(
+        '\nVideoService: Starting to add video $videoId to collection $collectionId');
+    print('VideoService: Current user: ${_currentUserId}');
+
     try {
+      // First verify the collection exists and user owns it
       final collectionRef =
           _firestore.collection('collections').doc(collectionId);
+      final collectionDoc = await collectionRef.get();
+
+      if (!collectionDoc.exists) {
+        print('VideoService: Collection not found');
+        throw Exception('Collection not found');
+      }
+
+      final collectionData = collectionDoc.data();
+      final collectionOwnerId = collectionData?['userId'] as String?;
+
+      // Only check if the user owns the collection
+      if (collectionData == null || collectionOwnerId != _currentUserId) {
+        print(
+            'VideoService: Permission denied - Collection owner: $collectionOwnerId, Current user: $_currentUserId');
+        throw Exception('You can only add videos to your own collections');
+      }
+
+      // Verify the video exists and is accessible
       final videoRef = _firestore.collection('videos').doc(videoId);
+      final videoDoc = await videoRef.get();
+
+      if (!videoDoc.exists) {
+        print('VideoService: Video not found');
+        throw Exception('Video not found');
+      }
+
+      final videoData = videoDoc.data();
+      if (videoData == null) {
+        print('VideoService: Video data is null');
+        throw Exception('Invalid video data');
+      }
+
+      // Check if video is already in the collection
+      final existingVideo =
+          await collectionRef.collection('videos').doc(videoId).get();
+      if (existingVideo.exists) {
+        print('VideoService: Video already exists in collection');
+        return;
+      }
+
+      // Use a batch to ensure both operations succeed or fail together
+      final batch = _firestore.batch();
 
       // Add video to collection's videos subcollection
-      await collectionRef.collection('videos').doc(videoId).set({
+      print('VideoService: Adding video to collection subcollection');
+      final collectionVideoRef =
+          collectionRef.collection('videos').doc(videoId);
+      batch.set(collectionVideoRef, {
         'addedAt': FieldValue.serverTimestamp(),
+        'addedBy': _currentUserId,
+        'videoId': videoId,
+        'thumbnailURL': videoData['thumbnailURL'],
       });
 
-      // Update collection's video count
-      await collectionRef.update({
+      // Update collection's video count and thumbnail
+      print('VideoService: Updating collection metadata');
+      batch.update(collectionRef, {
         'videoCount': FieldValue.increment(1),
         'updatedAt': FieldValue.serverTimestamp(),
-        'thumbnailUrl':
-            await videoRef.get().then((doc) => doc.data()?['thumbnailUrl']),
+        'thumbnailUrl': videoData['thumbnailURL'],
       });
 
-      print('Successfully added video to collection');
-    } catch (e) {
-      print('Error adding video to collection: $e');
+      // Commit both operations
+      await batch.commit();
+      print('VideoService: Successfully added video to collection');
+    } catch (e, stackTrace) {
+      print('VideoService: Error adding video to collection:');
+      print('Error: $e');
+      print('Stack trace: $stackTrace');
       rethrow;
     }
   }
@@ -1713,17 +1769,54 @@ class VideoService {
   }
 
   Stream<List<Collection>> watchUserCollections(String userId) {
-    print('VideoService: Starting to watch collections for user $userId');
+    print('\nVideoService: Starting to watch collections for user $userId');
+    print('VideoService: Current user: ${_currentUserId}');
+
+    if (userId.isEmpty) {
+      print('VideoService: Empty userId provided');
+      return Stream.value([]);
+    }
+
     return _firestore
         .collection('collections')
         .where('userId', isEqualTo: userId)
         .orderBy('updatedAt', descending: true)
         .snapshots()
         .map((snapshot) {
-      final collections =
-          snapshot.docs.map((doc) => Collection.fromFirestore(doc)).toList();
-      print('VideoService: Got ${collections.length} collections update');
+      print('\nVideoService: Received collections snapshot');
+      print('VideoService: Number of documents: ${snapshot.docs.length}');
+
+      final collections = <Collection>[];
+
+      for (var doc in snapshot.docs) {
+        try {
+          print('\nVideoService: Processing collection document ${doc.id}');
+          print('VideoService: Document data: ${doc.data()}');
+
+          final collection = Collection.fromFirestore(doc);
+          collections.add(collection);
+
+          print(
+              'VideoService: Successfully processed collection ${collection.id}');
+          print('- Name: ${collection.name}');
+          print('- Video Count: ${collection.videoCount}');
+          print('- Is Private: ${collection.isPrivate}');
+        } catch (e, stackTrace) {
+          print('VideoService: Error processing collection document ${doc.id}');
+          print('Error: $e');
+          print('Stack trace: $stackTrace');
+          // Continue processing other documents
+        }
+      }
+
+      print('\nVideoService: Finished processing collections');
+      print('VideoService: Returning ${collections.length} collections');
       return collections;
+    }).handleError((error, stackTrace) {
+      print('\nVideoService: Error in collections stream');
+      print('Error: $error');
+      print('Stack trace: $stackTrace');
+      return <Collection>[];
     });
   }
 }

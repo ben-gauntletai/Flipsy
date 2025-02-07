@@ -21,11 +21,11 @@ service cloud.firestore {
 
     // Collections rules
     match /collections/{collectionId} {
-      allow read: if 
-        // Public collections are readable by anyone
-        !resource.data.isPrivate ||
-        // Private collections are only readable by the owner
-        (request.auth != null && request.auth.uid == resource.data.userId);
+      // Allow listing/querying collections
+      allow list: if request.auth != null;
+      
+      // Allow reading individual collections
+      allow get: if request.auth != null;
       
       allow create: if 
         request.auth != null && 
@@ -37,14 +37,20 @@ service cloud.firestore {
 
       // Collection videos subcollection
       match /videos/{videoId} {
-        allow read: if 
-          // Public collection videos are readable by anyone
-          !get(/databases/$(database)/documents/collections/$(collectionId)).data.isPrivate ||
-          // Private collection videos are only readable by the owner
-          (request.auth != null && 
-           request.auth.uid == get(/databases/$(database)/documents/collections/$(collectionId)).data.userId);
+        allow read: if request.auth != null;
         
-        allow write: if 
+        // Allow creating video entries if you own the collection
+        allow create: if 
+          request.auth != null && 
+          get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
+        
+        // Allow updating video entries if you own the collection
+        allow update: if 
+          request.auth != null && 
+          get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
+        
+        // Allow deleting video entries if you own the collection
+        allow delete: if 
           request.auth != null && 
           get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
       }
