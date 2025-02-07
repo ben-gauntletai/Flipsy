@@ -181,13 +181,23 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
 
       if (mounted) {
         Navigator.of(context).pop(); // Close progress dialog
-        if (widget.onVideoUploaded != null) {
-          widget.onVideoUploaded!(video.id);
-        }
+
+        // First dispose the video controller
+        await _videoController?.dispose();
+        _videoController = null;
+
+        // Then reset the form state
+        _resetForm();
+
+        // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Video uploaded successfully!')),
         );
-        _resetForm(); // Reset all form fields and state
+
+        // Finally trigger navigation callback
+        if (widget.onVideoUploaded != null) {
+          widget.onVideoUploaded!(video.id);
+        }
       }
     } catch (e) {
       print('Error in upload process: $e');
@@ -218,7 +228,6 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       _privacy = 'everyone';
       _spiciness = 0;
       _error = null;
-      _videoController?.dispose();
       _videoController = null;
     });
   }

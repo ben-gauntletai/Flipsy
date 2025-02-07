@@ -557,6 +557,11 @@ class _ProfileScreenState extends State<ProfileScreen>
                                 ),
                           ),
                         ],
+                        // Add social media links
+                        _buildSocialLinks(
+                          userData['instagramLink'] as String?,
+                          userData['youtubeLink'] as String?,
+                        ),
                         const SizedBox(height: 16),
                         // Stats Row
                         Row(
