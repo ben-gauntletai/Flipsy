@@ -141,6 +141,36 @@ Stores user notifications.
 }
 ```
 
+### collections
+Collection of user-created video collections.
+
+**Path:** `collections/{collectionId}`
+```typescript
+{
+  userId: string;         // Reference to users/{userId}
+  name: string;          // Collection name
+  description: string;   // Optional collection description
+  thumbnailURL: string;  // URL to collection thumbnail (usually first video's thumbnail)
+  createdAt: timestamp;  // When the collection was created
+  updatedAt: timestamp;  // When the collection was last updated
+  videoCount: number;    // Number of videos in the collection
+  isPrivate: boolean;    // Whether the collection is private
+}
+```
+
+#### Sub-collections
+
+##### videos
+Collection of videos in this collection.
+
+**Path:** `collections/{collectionId}/videos/{videoId}`
+```typescript
+{
+  // Same as video document in videos collection
+  // This is a copy of the video data for quick access
+}
+```
+
 ## Indexes
 
 ### Required Indexes
@@ -156,6 +186,9 @@ Note: We now use a tag-based filtering system where all filterable attributes ar
 
 3. notifications collection:
    - userId, type, createdAt DESC
+
+4. collections collection:
+   - userId ASC, createdAt DESC
 
 ## Security Rules
 

@@ -11,6 +11,9 @@ import 'dart:collection';
 import 'dart:math' as math;
 import '../models/video_filter.dart';
 import 'package:cloud_functions/cloud_functions.dart';
+import '../models/collection.dart';
+import 'video_cache_service.dart';
+import 'package:flutter/foundation.dart';
 
 class VideoService {
   static final VideoService _instance = VideoService._internal();
@@ -25,6 +28,11 @@ class VideoService {
   final Map<String, List<Video>> _queryCache = {};
   final Map<String, DateTime> _queryCacheTimestamps = {};
   static const Duration _cacheDuration = Duration(minutes: 5);
+  final Map<int, VideoPlayerController> _controllers = {};
+  final Map<int, String> _controllerUrls = {};
+  final Map<int, Completer<void>> _initializationCompleters = {};
+  final Map<int, bool> _initializationStarted = {};
+  final Set<int> _disposingControllers = {};
 
   VideoService._internal();
 
@@ -34,7 +42,9 @@ class VideoService {
   Future<String> generateAndUploadThumbnail(
       String userId, File videoFile) async {
     try {
-      print('Generating thumbnail...');
+      debugPrint('VideoService: Generating thumbnail...');
+      debugPrint('VideoService: Current user: ${_currentUserId}');
+      debugPrint('VideoService: Target user: $userId');
       final thumbnailFile = await VideoCompress.getFileThumbnail(
         videoFile.path,
         quality: 50,
@@ -875,10 +885,12 @@ class VideoService {
     }
   }
 
-  // Get a single video by ID
+  // Get a single video by ID with detailed logging
   Future<Video?> getVideoById(String videoId) async {
     try {
-      print('VideoService: Fetching video by ID: $videoId');
+      print('\nVideoService: Fetching video by ID: $videoId');
+      print('VideoService: Current user ID: $_currentUserId');
+
       final doc = await _firestore.collection('videos').doc(videoId).get();
 
       if (!doc.exists) {
@@ -887,6 +899,10 @@ class VideoService {
       }
 
       final video = Video.fromFirestore(doc);
+      print('VideoService: Video found:');
+      print('- Owner ID: ${video.userId}');
+      print('- Privacy: ${video.privacy}');
+      print('- Current user is owner: ${video.userId == _currentUserId}');
 
       // Check privacy settings
       if (video.privacy == 'private' && video.userId != _currentUserId) {
@@ -896,11 +912,13 @@ class VideoService {
 
       if (video.privacy == 'followers' && video.userId != _currentUserId) {
         // Check if user is a follower
+        print('VideoService: Checking if user is a follower');
         final followDoc = await _firestore
             .collection('follows')
             .doc('${_currentUserId}_${video.userId}')
             .get();
 
+        print('VideoService: Follow status: ${followDoc.exists}');
         if (!followDoc.exists) {
           print(
               'VideoService: Video is followers-only and user is not a follower');
@@ -910,8 +928,9 @@ class VideoService {
 
       print('VideoService: Successfully fetched video: ${video.id}');
       return video;
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('VideoService: Error fetching video by ID: $e');
+      print('VideoService: Stack trace: $stackTrace');
       return null;
     }
   }
@@ -1425,6 +1444,265 @@ class VideoService {
     } catch (e) {
       print('VideoService: Error in migration: $e');
       rethrow;
+    }
+  }
+
+  Future<List<Video>> getCollectionVideos(String collectionId) async {
+    print('VideoService: Getting videos for collection $collectionId');
+    try {
+      final snapshot = await _firestore
+          .collection('collections')
+          .doc(collectionId)
+          .collection('videos')
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      return snapshot.docs.map((doc) => Video.fromFirestore(doc)).toList();
+    } catch (e) {
+      print('VideoService: Error getting collection videos: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<Collection>> getUserCollections(String userId) async {
+    print('VideoService: Getting collections for user $userId');
+    try {
+      print('VideoService: Building query for collections');
+      final query = _firestore
+          .collection('collections')
+          .where('userId', isEqualTo: userId)
+          .orderBy('createdAt', descending: true);
+
+      print('VideoService: Executing query');
+      final snapshot = await query.get();
+      print('VideoService: Got ${snapshot.docs.length} collection documents');
+
+      final collections = snapshot.docs.map((doc) {
+        try {
+          print('VideoService: Converting doc ${doc.id} to Collection');
+          final collection = Collection.fromFirestore(doc);
+          print(
+              'VideoService: Successfully converted collection ${collection.id}');
+          return collection;
+        } catch (e, stackTrace) {
+          print(
+              'VideoService: Error converting doc ${doc.id} to Collection: $e');
+          print('VideoService: Stack trace: $stackTrace');
+          rethrow;
+        }
+      }).toList();
+
+      print(
+          'VideoService: Successfully converted ${collections.length} collections');
+      return collections;
+    } catch (e, stackTrace) {
+      print('VideoService: Error getting user collections: $e');
+      print('VideoService: Stack trace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  Future<Collection> createCollection({
+    required String userId,
+    required String name,
+    bool isPrivate = false,
+  }) async {
+    try {
+      print('VideoService: Starting collection creation');
+      print('VideoService: userId=$userId, name=$name, isPrivate=$isPrivate');
+
+      final collectionRef = _firestore.collection('collections').doc();
+      print('VideoService: Generated collection ID: ${collectionRef.id}');
+
+      final now = DateTime.now();
+
+      // Create local Collection object
+      final collection = Collection(
+        id: collectionRef.id,
+        userId: userId,
+        name: name,
+        createdAt: now,
+        updatedAt: now,
+        videoCount: 0,
+        isPrivate: isPrivate,
+      );
+
+      // Create Firestore data with server timestamp
+      final data = {
+        'userId': userId,
+        'name': name,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'videoCount': 0,
+        'isPrivate': isPrivate,
+      };
+
+      print('VideoService: Setting collection data in Firestore');
+      await collectionRef.set(data);
+      print('VideoService: Successfully created collection in Firestore');
+
+      return collection;
+    } catch (e, stackTrace) {
+      print('VideoService: Error creating collection: $e');
+      print('VideoService: Stack trace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  Future<void> addVideoToCollection(String collectionId, Video video) async {
+    try {
+      final batch = _firestore.batch();
+
+      // Add video to collection's videos subcollection
+      final videoRef = _firestore
+          .collection('collections')
+          .doc(collectionId)
+          .collection('videos')
+          .doc(video.id);
+
+      batch.set(videoRef, video.toFirestore());
+
+      // Update collection's video count and thumbnail if it's the first video
+      final collectionRef =
+          _firestore.collection('collections').doc(collectionId);
+      final collectionDoc = await collectionRef.get();
+      final collectionData = collectionDoc.data() as Map<String, dynamic>;
+
+      if (collectionData['videoCount'] == 0) {
+        batch.update(collectionRef, {
+          'thumbnailURL': video.thumbnailURL,
+          'videoCount': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      } else {
+        batch.update(collectionRef, {
+          'videoCount': FieldValue.increment(1),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      await batch.commit();
+    } catch (e) {
+      print('VideoService: Error adding video to collection: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> removeVideoFromCollection(
+      String collectionId, String videoId) async {
+    try {
+      final batch = _firestore.batch();
+
+      // Remove video from collection's videos subcollection
+      final videoRef = _firestore
+          .collection('collections')
+          .doc(collectionId)
+          .collection('videos')
+          .doc(videoId);
+
+      batch.delete(videoRef);
+
+      // Update collection's video count
+      final collectionRef =
+          _firestore.collection('collections').doc(collectionId);
+      batch.update(collectionRef, {
+        'videoCount': FieldValue.increment(-1),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+    } catch (e) {
+      print('VideoService: Error removing video from collection: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateCollection({
+    required String collectionId,
+    String? name,
+    bool? isPrivate,
+  }) async {
+    try {
+      final updates = <String, dynamic>{
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (name != null) updates['name'] = name;
+      if (isPrivate != null) updates['isPrivate'] = isPrivate;
+
+      await _firestore
+          .collection('collections')
+          .doc(collectionId)
+          .update(updates);
+    } catch (e) {
+      print('VideoService: Error updating collection: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteCollection(String collectionId) async {
+    try {
+      // First, delete all videos in the collection
+      final videosSnapshot = await _firestore
+          .collection('collections')
+          .doc(collectionId)
+          .collection('videos')
+          .get();
+
+      final batch = _firestore.batch();
+      for (var doc in videosSnapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Then delete the collection document
+      batch.delete(_firestore.collection('collections').doc(collectionId));
+
+      await batch.commit();
+    } catch (e) {
+      print('VideoService: Error deleting collection: $e');
+      rethrow;
+    }
+  }
+
+  Future<VideoPlayerController?> getController(int index) async {
+    print('VideoControllerManager: Getting controller for index $index');
+    print(
+        'VideoControllerManager: Current auth state: ${FirebaseAuth.instance.currentUser?.uid ?? 'not signed in'}');
+
+    // Don't return a controller that's being disposed
+    if (_disposingControllers.contains(index)) {
+      print(
+          'VideoControllerManager: Controller $index is being disposed, returning null');
+      return null;
+    }
+
+    if (!_controllers.containsKey(index)) {
+      print('VideoControllerManager: No controller exists for index $index');
+      return null;
+    }
+
+    try {
+      if (_initializationCompleters.containsKey(index)) {
+        // ... existing code ...
+      }
+    } catch (e) {
+      print('VideoService: Error getting controller: $e');
+      return null;
+    }
+  }
+
+  Future<void> _initializeController(int index, Video video) async {
+    debugPrint(
+        'VideoControllerManager: Entering _initializeController for index $index');
+    debugPrint('VideoControllerManager: Video URL: ${video.videoURL}');
+    debugPrint('VideoControllerManager: Video privacy: ${video.privacy}');
+    debugPrint('VideoControllerManager: Video owner: ${video.userId}');
+    debugPrint(
+        'VideoControllerManager: Current user: ${FirebaseAuth.instance.currentUser?.uid ?? 'not signed in'}');
+
+    if (_disposingControllers.contains(index)) {
+      // ... existing code ...
     }
   }
 }
