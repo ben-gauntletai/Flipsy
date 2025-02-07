@@ -130,133 +130,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
           allowFromNow: true,
         );
 
-        if (notificationType == 'video_post') {
-          return ListTile(
-            leading: GestureDetector(
-              onTap: () {
-                MainNavigationScreen.showUserProfile(context, sourceUserId);
-              },
-              child: UserAvatar(
-                avatarURL: userData['avatarURL'] as String?,
-                radius: 24,
-              ),
-            ),
-            title: RichText(
-              text: TextSpan(
-                style: const TextStyle(color: Colors.black87),
-                children: [
-                  TextSpan(
-                    text: userData['displayName'] as String,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const TextSpan(text: ' posted a new video'),
-                ],
-              ),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(timeAgo),
-                if (notification['videoDescription'] != null)
-                  Text(
-                    notification['videoDescription'] as String,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black54),
-                  ),
-              ],
-            ),
-            trailing: notification['videoThumbnailURL'] != null
-                ? GestureDetector(
-                    onTap: () {
-                      MainNavigationScreen.jumpToVideo(
-                        context,
-                        notification['videoId'] as String,
-                        showBackButton: true,
-                      );
-                    },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.network(
-                        notification['videoThumbnailURL'] as String,
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  )
-                : null,
-          );
-        } else if (notificationType == 'comment' ||
-            notificationType == 'comment_reply') {
-          return ListTile(
-            leading: GestureDetector(
-              onTap: () {
-                MainNavigationScreen.showUserProfile(context, sourceUserId);
-              },
-              child: UserAvatar(
-                avatarURL: userData['avatarURL'] as String?,
-                radius: 24,
-              ),
-            ),
-            title: RichText(
-              text: TextSpan(
-                style: const TextStyle(color: Colors.black87),
-                children: [
-                  TextSpan(
-                    text: userData['displayName'] as String,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  TextSpan(
-                    text: notificationType == 'comment'
-                        ? ' commented on your video'
-                        : ' replied to your comment',
-                  ),
-                ],
-              ),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(timeAgo),
-                if (notification['commentText'] != null)
-                  Text(
-                    notification['commentText'] as String,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black54),
-                  ),
-              ],
-            ),
-            trailing: notification['videoThumbnailURL'] != null
-                ? GestureDetector(
-                    onTap: () {
-                      MainNavigationScreen.jumpToVideo(
-                        context,
-                        notification['videoId'] as String,
-                        showBackButton: true,
-                      );
-                    },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: Image.network(
-                        notification['videoThumbnailURL'] as String,
-                        width: 50,
-                        height: 50,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  )
-                : null,
-          );
-        }
-
-        // Follow notification (existing code)
-        return StreamBuilder<bool>(
-          stream: _userService.watchFollowStatus(sourceUserId),
-          builder: (context, followSnapshot) {
-            final isFollowing = followSnapshot.data ?? false;
-
+        switch (notificationType) {
+          case 'video_post':
             return ListTile(
               leading: GestureDetector(
                 onTap: () {
@@ -275,32 +150,209 @@ class _ActivityScreenState extends State<ActivityScreen> {
                       text: userData['displayName'] as String,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    const TextSpan(text: ' started following you'),
+                    const TextSpan(text: ' posted a new video'),
+                  ],
+                ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(timeAgo),
+                  if (notification['videoDescription'] != null)
+                    Text(
+                      notification['videoDescription'] as String,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54),
+                    ),
+                ],
+              ),
+              trailing: notification['videoThumbnailURL'] != null
+                  ? GestureDetector(
+                      onTap: () {
+                        MainNavigationScreen.jumpToVideo(
+                          context,
+                          notification['videoId'] as String,
+                          showBackButton: true,
+                        );
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.network(
+                          notification['videoThumbnailURL'] as String,
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    )
+                  : null,
+            );
+
+          case 'comment':
+          case 'comment_reply':
+            return ListTile(
+              leading: GestureDetector(
+                onTap: () {
+                  MainNavigationScreen.showUserProfile(context, sourceUserId);
+                },
+                child: UserAvatar(
+                  avatarURL: userData['avatarURL'] as String?,
+                  radius: 24,
+                ),
+              ),
+              title: RichText(
+                text: TextSpan(
+                  style: const TextStyle(color: Colors.black87),
+                  children: [
+                    TextSpan(
+                      text: userData['displayName'] as String,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    TextSpan(
+                      text: notificationType == 'comment'
+                          ? ' commented on your video'
+                          : ' replied to your comment',
+                    ),
+                  ],
+                ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(timeAgo),
+                  if (notification['commentText'] != null)
+                    Text(
+                      notification['commentText'] as String,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.black54),
+                    ),
+                ],
+              ),
+              trailing: notification['videoThumbnailURL'] != null
+                  ? GestureDetector(
+                      onTap: () {
+                        MainNavigationScreen.jumpToVideo(
+                          context,
+                          notification['videoId'] as String,
+                          showBackButton: true,
+                        );
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.network(
+                          notification['videoThumbnailURL'] as String,
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    )
+                  : null,
+            );
+
+          case 'commentLike':
+            return ListTile(
+              leading: GestureDetector(
+                onTap: () {
+                  MainNavigationScreen.showUserProfile(context, sourceUserId);
+                },
+                child: UserAvatar(
+                  avatarURL: userData['avatarURL'] as String?,
+                  radius: 24,
+                ),
+              ),
+              title: RichText(
+                text: TextSpan(
+                  style: const TextStyle(color: Colors.black87),
+                  children: [
+                    TextSpan(
+                      text: userData['displayName'] as String,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const TextSpan(text: ' liked your comment'),
                   ],
                 ),
               ),
               subtitle: Text(timeAgo),
-              trailing: SizedBox(
-                width: 110,
-                child: TextButton(
-                  onPressed: () =>
-                      _handleFollowAction(sourceUserId, isFollowing),
-                  style: TextButton.styleFrom(
-                    backgroundColor:
-                        isFollowing ? Colors.grey[200] : Colors.blue,
-                    foregroundColor:
-                        isFollowing ? Colors.black87 : Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                  ),
-                  child: Text(isFollowing ? 'Friends' : 'Follow back'),
-                ),
-              ),
+              trailing: notification['videoThumbnailURL'] != null
+                  ? GestureDetector(
+                      onTap: () {
+                        MainNavigationScreen.jumpToVideo(
+                          context,
+                          notification['videoId'] as String,
+                          showBackButton: true,
+                        );
+                      },
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.network(
+                          notification['videoThumbnailURL'] as String,
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    )
+                  : null,
             );
-          },
-        );
+
+          case 'follow':
+            return StreamBuilder<bool>(
+              stream: _userService.watchFollowStatus(sourceUserId),
+              builder: (context, followSnapshot) {
+                final isFollowing = followSnapshot.data ?? false;
+
+                return ListTile(
+                  leading: GestureDetector(
+                    onTap: () {
+                      MainNavigationScreen.showUserProfile(
+                          context, sourceUserId);
+                    },
+                    child: UserAvatar(
+                      avatarURL: userData['avatarURL'] as String?,
+                      radius: 24,
+                    ),
+                  ),
+                  title: RichText(
+                    text: TextSpan(
+                      style: const TextStyle(color: Colors.black87),
+                      children: [
+                        TextSpan(
+                          text: userData['displayName'] as String,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const TextSpan(text: ' started following you'),
+                      ],
+                    ),
+                  ),
+                  subtitle: Text(timeAgo),
+                  trailing: SizedBox(
+                    width: 110,
+                    child: TextButton(
+                      onPressed: () =>
+                          _handleFollowAction(sourceUserId, isFollowing),
+                      style: TextButton.styleFrom(
+                        backgroundColor:
+                            isFollowing ? Colors.grey[200] : Colors.blue,
+                        foregroundColor:
+                            isFollowing ? Colors.black87 : Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                      child: Text(isFollowing ? 'Friends' : 'Follow back'),
+                    ),
+                  ),
+                );
+              },
+            );
+
+          default:
+            return const SizedBox.shrink();
+        }
       },
     );
   }
@@ -315,11 +367,8 @@ class _ActivityScreenState extends State<ActivityScreen> {
         ),
         body: const Center(
           child: Text(
-            'Please sign in to view your activity',
-            style: TextStyle(
-              color: Colors.black54,
-              fontSize: 16,
-            ),
+            'Please sign in to see your activity',
+            style: TextStyle(color: Colors.black54),
           ),
         ),
       );
@@ -333,32 +382,37 @@ class _ActivityScreenState extends State<ActivityScreen> {
         stream: _firestore
             .collection('notifications')
             .where('userId', isEqualTo: _currentUserId)
-            .where('type',
-                whereIn: ['follow', 'video_post', 'comment', 'comment_reply'])
             .orderBy('createdAt', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) {
+            return Center(
+              child: Text('Error: ${snapshot.error}'),
+            );
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          if (!snapshot.hasData) {
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
+          }
+
+          final notifications = snapshot.data!.docs;
+
+          if (notifications.isEmpty) {
             return const Center(
               child: Text(
-                'No activity yet',
-                style: TextStyle(
-                  color: Colors.black54,
-                  fontSize: 16,
-                ),
+                'No notifications yet',
+                style: TextStyle(color: Colors.black54),
               ),
             );
           }
 
           return ListView.builder(
-            itemCount: snapshot.data!.docs.length,
+            itemCount: notifications.length,
             itemBuilder: (context, index) {
               final notification =
-                  snapshot.data!.docs[index].data() as Map<String, dynamic>;
+                  notifications[index].data() as Map<String, dynamic>;
               return _buildNotificationItem(notification);
             },
           );

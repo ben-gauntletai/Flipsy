@@ -487,6 +487,17 @@ export const followUser = functions.https.onCall(async (data: CallableRequest<Fo
         followersCount: admin.firestore.FieldValue.increment(1),
       });
 
+      // Create notification for the user being followed
+      console.log("Creating follow notification");
+      const notificationRef = db.collection("notifications").doc();
+      transaction.set(notificationRef, {
+        userId: followingId,
+        type: "follow",
+        sourceUserId: followerId,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        read: false,
+      });
+
       console.log("Transaction completed successfully");
     });
 
