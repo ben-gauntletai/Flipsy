@@ -18,6 +18,9 @@ import {
 import * as admin from "firebase-admin";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { PineconeService, VideoVector } from "./services/pinecone.service";
+import { initializeApp } from "firebase-admin/app";
+// import { getFirestore } from "firebase-admin/firestore";
 
 // Custom type for vision messages
 // type VisionContent = {
@@ -33,7 +36,17 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 //   response.send("Hello from Firebase!");
 // });
 
-admin.initializeApp();
+// Initialize Firebase Admin
+initializeApp();
+// const db = getFirestore();
+
+// Initialize OpenAI
+// const openai = new OpenAI({
+//   apiKey: process.env.OPENAI_API_KEY,
+// });
+
+// Initialize Pinecone
+// const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
 
 interface SignUpData {
   email: string;
@@ -1164,144 +1177,368 @@ export const analyzeVideo = onDocumentCreated(
     }
   },
 );
-// export const analyzeExistingVideos = onCall(
-//   {
-//     secrets: ["OPENAI_API_KEY"],
-//   },
-//   async () => {
-//     try {
-//       console.log("analyzeExistingVideos function started");
+export const analyzeExistingVideos = onCall(
+  {
+    secrets: ["OPENAI_API_KEY"],
+  },
+  async () => {
+    try {
+      console.log("analyzeExistingVideos function started");
 
-//       // Get all active videos
-//       const db = admin.firestore();
-//       const videosSnapshot = await db.collection("videos")
-//         .where("status", "==", "active")
-//         .get();
+      // Get all active videos
+      const db = admin.firestore();
+      const videosSnapshot = await db.collection("videos")
+        .where("status", "==", "active")
+        .get();
 
-//       console.log(`Found ${videosSnapshot.docs.length} active videos to analyze`);
+      console.log(`Found ${videosSnapshot.docs.length} active videos to analyze`);
 
-//       let processedCount = 0;
-//       let skippedCount = 0;
-//       let errorCount = 0;
+      let processedCount = 0;
+      let skippedCount = 0;
+      let errorCount = 0;
 
-//       for (const doc of videosSnapshot.docs) {
-//         try {
-//           const videoData = doc.data();
-//           if (!videoData.thumbnailURL) {
-//             console.log(`Skipping video ${doc.id} - no thumbnail URL`);
-//             skippedCount++;
-//             continue;
-//           }
+      for (const doc of videosSnapshot.docs) {
+        try {
+          const videoData = doc.data();
+          if (!videoData.thumbnailURL) {
+            console.log(`Skipping video ${doc.id} - no thumbnail URL`);
+            skippedCount++;
+            continue;
+          }
 
-//           // Skip if already has AI enhancements and no force flag
-//           if (videoData.aiEnhancements?.description) {
-//             console.log(`Skipping video ${doc.id} - already has AI description`);
-//             skippedCount++;
-//             continue;
-//           }
+          // Skip if already has AI enhancements and no force flag
+          if (videoData.aiEnhancements?.description) {
+            console.log(`Skipping video ${doc.id} - already has AI description`);
+            skippedCount++;
+            continue;
+          }
 
-//           console.log("Getting OpenAI API key from environment...");
-//           const apiKey = process.env.OPENAI_API_KEY;
-//           if (!apiKey) {
-//             console.error("OpenAI API key not found in environment variables");
-//             throw new functions.https.HttpsError(
-//               "failed-precondition",
-//               "OpenAI API key not configured",
-//             );
-//           }
+          console.log("Getting OpenAI API key from environment...");
+          const apiKey = process.env.OPENAI_API_KEY;
+          if (!apiKey) {
+            console.error("OpenAI API key not found in environment variables");
+            throw new functions.https.HttpsError(
+              "failed-precondition",
+              "OpenAI API key not configured",
+            );
+          }
 
-//           console.log("Initializing OpenAI client...");
-//           const openai = new OpenAI({
-//             apiKey: apiKey,
-//           });
+          console.log("Initializing OpenAI client...");
+          const openai = new OpenAI({
+            apiKey: apiKey,
+          });
 
-//           const systemPrompt =
-//             "You are a cooking video analyzer. Describe what is happening in this " +
-//             "thumbnail from a cooking video. Focus on the cooking techniques, " +
-//             "ingredients, and overall dish being prepared. Be concise but descriptive, " +
-//             "and highlight any unique or interesting aspects of the preparation method " +
-//             "or presentation.";
+          const systemPrompt =
+            "You are a cooking video analyzer. Describe what is happening in this " +
+            "thumbnail from a cooking video. Focus on the cooking techniques, " +
+            "ingredients, and overall dish being prepared. Be concise but descriptive, " +
+            "and highlight any unique or interesting aspects of the preparation method " +
+            "or presentation.";
 
-//           console.log("Preparing messages for OpenAI...");
-//           const messages: ChatCompletionMessageParam[] = [
-//             {
-//               role: "system",
-//               content: systemPrompt,
-//             },
-//             {
-//               role: "user",
-//               content: [
-//                 {
-//                   type: "text",
-//                   text: "Please analyze this cooking video thumbnail:",
-//                 },
-//                 {
-//                   type: "image_url",
-//                   image_url: {
-//                     url: videoData.thumbnailURL,
-//                   },
-//                 },
-//               ],
-//             },
-//           ];
+          console.log("Preparing messages for OpenAI...");
+          const messages: ChatCompletionMessageParam[] = [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Please analyze this cooking video thumbnail:",
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: videoData.thumbnailURL,
+                  },
+                },
+              ],
+            },
+          ];
 
-//           console.log("Calling OpenAI API...", {
-//             thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
-//           });
+          console.log("Calling OpenAI API...", {
+            thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
+          });
 
-//           const response = await openai.chat.completions.create({
-//             model: "gpt-4o-mini",
-//             messages,
-//             max_tokens: 300,
-//           });
+          const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini",
+            messages,
+            max_tokens: 300,
+          });
 
-//           console.log("OpenAI API response received", {
-//             hasChoices: !!response.choices.length,
-//             firstChoice: !!response.choices[0]?.message?.content,
-//           });
+          console.log("OpenAI API response received", {
+            hasChoices: !!response.choices.length,
+            firstChoice: !!response.choices[0]?.message?.content,
+          });
 
-//           // Store the AI-generated description
-//           console.log("Storing AI-generated description...");
-//           await db.collection("videos").doc(doc.id).update({
-//             aiEnhancements: {
-//               description: response.choices[0].message.content || "",
-//               generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-//             },
-//           });
+          // Store the AI-generated description
+          console.log("Storing AI-generated description...");
+          await db.collection("videos").doc(doc.id).update({
+            aiEnhancements: {
+              description: response.choices[0].message.content || "",
+              generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          });
 
-//           console.log("Successfully analyzed video and stored description", {
-//             videoId: doc.id,
-//             descriptionLength: response.choices[0].message.content?.length || 0,
-//           });
+          console.log("Successfully analyzed video and stored description", {
+            videoId: doc.id,
+            descriptionLength: response.choices[0].message.content?.length || 0,
+          });
 
-//           processedCount++;
-//         } catch (error) {
-//           console.error(`Error processing video ${doc.id}:`, error);
-//           errorCount++;
-//         }
-//       }
+          processedCount++;
+        } catch (error) {
+          console.error(`Error processing video ${doc.id}:`, error);
+          errorCount++;
+        }
+      }
 
-//       return {
-//         success: true,
-//         totalVideos: videosSnapshot.docs.length,
-//         processedCount,
-//         skippedCount,
-//         errorCount,
-//       };
-//     } catch (error: unknown) {
-//       console.error("Error in analyzeExistingVideos:", error);
-//       if (error instanceof functions.https.HttpsError) {
-//         throw error;
-//       }
-//       if (error instanceof Error) {
-//         console.error("Error details:", {
-//           name: error.name,
-//           message: error.message,
-//           stack: error.stack,
-//         });
-//       }
-//       throw new functions.https.HttpsError("internal", "Failed to analyze videos");
-//     }
-//   }
-// );
+      return {
+        success: true,
+        totalVideos: videosSnapshot.docs.length,
+        processedCount,
+        skippedCount,
+        errorCount,
+      };
+    } catch (error: unknown) {
+      console.error("Error in analyzeExistingVideos:", error);
+      if (error instanceof functions.https.HttpsError) {
+        throw error;
+      }
+      if (error instanceof Error) {
+        console.error("Error details:", {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        });
+      }
+      throw new functions.https.HttpsError("internal", "Failed to analyze videos");
+    }
+  }
+);
+
+/**
+ * Generate vector embedding for video content
+ */
+export const generateVideoEmbedding = onDocumentCreated(
+  {
+    document: "videos/{videoId}",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+    region: "us-central1",
+  },
+  async (event) => {
+    const snapshot = event.data;
+    if (!snapshot) {
+      console.error("No data associated with the event");
+      return;
+    }
+
+    const videoData = snapshot.data();
+    const videoId = event.params.videoId;
+
+    functions.logger.info("Generating vector embedding for video", { videoId });
+
+    try {
+      // Initialize services with secrets
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const pineconeService = new PineconeService(
+        process.env.PINECONE_API_KEY || ""
+      );
+
+      // Update video with pending status
+      await snapshot.ref.update({
+        vectorEmbedding: {
+          status: "pending",
+          updatedAt: new Date(),
+        },
+      });
+
+      // Generate embedding using video description and tags
+      const content = [
+        videoData.description || "",
+        videoData.hashtags?.join(" ") || "",
+        videoData.tags?.join(" ") || "",
+      ].join(" ");
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: content,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+
+      // Create vector record
+      const vector: VideoVector = {
+        id: videoId,
+        values: embedding,
+        metadata: {
+          userId: videoData.userId,
+          status: videoData.status,
+          privacy: videoData.privacy,
+          tags: videoData.tags || [],
+        },
+      };
+
+      // Upsert to Pinecone
+      await pineconeService.upsertVector(vector);
+
+      functions.logger.info("Successfully generated and stored vector embedding", { videoId });
+    } catch (error) {
+      functions.logger.error("Error generating vector embedding", { error, videoId });
+
+      // Update video with failed status
+      await snapshot.ref.update({
+        vectorEmbedding: {
+          status: "failed",
+          updatedAt: new Date(),
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+      });
+    }
+  }
+);
+
+/**
+ * Update vector embedding when video is updated
+ */
+export const updateVideoEmbedding = onDocumentUpdated(
+  {
+    document: "videos/{videoId}",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+    region: "us-central1",
+  },
+  async (event) => {
+    const beforeData = event.data?.before.data();
+    const afterData = event.data?.after.data();
+    const videoId = event.params.videoId;
+
+    if (!beforeData || !afterData || !event.data) {
+      console.error("Missing data in update event");
+      return;
+    }
+
+    // Check if relevant fields were updated
+    const shouldUpdateEmbedding =
+      beforeData.description !== afterData.description ||
+      JSON.stringify(beforeData.hashtags) !== JSON.stringify(afterData.hashtags) ||
+      JSON.stringify(beforeData.tags) !== JSON.stringify(afterData.tags);
+
+    if (!shouldUpdateEmbedding) {
+      functions.logger.info("No relevant changes for vector embedding", { videoId });
+      return;
+    }
+
+    functions.logger.info("Updating vector embedding for video", { videoId });
+
+    try {
+      // Initialize services with secrets
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const pineconeService = new PineconeService(
+        process.env.PINECONE_API_KEY || ""
+      );
+
+      // Update video with pending status
+      await event.data.after.ref.update({
+        vectorEmbedding: {
+          status: "pending",
+          updatedAt: new Date(),
+        },
+      });
+
+      // Generate new embedding
+      const content = [
+        afterData.description || "",
+        afterData.hashtags?.join(" ") || "",
+        afterData.tags?.join(" ") || "",
+      ].join(" ");
+
+      const embeddingResponse = await openai.embeddings.create({
+        model: "text-embedding-3-small",
+        input: content,
+      });
+
+      const embedding = embeddingResponse.data[0].embedding;
+
+      // Create vector record
+      const vector: VideoVector = {
+        id: videoId,
+        values: embedding,
+        metadata: {
+          userId: afterData.userId,
+          status: afterData.status,
+          privacy: afterData.privacy,
+          tags: afterData.tags || [],
+        },
+      };
+
+      // Upsert to Pinecone
+      await pineconeService.upsertVector(vector);
+
+      functions.logger.info("Successfully updated vector embedding", { videoId });
+    } catch (error) {
+      functions.logger.error("Error updating vector embedding", { error, videoId });
+
+      // Update video with failed status
+      await event.data.after.ref.update({
+        vectorEmbedding: {
+          status: "failed",
+          updatedAt: new Date(),
+          error: error instanceof Error ? error.message : "Unknown error",
+        },
+      });
+    }
+  }
+);
+
+/**
+ * Delete vector embedding when video is deleted
+ */
+export const deleteVideoEmbedding = onDocumentDeleted(
+  {
+    document: "videos/{videoId}",
+    secrets: ["PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+    region: "us-central1",
+  },
+  async (event) => {
+    const videoId = event.params.videoId;
+
+    functions.logger.info("Deleting vector embedding for video", { videoId });
+
+    try {
+      const pineconeService = new PineconeService(
+        process.env.PINECONE_API_KEY || ""
+      );
+
+      await pineconeService.deleteVector(videoId);
+      functions.logger.info("Successfully deleted vector embedding", { videoId });
+    } catch (error) {
+      functions.logger.error("Error deleting vector embedding", { error, videoId });
+    }
+  }
+);
+
+export const getVideoSummary = onCall(async (request: CallableRequest) => {
+  const { videoId } = request.data;
+  if (!videoId) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Video ID is required"
+    );
+  }
+
+  const summary = "Video summary placeholder";
+  const keywords = ["keyword1", "keyword2"];
+
+  return {
+    summary,
+    keywords,
+  };
+});
 

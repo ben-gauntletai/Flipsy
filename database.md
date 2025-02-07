@@ -30,6 +30,11 @@ Main collection for storing video metadata.
   budget: number;        // Cost of the meal in local currency
   calories: number;      // Calorie count of the meal
   prepTimeMinutes: number; // Time taken to prepare the meal in minutes
+  vectorEmbedding: {     // Vector embedding information for semantic search
+    status: string;      // 'pending' | 'completed' | 'failed'
+    updatedAt: timestamp; // When the embedding was last updated
+    pineconeId: string;  // ID of the vector in Pinecone
+  };
 }
 ```
 
@@ -311,6 +316,30 @@ service cloud.firestore {
 - Tags are generated automatically when a video is created or updated
 - The `arrayContainsAny` query is used to filter videos based on tags
 - Maximum of 10 tags per category to maintain query performance
+
+### External Services Integration
+
+#### Pinecone Vector Database
+We use Pinecone for semantic search capabilities. Each video's content is processed into a 3072-dimensional vector embedding stored in Pinecone.
+
+**Index Configuration:**
+- Dimensions: 3072
+- Metric: Cosine Similarity
+- Pod Type: p1.x1 (can be adjusted based on scale needs)
+
+**Vector Record Structure:**
+```typescript
+{
+  id: string;           // Same as Firestore videoId
+  values: number[];     // 3072-dimensional vector
+  metadata: {
+    userId: string;     // Video owner's ID
+    status: string;     // Video status
+    privacy: string;    // Video privacy setting
+    tags: string[];     // Video tags
+  }
+}
+```
 
 
 

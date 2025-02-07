@@ -27,11 +27,14 @@ module.exports = {
   rules: {
     "quotes": ["error", "double"],
     "import/no-unresolved": 0,
+    "valid-jsdoc": 0,
     "require-jsdoc": 0,
-    "linebreak-style": 0,
-    "object-curly-spacing": ["error", "always"],
     "max-len": ["error", { "code": 120 }],
-    "indent": ["error", 2],
-    "comma-dangle": ["error", "always-multiline"],
+    "@typescript-eslint/no-unused-vars": ["warn"],
+    "no-trailing-spaces": ["error"],
+    "eol-last": ["error"],
+    "linebreak-style": 0,
+    "object-curly-spacing": 0,
+    "indent": 0,
   },
 };
