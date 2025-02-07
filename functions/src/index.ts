@@ -1357,12 +1357,18 @@ export const generateVideoEmbedding = onDocumentCreated(
         },
       });
 
-      // Generate embedding using video description and tags
+      // Generate embedding using video description, tags, and AI description
       const content = [
         videoData.description || "",
         videoData.hashtags?.join(" ") || "",
         videoData.tags?.join(" ") || "",
+        videoData.aiEnhancements?.description || "", // Include AI description
       ].join(" ");
+
+      functions.logger.info("Generating embedding for content", {
+        contentLength: content.length,
+        hasAiDescription: !!videoData.aiEnhancements?.description,
+      });
 
       const embeddingResponse = await openai.embeddings.create({
         model: "text-embedding-3-small",
@@ -1380,13 +1386,17 @@ export const generateVideoEmbedding = onDocumentCreated(
           status: videoData.status,
           privacy: videoData.privacy,
           tags: videoData.tags || [],
+          aiDescription: videoData.aiEnhancements?.description, // Include in metadata
         },
       };
 
       // Upsert to Pinecone
       await pineconeService.upsertVector(vector);
 
-      functions.logger.info("Successfully generated and stored vector embedding", { videoId });
+      functions.logger.info("Successfully generated and stored vector embedding", {
+        videoId,
+        hasAiDescription: !!videoData.aiEnhancements?.description,
+      });
     } catch (error) {
       functions.logger.error("Error generating vector embedding", { error, videoId });
 
@@ -1541,4 +1551,80 @@ export const getVideoSummary = onCall(async (request: CallableRequest) => {
     keywords,
   };
 });
+
+export const generateVideoSummary = onCall(
+  {
+    secrets: ["OPENAI_API_KEY"],
+  },
+  async (request) => {
+    const { videoId } = request.data;
+    if (!videoId) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Video ID is required"
+      );
+    }
+
+    try {
+      const db = admin.firestore();
+      const videoDoc = await db.collection("videos").doc(videoId).get();
+      const videoData = videoDoc.data();
+
+      if (!videoData) {
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Video not found"
+        );
+      }
+
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const content = [
+        videoData.description || "",
+        videoData.hashtags?.join(" ") || "",
+        videoData.aiEnhancements?.description || "",
+      ].join("\n\n");
+
+      const systemPrompt = "You are a cooking video summarizer. Create a concise summary of the video content " +
+        "and extract relevant keywords.";
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: `Please summarize this cooking video content and extract keywords:\n\n${content}`,
+          },
+        ],
+        max_tokens: 300,
+      });
+
+      const summary = response.choices[0].message.content || "";
+      const keywords = summary
+        .split("\n")
+        .find((line) => line.toLowerCase().startsWith("keywords:"))
+        ?.replace(/^keywords:/i, "")
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean) || [];
+
+      return {
+        summary,
+        keywords,
+      };
+    } catch (error) {
+      console.error("Error generating video summary:", error);
+      throw new functions.https.HttpsError(
+        "internal",
+        "Failed to generate video summary"
+      );
+    }
+  }
+);
 

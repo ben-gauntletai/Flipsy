@@ -15,6 +15,7 @@ export interface VideoVector {
     status: string;
     privacy: string;
     tags: string[];
+    aiDescription?: string; // AI-generated description
   };
 }
 
