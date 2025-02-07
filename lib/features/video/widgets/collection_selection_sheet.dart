@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flipsy/models/video.dart';
 import 'package:flipsy/models/collection.dart';
 import 'package:flipsy/services/video_service.dart';
+import 'dart:async';
 
 class CollectionSelectionSheet extends StatefulWidget {
   final Video video;
@@ -23,6 +24,37 @@ class CollectionSelectionSheet extends StatefulWidget {
 class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
   bool _isLoading = false;
   final _videoService = VideoService();
+  List<Collection> _collections = [];
+  StreamSubscription<List<Collection>>? _collectionsSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _collections = widget.collections;
+    _startListeningToCollections();
+  }
+
+  void _startListeningToCollections() {
+    _collectionsSubscription = _videoService
+        .watchUserCollections(widget.video.userId)
+        .listen((collections) {
+      if (mounted) {
+        setState(() {
+          _collections = collections;
+          print(
+              'CollectionSelectionSheet: Updated collections, count: ${collections.length}');
+        });
+      }
+    }, onError: (error) {
+      print('CollectionSelectionSheet: Error watching collections: $error');
+    });
+  }
+
+  @override
+  void dispose() {
+    _collectionsSubscription?.cancel();
+    super.dispose();
+  }
 
   Future<void> _addToCollection(Collection collection) async {
     setState(() => _isLoading = true);
@@ -66,6 +98,7 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
+              color: Colors.black87,
             ),
           ),
           const SizedBox(height: 16),
@@ -74,11 +107,14 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
               backgroundColor: Colors.blue,
               child: Icon(Icons.add, color: Colors.white),
             ),
-            title: const Text('Create New Collection'),
+            title: const Text(
+              'Create New Collection',
+              style: TextStyle(color: Colors.black87),
+            ),
             onTap: widget.onCreateCollection,
           ),
           const SizedBox(height: 8),
-          if (widget.collections.isEmpty)
+          if (_collections.isEmpty)
             const Padding(
               padding: EdgeInsets.all(16),
               child: Text(
@@ -94,9 +130,9 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
-                itemCount: widget.collections.length,
+                itemCount: _collections.length,
                 itemBuilder: (context, index) {
-                  final collection = widget.collections[index];
+                  final collection = _collections[index];
                   return ListTile(
                     leading: Container(
                       width: 40,
@@ -115,8 +151,14 @@ class _CollectionSelectionSheetState extends State<CollectionSelectionSheet> {
                             )
                           : const Icon(Icons.collections, color: Colors.grey),
                     ),
-                    title: Text(collection.name),
-                    subtitle: Text('${collection.videoCount} videos'),
+                    title: Text(
+                      collection.name,
+                      style: const TextStyle(color: Colors.black87),
+                    ),
+                    subtitle: Text(
+                      '${collection.videoCount} videos',
+                      style: const TextStyle(color: Colors.black54),
+                    ),
                     onTap:
                         _isLoading ? null : () => _addToCollection(collection),
                   );

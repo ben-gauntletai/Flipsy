@@ -18,6 +18,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../features/navigation/screens/main_navigation_screen.dart';
 import '../../../services/video_cache_service.dart';
 import 'dart:io';
+import '../../../features/video/widgets/collection_selection_sheet.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1567,6 +1568,92 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   onTap: _handleBookmarkAction,
                 ),
                 const SizedBox(height: 12),
+
+                // More Button
+                GestureDetector(
+                  onTap: () {
+                    print('More button tapped');
+                    try {
+                      showModalBottomSheet(
+                        context: context,
+                        backgroundColor: Colors.white,
+                        barrierColor: Colors.black54,
+                        isDismissible: true,
+                        enableDrag: true,
+                        isScrollControlled: false,
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.vertical(
+                            top: Radius.circular(20),
+                          ),
+                        ),
+                        builder: (BuildContext context) {
+                          print('Building bottom sheet content');
+                          return SafeArea(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16.0),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Sheet indicator
+                                  Container(
+                                    width: 40,
+                                    height: 4,
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    decoration: BoxDecoration(
+                                      color: Colors.grey[300],
+                                      borderRadius: BorderRadius.circular(2),
+                                    ),
+                                  ),
+                                  ListTile(
+                                    leading: const Icon(
+                                      Icons.collections_bookmark,
+                                      color: Colors.black87,
+                                    ),
+                                    title: const Text(
+                                      'Add to Collection',
+                                      style: TextStyle(
+                                        color: Colors.black87,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    onTap: () {
+                                      print('Add to Collection option tapped');
+                                      Navigator.pop(context);
+                                      _showCollectionSelectionSheet(context);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ).then((_) {
+                        print('Bottom sheet closed');
+                      }).catchError((error) {
+                        print('Error showing bottom sheet: $error');
+                      });
+                    } catch (e, stackTrace) {
+                      print('Exception while showing bottom sheet: $e');
+                      print('Stack trace: $stackTrace');
+                    }
+                  },
+                  behavior: HitTestBehavior.opaque,
+                  child: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.more_horiz,
+                      color: Colors.white,
+                      size: 18,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1668,6 +1755,138 @@ class _VideoFeedItemState extends State<VideoFeedItem>
         ),
       ),
       child: child,
+    );
+  }
+
+  Future<void> _showCollectionSelectionSheet(BuildContext context) async {
+    try {
+      final collections =
+          await _videoService.getUserCollections(widget.video.userId);
+
+      if (!mounted) return;
+
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(20),
+          ),
+        ),
+        builder: (context) => CollectionSelectionSheet(
+          video: widget.video,
+          collections: collections,
+          onCreateCollection: () {
+            Navigator.pop(context); // Close the collection sheet
+            _showCreateCollectionDialog(context);
+          },
+        ),
+      );
+    } catch (e) {
+      print('Error showing collection sheet: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading collections: $e')),
+        );
+      }
+    }
+  }
+
+  void _showCreateCollectionDialog(BuildContext context) {
+    final nameController = TextEditingController();
+    bool isPrivate = false;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          backgroundColor: Colors.white,
+          title: const Text(
+            'New Collection',
+            style: TextStyle(color: Colors.black87),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                style: const TextStyle(color: Colors.black87),
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  labelStyle: TextStyle(color: Colors.black54),
+                  hintText: 'Enter collection name',
+                  hintStyle: TextStyle(color: Colors.black38),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.black38),
+                  ),
+                  focusedBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.black87),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                title: const Text(
+                  'Private Collection',
+                  style: TextStyle(color: Colors.black87),
+                ),
+                value: isPrivate,
+                onChanged: (value) {
+                  setState(() {
+                    isPrivate = value;
+                  });
+                },
+                activeColor: Colors.blue,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text(
+                'CANCEL',
+                style: TextStyle(color: Colors.black54),
+              ),
+            ),
+            TextButton(
+              onPressed: () async {
+                final name = nameController.text.trim();
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a name')),
+                  );
+                  return;
+                }
+
+                try {
+                  final collection = await _videoService.createCollection(
+                    userId: widget.video.userId,
+                    name: name,
+                    isPrivate: isPrivate,
+                  );
+
+                  if (mounted) {
+                    Navigator.pop(context); // Close create dialog
+                    _showCollectionSelectionSheet(
+                        context); // Show selection sheet again
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error creating collection: $e')),
+                    );
+                  }
+                }
+              },
+              child: const Text(
+                'CREATE',
+                style: TextStyle(color: Colors.blue),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -1711,4 +1711,19 @@ class VideoService {
       // ... existing code ...
     }
   }
+
+  Stream<List<Collection>> watchUserCollections(String userId) {
+    print('VideoService: Starting to watch collections for user $userId');
+    return _firestore
+        .collection('collections')
+        .where('userId', isEqualTo: userId)
+        .orderBy('updatedAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      final collections =
+          snapshot.docs.map((doc) => Collection.fromFirestore(doc)).toList();
+      print('VideoService: Got ${collections.length} collections update');
+      return collections;
+    });
+  }
 }
