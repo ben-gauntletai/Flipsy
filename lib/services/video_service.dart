@@ -1451,15 +1451,55 @@ class VideoService {
   Future<List<Video>> getCollectionVideos(String collectionId) async {
     print('VideoService: Getting videos for collection $collectionId');
     try {
-      final snapshot = await _firestore
+      // First get the video references from the collection
+      final collectionVideosSnapshot = await _firestore
           .collection('collections')
           .doc(collectionId)
           .collection('videos')
-          .where('status', isEqualTo: 'active')
-          .orderBy('createdAt', descending: true)
+          .orderBy('addedAt', descending: true)
           .get();
 
-      return snapshot.docs.map((doc) => Video.fromFirestore(doc)).toList();
+      print(
+          'VideoService: Found ${collectionVideosSnapshot.docs.length} video references');
+
+      // Get the actual video documents
+      final List<Video> videos = [];
+      for (var doc in collectionVideosSnapshot.docs) {
+        try {
+          final data = doc.data();
+          final videoId = data['videoId'] as String?;
+
+          if (videoId == null) {
+            print(
+                'VideoService: Warning - Document ${doc.id} has no videoId field. Data: $data');
+            continue;
+          }
+
+          print('VideoService: Fetching video data for $videoId');
+
+          final videoDoc =
+              await _firestore.collection('videos').doc(videoId).get();
+          if (videoDoc.exists && videoDoc.data()?['status'] == 'active') {
+            try {
+              final video = Video.fromFirestore(videoDoc);
+              videos.add(video);
+              print('VideoService: Successfully added video ${video.id}');
+            } catch (e) {
+              print('VideoService: Error parsing video $videoId: $e');
+            }
+          } else {
+            print('VideoService: Video $videoId not found or not active');
+          }
+        } catch (e) {
+          print(
+              'VideoService: Error processing collection video document ${doc.id}: $e');
+          // Continue to next document instead of crashing
+          continue;
+        }
+      }
+
+      print('VideoService: Returning ${videos.length} videos');
+      return videos;
     } catch (e) {
       print('VideoService: Error getting collection videos: $e');
       rethrow;

@@ -33,7 +33,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _userService = UserService();
   late TabController _tabController;
   final VideoService _videoService = VideoService();
@@ -43,6 +43,12 @@ class _ProfileScreenState extends State<ProfileScreen>
   bool _isLoading = false;
   StreamSubscription<List<Collection>>? _collectionsSubscription;
 
+  // New state variables for collection videos
+  bool _showingCollectionVideos = false;
+  Collection? _selectedCollection;
+  List<Video> _collectionVideos = [];
+  bool _isLoadingCollectionVideos = false;
+
   String? get _currentUserId {
     final authState = context.read<AuthBloc>().state;
     return authState is Authenticated ? authState.user.id : null;
@@ -51,7 +57,11 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(
+      length: 3,
+      vsync: this,
+      animationDuration: const Duration(milliseconds: 200),
+    );
     _startListeningToCollections();
   }
 
@@ -376,6 +386,68 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
+  void _updateTabController(bool showingCollection) {
+    print('\nProfileScreen: Updating tab controller');
+    print('ProfileScreen: Showing collection: $showingCollection');
+
+    if (!mounted) return;
+
+    final newLength = showingCollection ? 1 : 3;
+    if (_tabController.length != newLength) {
+      _tabController.dispose();
+      setState(() {
+        _tabController = TabController(
+          length: newLength,
+          vsync: this,
+          animationDuration: const Duration(milliseconds: 200),
+        );
+      });
+    }
+  }
+
+  Future<void> _handleCollectionSelected(Collection collection) async {
+    print('\nProfileScreen: Loading videos for collection ${collection.id}');
+    setState(() {
+      _isLoadingCollectionVideos = true;
+      _selectedCollection = collection;
+      _showingCollectionVideos = true;
+    });
+
+    _updateTabController(true);
+
+    try {
+      final videos = await _videoService.getCollectionVideos(collection.id);
+      print('ProfileScreen: Loaded ${videos.length} videos from collection');
+      if (mounted) {
+        setState(() {
+          _collectionVideos = videos;
+          _isLoadingCollectionVideos = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      print('ProfileScreen: Error loading collection videos: $e');
+      print('Stack trace: $stackTrace');
+      if (mounted) {
+        setState(() {
+          _isLoadingCollectionVideos = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading collection videos: $e')),
+        );
+      }
+    }
+  }
+
+  void _backToCollections() {
+    print('ProfileScreen: Returning to collections view');
+    setState(() {
+      _showingCollectionVideos = false;
+      _selectedCollection = null;
+      _collectionVideos = [];
+    });
+    _updateTabController(false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final authState = context.watch<AuthBloc>().state;
@@ -554,234 +626,354 @@ class _ProfileScreenState extends State<ProfileScreen>
                   // Tab Bar
                   TabBar(
                     controller: _tabController,
-                    tabs: const [
-                      Tab(text: 'Videos'),
-                      Tab(text: 'Bookmarked'),
-                      Tab(text: 'Collections'),
-                    ],
+                    tabs: _showingCollectionVideos
+                        ? [
+                            Tab(
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.arrow_back),
+                                    onPressed: _backToCollections,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _selectedCollection?.name ?? '',
+                                      style: const TextStyle(fontSize: 16),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ]
+                        : const [
+                            Tab(text: 'Videos'),
+                            Tab(text: 'Bookmarked'),
+                            Tab(text: 'Collections'),
+                          ],
                     labelColor: Theme.of(context).primaryColor,
                     unselectedLabelColor: Colors.grey,
-                    indicatorColor: Theme.of(context).primaryColor,
+                    indicatorColor: _showingCollectionVideos
+                        ? Colors.transparent
+                        : Theme.of(context).primaryColor,
                   ),
                   // Tab Bar View
                   Expanded(
                     child: TabBarView(
                       controller: _tabController,
-                      children: [
-                        // Videos Tab
-                        StreamBuilder<List<Video>>(
-                          stream: videoService.getUserVideos(targetUserId),
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Center(
-                                  child: CircularProgressIndicator());
-                            }
+                      children: _showingCollectionVideos
+                          ? [
+                              // Collection Videos Grid
+                              _isLoadingCollectionVideos
+                                  ? const Center(
+                                      child: CircularProgressIndicator())
+                                  : _collectionVideos.isEmpty
+                                      ? Center(
+                                          child: Column(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.center,
+                                            children: [
+                                              Icon(Icons.videocam_off,
+                                                  size: 48,
+                                                  color: Colors.grey[400]),
+                                              const SizedBox(height: 16),
+                                              Text(
+                                                'No videos in this collection',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleMedium,
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      : GridView.builder(
+                                          padding: const EdgeInsets.all(1),
+                                          gridDelegate:
+                                              const SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: 3,
+                                            childAspectRatio: 0.8,
+                                            crossAxisSpacing: 1,
+                                            mainAxisSpacing: 1,
+                                          ),
+                                          itemCount: _collectionVideos.length,
+                                          itemBuilder: (context, index) {
+                                            final video =
+                                                _collectionVideos[index];
+                                            return GestureDetector(
+                                              onTap: () {
+                                                MainNavigationScreen
+                                                    .jumpToVideo(
+                                                  context,
+                                                  video.id,
+                                                  showBackButton: true,
+                                                );
+                                              },
+                                              child: Stack(
+                                                fit: StackFit.expand,
+                                                children: [
+                                                  Image.network(
+                                                    video.thumbnailURL,
+                                                    fit: BoxFit.cover,
+                                                  ),
+                                                  Positioned(
+                                                    bottom: 8,
+                                                    left: 8,
+                                                    child: Row(
+                                                      children: [
+                                                        const Icon(
+                                                          FontAwesomeIcons
+                                                              .heart,
+                                                          color: Colors.white,
+                                                          size: 14,
+                                                        ),
+                                                        const SizedBox(
+                                                            width: 4),
+                                                        Text(
+                                                          video.likesCount
+                                                              .toString(),
+                                                          style:
+                                                              const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 12,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                            ]
+                          : [
+                              // Videos Tab
+                              StreamBuilder<List<Video>>(
+                                stream:
+                                    videoService.getUserVideos(targetUserId),
+                                builder: (context, snapshot) {
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Center(
+                                        child: CircularProgressIndicator());
+                                  }
 
-                            if (snapshot.hasError) {
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.error_outline,
-                                        size: 48, color: Colors.grey[400]),
-                                    const SizedBox(height: 16),
-                                    Text('Error loading videos',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            final videos = snapshot.data ?? [];
-
-                            if (videos.isEmpty) {
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.videocam_off,
-                                        size: 48, color: Colors.grey[400]),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No videos found',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            return GridView.builder(
-                              padding: const EdgeInsets.all(1),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
-                                childAspectRatio: 0.8,
-                                crossAxisSpacing: 1,
-                                mainAxisSpacing: 1,
-                              ),
-                              itemCount: videos.length,
-                              itemBuilder: (context, index) {
-                                final video = videos[index];
-                                return GestureDetector(
-                                  onTap: () {
-                                    MainNavigationScreen.jumpToVideo(
-                                      context,
-                                      video.id,
-                                      showBackButton: true,
-                                    );
-                                  },
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      Image.network(
-                                        video.thumbnailURL,
-                                        fit: BoxFit.cover,
+                                  if (snapshot.hasError) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.error_outline,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text('Error loading videos',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium),
+                                        ],
                                       ),
-                                      Positioned(
-                                        bottom: 8,
-                                        left: 8,
-                                        child: Row(
+                                    );
+                                  }
+
+                                  final videos = snapshot.data ?? [];
+
+                                  if (videos.isEmpty) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.videocam_off,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'No videos found',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium,
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.all(1),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 3,
+                                      childAspectRatio: 0.8,
+                                      crossAxisSpacing: 1,
+                                      mainAxisSpacing: 1,
+                                    ),
+                                    itemCount: videos.length,
+                                    itemBuilder: (context, index) {
+                                      final video = videos[index];
+                                      return GestureDetector(
+                                        onTap: () {
+                                          MainNavigationScreen.jumpToVideo(
+                                            context,
+                                            video.id,
+                                            showBackButton: true,
+                                          );
+                                        },
+                                        child: Stack(
+                                          fit: StackFit.expand,
                                           children: [
-                                            const Icon(
-                                              FontAwesomeIcons.heart,
-                                              color: Colors.white,
-                                              size: 14,
+                                            Image.network(
+                                              video.thumbnailURL,
+                                              fit: BoxFit.cover,
                                             ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              video.likesCount.toString(),
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 12,
+                                            Positioned(
+                                              bottom: 8,
+                                              left: 8,
+                                              child: Row(
+                                                children: [
+                                                  const Icon(
+                                                    FontAwesomeIcons.heart,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    video.likesCount.toString(),
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        // Bookmarked Videos Tab
-                        StreamBuilder<List<Video>>(
-                          stream: videoService.getBookmarkedVideos(),
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Center(
-                                  child: CircularProgressIndicator());
-                            }
-
-                            if (snapshot.hasError) {
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.error_outline,
-                                        size: 48, color: Colors.grey[400]),
-                                    const SizedBox(height: 16),
-                                    Text('Error loading bookmarked videos',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            final videos = snapshot.data ?? [];
-
-                            if (videos.isEmpty) {
-                              return Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.bookmark_border,
-                                        size: 48, color: Colors.grey[400]),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No bookmarked videos',
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium,
-                                    ),
-                                  ],
-                                ),
-                              );
-                            }
-
-                            return GridView.builder(
-                              padding: const EdgeInsets.all(1),
-                              gridDelegate:
-                                  const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 3,
-                                childAspectRatio: 0.8,
-                                crossAxisSpacing: 1,
-                                mainAxisSpacing: 1,
+                                      );
+                                    },
+                                  );
+                                },
                               ),
-                              itemCount: videos.length,
-                              itemBuilder: (context, index) {
-                                final video = videos[index];
-                                return GestureDetector(
-                                  onTap: () {
-                                    MainNavigationScreen.jumpToVideo(
-                                      context,
-                                      video.id,
-                                      showBackButton: true,
-                                    );
-                                  },
-                                  child: Stack(
-                                    fit: StackFit.expand,
-                                    children: [
-                                      Image.network(
-                                        video.thumbnailURL,
-                                        fit: BoxFit.cover,
+                              // Bookmarked Videos Tab
+                              StreamBuilder<List<Video>>(
+                                stream: videoService.getBookmarkedVideos(),
+                                builder: (context, snapshot) {
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Center(
+                                        child: CircularProgressIndicator());
+                                  }
+
+                                  if (snapshot.hasError) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.error_outline,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                              'Error loading bookmarked videos',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium),
+                                        ],
                                       ),
-                                      Positioned(
-                                        bottom: 8,
-                                        left: 8,
-                                        child: Row(
+                                    );
+                                  }
+
+                                  final videos = snapshot.data ?? [];
+
+                                  if (videos.isEmpty) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.bookmark_border,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'No bookmarked videos',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium,
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.all(1),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 3,
+                                      childAspectRatio: 0.8,
+                                      crossAxisSpacing: 1,
+                                      mainAxisSpacing: 1,
+                                    ),
+                                    itemCount: videos.length,
+                                    itemBuilder: (context, index) {
+                                      final video = videos[index];
+                                      return GestureDetector(
+                                        onTap: () {
+                                          MainNavigationScreen.jumpToVideo(
+                                            context,
+                                            video.id,
+                                            showBackButton: true,
+                                          );
+                                        },
+                                        child: Stack(
+                                          fit: StackFit.expand,
                                           children: [
-                                            const Icon(
-                                              FontAwesomeIcons.heart,
-                                              color: Colors.white,
-                                              size: 14,
+                                            Image.network(
+                                              video.thumbnailURL,
+                                              fit: BoxFit.cover,
                                             ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              video.likesCount.toString(),
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 12,
+                                            Positioned(
+                                              bottom: 8,
+                                              left: 8,
+                                              child: Row(
+                                                children: [
+                                                  const Icon(
+                                                    FontAwesomeIcons.heart,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    video.likesCount.toString(),
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
                                               ),
                                             ),
                                           ],
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                        // Collections Tab
-                        CollectionsGrid(
-                          key: const ValueKey('collections_grid'),
-                          collections: _collections,
-                          onCreateCollection: _showCreateCollectionDialog,
-                          isLoading: _isLoadingCollections,
-                        ),
-                      ],
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
+                              // Collections Tab
+                              CollectionsGrid(
+                                key: const ValueKey('collections_grid'),
+                                collections: _collections,
+                                onCreateCollection: _showCreateCollectionDialog,
+                                isLoading: _isLoadingCollections,
+                                onCollectionSelected: _handleCollectionSelected,
+                              ),
+                            ],
                     ),
                   ),
                 ],

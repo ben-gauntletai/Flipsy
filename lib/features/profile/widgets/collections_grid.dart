@@ -6,12 +6,14 @@ class CollectionsGrid extends StatelessWidget {
   final List<Collection> collections;
   final VoidCallback onCreateCollection;
   final bool isLoading;
+  final Function(Collection) onCollectionSelected;
 
   const CollectionsGrid({
     super.key,
     required this.collections,
     required this.onCreateCollection,
-    this.isLoading = false,
+    required this.isLoading,
+    required this.onCollectionSelected,
   });
 
   @override
@@ -89,15 +91,7 @@ class CollectionsGrid extends StatelessWidget {
     return Material(
       color: Colors.black,
       child: InkWell(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) =>
-                  CollectionDetailsScreen(collection: collection),
-            ),
-          );
-        },
+        onTap: () => onCollectionSelected(collection),
         child: Stack(
           fit: StackFit.expand,
           children: [
