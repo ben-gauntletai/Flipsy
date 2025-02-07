@@ -1567,22 +1567,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   onTap: _handleBookmarkAction,
                 ),
                 const SizedBox(height: 12),
-
-                // More Button
-                GestureDetector(
-                  onTap: () {
-                    // Add your more options logic here
-                  },
-                  child: const SizedBox(
-                    width: 40,
-                    height: 40,
-                    child: Icon(
-                      Icons.more_horiz,
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),

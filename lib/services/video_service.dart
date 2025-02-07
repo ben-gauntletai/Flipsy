@@ -1565,41 +1565,32 @@ class VideoService {
     }
   }
 
-  Future<void> addVideoToCollection(String collectionId, Video video) async {
+  Future<void> addVideoToCollection({
+    required String collectionId,
+    required String videoId,
+  }) async {
+    print('\nAdding video $videoId to collection $collectionId');
     try {
-      final batch = _firestore.batch();
-
-      // Add video to collection's videos subcollection
-      final videoRef = _firestore
-          .collection('collections')
-          .doc(collectionId)
-          .collection('videos')
-          .doc(video.id);
-
-      batch.set(videoRef, video.toFirestore());
-
-      // Update collection's video count and thumbnail if it's the first video
       final collectionRef =
           _firestore.collection('collections').doc(collectionId);
-      final collectionDoc = await collectionRef.get();
-      final collectionData = collectionDoc.data() as Map<String, dynamic>;
+      final videoRef = _firestore.collection('videos').doc(videoId);
 
-      if (collectionData['videoCount'] == 0) {
-        batch.update(collectionRef, {
-          'thumbnailURL': video.thumbnailURL,
-          'videoCount': FieldValue.increment(1),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        batch.update(collectionRef, {
-          'videoCount': FieldValue.increment(1),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }
+      // Add video to collection's videos subcollection
+      await collectionRef.collection('videos').doc(videoId).set({
+        'addedAt': FieldValue.serverTimestamp(),
+      });
 
-      await batch.commit();
+      // Update collection's video count
+      await collectionRef.update({
+        'videoCount': FieldValue.increment(1),
+        'updatedAt': FieldValue.serverTimestamp(),
+        'thumbnailUrl':
+            await videoRef.get().then((doc) => doc.data()?['thumbnailUrl']),
+      });
+
+      print('Successfully added video to collection');
     } catch (e) {
-      print('VideoService: Error adding video to collection: $e');
+      print('Error adding video to collection: $e');
       rethrow;
     }
   }

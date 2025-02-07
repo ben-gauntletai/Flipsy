@@ -2,76 +2,70 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Collection {
   final String id;
-  final String userId;
   final String name;
-  final String? description;
-  final String? thumbnailURL;
+  final String userId;
+  final bool isPrivate;
+  final int videoCount;
+  final String? thumbnailUrl;
   final DateTime createdAt;
   final DateTime updatedAt;
-  final int videoCount;
-  final bool isPrivate;
 
   Collection({
     required this.id,
-    required this.userId,
     required this.name,
-    this.description,
-    this.thumbnailURL,
+    required this.userId,
+    required this.isPrivate,
+    required this.videoCount,
+    this.thumbnailUrl,
     required this.createdAt,
     required this.updatedAt,
-    this.videoCount = 0,
-    this.isPrivate = false,
   });
 
   factory Collection.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return Collection(
       id: doc.id,
-      userId: data['userId'] as String,
       name: data['name'] as String,
-      description: data['description'] as String?,
-      thumbnailURL: data['thumbnailURL'] as String?,
+      userId: data['userId'] as String,
+      isPrivate: data['isPrivate'] as bool,
+      videoCount: data['videoCount'] as int,
+      thumbnailUrl: data['thumbnailUrl'] as String?,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt: (data['updatedAt'] as Timestamp).toDate(),
-      videoCount: (data['videoCount'] as num?)?.toInt() ?? 0,
-      isPrivate: data['isPrivate'] as bool? ?? false,
     );
   }
 
   Map<String, dynamic> toFirestore() {
     return {
-      'userId': userId,
       'name': name,
-      'description': description,
-      'thumbnailURL': thumbnailURL,
+      'userId': userId,
+      'isPrivate': isPrivate,
+      'videoCount': videoCount,
+      'thumbnailUrl': thumbnailUrl,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
-      'videoCount': videoCount,
-      'isPrivate': isPrivate,
     };
   }
 
   Collection copyWith({
     String? id,
-    String? userId,
     String? name,
-    String? description,
-    String? thumbnailURL,
+    String? userId,
+    bool? isPrivate,
+    int? videoCount,
+    String? thumbnailUrl,
     DateTime? createdAt,
     DateTime? updatedAt,
-    int? videoCount,
-    bool? isPrivate,
   }) {
     return Collection(
       id: id ?? this.id,
-      userId: userId ?? this.userId,
       name: name ?? this.name,
-      description: description ?? this.description,
-      thumbnailURL: thumbnailURL ?? this.thumbnailURL,
+      userId: userId ?? this.userId,
+      isPrivate: isPrivate ?? this.isPrivate,
+      videoCount: videoCount ?? this.videoCount,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      videoCount: videoCount ?? this.videoCount,
-      isPrivate: isPrivate ?? this.isPrivate,
     );
   }
 }

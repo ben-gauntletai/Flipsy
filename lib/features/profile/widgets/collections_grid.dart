@@ -101,10 +101,15 @@ class CollectionsGrid extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            if (collection.thumbnailURL != null)
-              Image.network(
-                collection.thumbnailURL!,
-                fit: BoxFit.cover,
+            if (collection.thumbnailUrl != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: Image.network(
+                  collection.thumbnailUrl!,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                ),
               )
             else
               Container(

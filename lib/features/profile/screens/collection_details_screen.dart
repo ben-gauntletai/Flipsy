@@ -81,11 +81,10 @@ class _CollectionDetailsScreenState extends State<CollectionDetailsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (widget.collection.description != null)
-                  Text(
-                    widget.collection.description!,
-                    style: Theme.of(context).textTheme.bodyLarge,
-                  ),
+                Text(
+                  widget.collection.name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   '${widget.collection.videoCount} videos',
