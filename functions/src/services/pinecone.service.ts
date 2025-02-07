@@ -31,11 +31,17 @@ export class PineconeService {
    * @param {string} apiKey - Pinecone API key
    */
   constructor(apiKey: string) {
-    const pinecone = new Pinecone({
-      apiKey,
-    });
-    this.index = pinecone.index("flipsy-videos");
-    this.db = getDb();
+    try {
+      const pinecone = new Pinecone({
+        apiKey,
+      });
+      this.index = pinecone.index("flipsy-videos");
+      this.db = getDb();
+      functions.logger.info("Pinecone service initialized");
+    } catch (error) {
+      functions.logger.error("Failed to initialize Pinecone service", { error });
+      throw error;
+    }
   }
 
   /**

@@ -1112,18 +1112,18 @@ export const analyzeVideo = onDocumentCreated(
       console.log("Preparing messages for OpenAI...");
       const messages: ChatCompletionMessageParam[] = [
         {
-          role: "system",
+          role: "system" as const,
           content: systemPrompt,
         },
         {
-          role: "user",
+          role: "user" as const,
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: "Please analyze this cooking video thumbnail:",
             },
             {
-              type: "image_url",
+              type: "image_url" as const,
               image_url: {
                 url: videoData.thumbnailURL,
               },
@@ -1177,13 +1177,15 @@ export const analyzeVideo = onDocumentCreated(
     }
   },
 );
+
 export const analyzeExistingVideos = onCall(
   {
-    secrets: ["OPENAI_API_KEY"],
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
   },
-  async () => {
+  async (request) => {
     try {
       console.log("analyzeExistingVideos function started");
+      const forceRegenerate = request.data?.forceRegenerate || false;
 
       // Get all active videos
       const db = admin.firestore();
@@ -1191,103 +1193,143 @@ export const analyzeExistingVideos = onCall(
         .where("status", "==", "active")
         .get();
 
-      console.log(`Found ${videosSnapshot.docs.length} active videos to analyze`);
+      console.log(`Found ${videosSnapshot.docs.length} active videos to process`, {
+        forceRegenerate,
+      });
 
       let processedCount = 0;
       let skippedCount = 0;
       let errorCount = 0;
+      let embeddingsCount = 0;
+
+      // Initialize services
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const pineconeService = new PineconeService(
+        process.env.PINECONE_API_KEY || ""
+      );
 
       for (const doc of videosSnapshot.docs) {
         try {
           const videoData = doc.data();
+          const videoId = doc.id;
+          let needsEmbeddingUpdate = false;
+          let aiDescription = videoData.aiEnhancements?.description;
+
+          // Skip if no thumbnail
           if (!videoData.thumbnailURL) {
-            console.log(`Skipping video ${doc.id} - no thumbnail URL`);
+            console.log(`Skipping video ${videoId} - no thumbnail URL`);
             skippedCount++;
             continue;
           }
 
-          // Skip if already has AI enhancements and no force flag
-          if (videoData.aiEnhancements?.description) {
-            console.log(`Skipping video ${doc.id} - already has AI description`);
-            skippedCount++;
-            continue;
-          }
+          // Generate AI description if needed
+          if (!aiDescription || forceRegenerate) {
+            console.log(`Processing AI description for video ${videoId}`);
 
-          console.log("Getting OpenAI API key from environment...");
-          const apiKey = process.env.OPENAI_API_KEY;
-          if (!apiKey) {
-            console.error("OpenAI API key not found in environment variables");
-            throw new functions.https.HttpsError(
-              "failed-precondition",
-              "OpenAI API key not configured",
-            );
-          }
+            const systemPrompt =
+              "You are a cooking video analyzer. Describe what is happening in this " +
+              "thumbnail from a cooking video. Focus on the cooking techniques, " +
+              "ingredients, and overall dish being prepared. Be concise but descriptive, " +
+              "and highlight any unique or interesting aspects of the preparation method " +
+              "or presentation.";
 
-          console.log("Initializing OpenAI client...");
-          const openai = new OpenAI({
-            apiKey: apiKey,
-          });
-
-          const systemPrompt =
-            "You are a cooking video analyzer. Describe what is happening in this " +
-            "thumbnail from a cooking video. Focus on the cooking techniques, " +
-            "ingredients, and overall dish being prepared. Be concise but descriptive, " +
-            "and highlight any unique or interesting aspects of the preparation method " +
-            "or presentation.";
-
-          console.log("Preparing messages for OpenAI...");
-          const messages: ChatCompletionMessageParam[] = [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Please analyze this cooking video thumbnail:",
-                },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: videoData.thumbnailURL,
+            const messages = [
+              {
+                role: "system" as const,
+                content: systemPrompt,
+              },
+              {
+                role: "user" as const,
+                content: [
+                  {
+                    type: "text" as const,
+                    text: "Please analyze this cooking video thumbnail:",
                   },
-                },
-              ],
-            },
-          ];
+                  {
+                    type: "image_url" as const,
+                    image_url: {
+                      url: videoData.thumbnailURL,
+                    },
+                  },
+                ],
+              },
+            ];
 
-          console.log("Calling OpenAI API...", {
-            thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
-          });
+            const response = await openai.chat.completions.create({
+              model: "gpt-4o-mini",
+              messages,
+              max_tokens: 300,
+            });
 
-          const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages,
-            max_tokens: 300,
-          });
+            aiDescription = response.choices[0].message.content || "";
+            needsEmbeddingUpdate = true;
 
-          console.log("OpenAI API response received", {
-            hasChoices: !!response.choices.length,
-            firstChoice: !!response.choices[0]?.message?.content,
-          });
+            // Store the AI-generated description
+            await doc.ref.update({
+              aiEnhancements: {
+                description: aiDescription,
+                generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              },
+            });
 
-          // Store the AI-generated description
-          console.log("Storing AI-generated description...");
-          await db.collection("videos").doc(doc.id).update({
-            aiEnhancements: {
-              description: response.choices[0].message.content || "",
-              generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            },
-          });
+            processedCount++;
+          } else {
+            console.log(`Skipping AI description for video ${videoId} - already exists`);
+            skippedCount++;
+          }
 
-          console.log("Successfully analyzed video and stored description", {
-            videoId: doc.id,
-            descriptionLength: response.choices[0].message.content?.length || 0,
-          });
+          // Generate or update embedding if needed
+          if (needsEmbeddingUpdate ||
+            !videoData.vectorEmbedding?.status ||
+            videoData.vectorEmbedding.status === "failed"
+          ) {
+            console.log(`Generating embedding for video ${videoId}`);
 
-          processedCount++;
+            // Update video with pending status
+            await doc.ref.update({
+              vectorEmbedding: {
+                status: "pending",
+                updatedAt: new Date(),
+              },
+            });
+
+            // Generate embedding using all available content
+            const content = [
+              videoData.description || "",
+              videoData.hashtags?.join(" ") || "",
+              videoData.tags?.join(" ") || "",
+              aiDescription || "",
+            ].join(" ");
+
+            const embeddingResponse = await openai.embeddings.create({
+              model: "text-embedding-3-large",
+              input: content,
+            });
+
+            const embedding = embeddingResponse.data[0].embedding;
+
+            // Create vector record
+            const vector = {
+              id: videoId,
+              values: embedding,
+              metadata: {
+                userId: videoData.userId,
+                status: videoData.status,
+                privacy: videoData.privacy,
+                tags: videoData.tags || [],
+                aiDescription,
+              },
+            };
+
+            // Upsert to Pinecone
+            await pineconeService.upsertVector(vector);
+            embeddingsCount++;
+
+            console.log(`Successfully generated embedding for video ${videoId}`);
+          }
         } catch (error) {
           console.error(`Error processing video ${doc.id}:`, error);
           errorCount++;
@@ -1297,8 +1339,9 @@ export const analyzeExistingVideos = onCall(
       return {
         success: true,
         totalVideos: videosSnapshot.docs.length,
-        processedCount,
-        skippedCount,
+        processedDescriptions: processedCount,
+        skippedDescriptions: skippedCount,
+        generatedEmbeddings: embeddingsCount,
         errorCount,
       };
     } catch (error: unknown) {
@@ -1313,7 +1356,7 @@ export const analyzeExistingVideos = onCall(
           stack: error.stack,
         });
       }
-      throw new functions.https.HttpsError("internal", "Failed to analyze videos");
+      throw new functions.https.HttpsError("internal", "Failed to process videos");
     }
   }
 );
@@ -1371,7 +1414,7 @@ export const generateVideoEmbedding = onDocumentCreated(
       });
 
       const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-small",
+        model: "text-embedding-3-large",
         input: content,
       });
 

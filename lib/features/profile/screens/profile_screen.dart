@@ -516,7 +516,12 @@ class _ProfileScreenState extends State<ProfileScreen>
           },
         ),
         actions: [
-          if (isCurrentUser)
+          if (isCurrentUser) ...[
+            IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: _analyzeAllVideos,
+              tooltip: 'Analyze Videos',
+            ),
             PopupMenuButton<String>(
               onSelected: (value) async {
                 if (value == 'logout') {
@@ -536,6 +541,7 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ),
               ],
             ),
+          ],
         ],
       ),
       body: StreamBuilder<Map<String, dynamic>>(

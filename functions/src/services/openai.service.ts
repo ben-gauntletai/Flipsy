@@ -13,7 +13,7 @@ export class OpenAIService {
   async generateEmbedding(text: string): Promise<number[]> {
     try {
       const response = await this.openai.embeddings.create({
-        model: "text-embedding-ada-002",
+        model: "text-embedding-3-large",
         input: text,
       });
 
