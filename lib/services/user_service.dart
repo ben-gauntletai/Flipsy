@@ -541,4 +541,38 @@ class UserService {
       return <String>[];
     });
   }
+
+  // Watch followers count
+  Stream<int> watchFollowersCount(String userId) {
+    print('UserService: Watching followers count for user $userId');
+    return _firestore
+        .collection('follows')
+        .where('followingId', isEqualTo: userId)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
+  // Watch following count
+  Stream<int> watchFollowingCount(String userId) {
+    print('UserService: Watching following count for user $userId');
+    return _firestore
+        .collection('follows')
+        .where('followerId', isEqualTo: userId)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.length);
+  }
+
+  // Watch total likes received on all videos
+  Stream<int> watchTotalLikes(String userId) {
+    print('UserService: Watching total likes for user $userId');
+    return _firestore
+        .collection('videos')
+        .where('userId', isEqualTo: userId)
+        .where('status', isEqualTo: 'active')
+        .snapshots()
+        .map((snapshot) {
+      return snapshot.docs.fold<int>(
+          0, (sum, doc) => sum + (doc.data()['likesCount'] as int? ?? 0));
+    });
+  }
 }

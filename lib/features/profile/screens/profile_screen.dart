@@ -37,7 +37,6 @@ class _ProfileScreenState extends State<ProfileScreen>
   final _userService = UserService();
   late TabController _tabController;
   final VideoService _videoService = VideoService();
-  List<Video> _videos = [];
   List<Collection> _collections = [];
   bool _isLoadingCollections = true;
   bool _isDisposed = false;
@@ -50,41 +49,62 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   void initState() {
     super.initState();
-    _initializeTabController();
-    _loadUserData();
-    _loadCollections();
-  }
-
-  void _initializeTabController() {
     _tabController = TabController(length: 3, vsync: this);
-    _tabController.addListener(_handleTabChange);
-  }
-
-  void _handleTabChange() {
-    if (_isDisposed) return;
-    if (!_tabController.indexIsChanging) {
-      setState(() {
-        // Rebuild when tab changes
-        if (_tabController.index == 2 && _isLoadingCollections) {
-          _loadCollections(); // Reload collections when switching to collections tab
-        }
-      });
-    }
+    _loadCollections();
   }
 
   @override
   void dispose() {
     _isDisposed = true;
-    _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (!_isDisposed && !_tabController.hasListeners) {
-      _tabController.addListener(_handleTabChange);
+  Future<void> _loadCollections() async {
+    if (_isDisposed) return;
+
+    try {
+      final userId = widget.userId ?? _currentUserId;
+      if (userId == null) {
+        print('\nProfileScreen: No userId available for loading collections');
+        return;
+      }
+
+      print('\nProfileScreen: Starting to load collections for user $userId');
+      print('ProfileScreen: Current collections count: ${_collections.length}');
+      setState(() {
+        _isLoadingCollections = true;
+      });
+
+      final collections = await _videoService.getUserCollections(userId);
+      print('ProfileScreen: Loaded ${collections.length} collections');
+      print('ProfileScreen: Collection details:');
+      for (var collection in collections) {
+        print('- ID: ${collection.id}');
+        print('  Name: ${collection.name}');
+        print('  Video Count: ${collection.videoCount}');
+        print('  Created At: ${collection.createdAt}');
+      }
+
+      if (!_isDisposed && mounted) {
+        print('ProfileScreen: Updating state with collections');
+        setState(() {
+          _collections = collections;
+          _isLoadingCollections = false;
+        });
+        print(
+            'ProfileScreen: State updated with ${_collections.length} collections');
+        print(
+            'ProfileScreen: Collection IDs in state: ${_collections.map((c) => c.id).join(', ')}');
+      }
+    } catch (e, stackTrace) {
+      print('ProfileScreen: Error loading collections: $e');
+      print('ProfileScreen: Stack trace: $stackTrace');
+      if (!_isDisposed && mounted) {
+        setState(() {
+          _isLoadingCollections = false;
+        });
+      }
     }
   }
 
@@ -257,79 +277,6 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Future<void> _loadUserData() async {
-    if (_isDisposed) return;
-
-    try {
-      final userId = widget.userId ?? _currentUserId;
-      if (userId == null) return;
-
-      final userData = await _userService.getUserData(userId);
-      if (!_isDisposed && mounted) {
-        setState(() {
-          _videos = userData['videos'] as List<Video>? ?? [];
-          _collections = userData['collections'] as List<Collection> ?? [];
-          _isLoadingCollections = false;
-        });
-      }
-    } catch (e) {
-      print('Error loading user data: $e');
-      if (!_isDisposed && mounted) {
-        setState(() {
-          _isLoadingCollections = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _loadCollections() async {
-    if (_isDisposed) return;
-
-    try {
-      final userId = widget.userId ?? _currentUserId;
-      if (userId == null) {
-        print('\nProfileScreen: No userId available for loading collections');
-        return;
-      }
-
-      print('\nProfileScreen: Starting to load collections for user $userId');
-      print('ProfileScreen: Current collections count: ${_collections.length}');
-      setState(() {
-        _isLoadingCollections = true;
-      });
-
-      final collections = await _videoService.getUserCollections(userId);
-      print('ProfileScreen: Loaded ${collections.length} collections');
-      print('ProfileScreen: Collection details:');
-      for (var collection in collections) {
-        print('- ID: ${collection.id}');
-        print('  Name: ${collection.name}');
-        print('  Video Count: ${collection.videoCount}');
-        print('  Created At: ${collection.createdAt}');
-      }
-
-      if (!_isDisposed && mounted) {
-        print('ProfileScreen: Updating state with collections');
-        setState(() {
-          _collections = collections;
-          _isLoadingCollections = false;
-        });
-        print(
-            'ProfileScreen: State updated with ${_collections.length} collections');
-        print(
-            'ProfileScreen: Collection IDs in state: ${_collections.map((c) => c.id).join(', ')}');
-      }
-    } catch (e, stackTrace) {
-      print('ProfileScreen: Error loading collections: $e');
-      print('ProfileScreen: Stack trace: $stackTrace');
-      if (!_isDisposed && mounted) {
-        setState(() {
-          _isLoadingCollections = false;
-        });
-      }
-    }
-  }
-
   void _showCreateCollectionDialog() {
     final nameController = TextEditingController();
     bool isPrivate = false;
@@ -433,10 +380,6 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_isDisposed) {
-      return const SizedBox.shrink();
-    }
-
     final authState = context.watch<AuthBloc>().state;
     final currentUser = authState is Authenticated ? authState.user : null;
 
@@ -451,6 +394,7 @@ class _ProfileScreenState extends State<ProfileScreen>
     final isCurrentUser =
         widget.userId == null || (currentUser?.id == widget.userId);
     final targetUserId = isCurrentUser ? currentUser!.id : widget.userId!;
+    final videoService = VideoService();
 
     return Scaffold(
       appBar: AppBar(
@@ -480,275 +424,374 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
         ],
       ),
-      body: Column(
-        children: [
-          // Profile section
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Profile Image
-                UserAvatar(
-                  avatarURL: currentUser?.avatarURL,
-                  radius: 50,
-                ),
-                const SizedBox(height: 12),
-                // Display Name
-                Text(
-                  currentUser?.displayName ?? 'User',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.grey[600],
-                      ),
-                ),
-                if (currentUser?.bio?.isNotEmpty ?? false) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    currentUser!.bio!,
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.grey[600],
+      body: StreamBuilder<Map<String, dynamic>>(
+        stream: _userService.watchUserData(targetUserId),
+        initialData: isCurrentUser
+            ? {
+                'displayName': currentUser!.displayName,
+                'avatarURL': currentUser.avatarURL,
+                'bio': currentUser.bio,
+              }
+            : null,
+        builder: (context, userStreamSnapshot) {
+          if (!userStreamSnapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final userData = userStreamSnapshot.data!;
+          final displayName = userData['displayName'] as String? ?? 'User';
+          final avatarURL = userData['avatarURL'] as String?;
+          final bio = userData['bio'] as String? ?? '';
+
+          return StreamBuilder<Map<String, int>>(
+            stream: _userService.watchUserCounts(targetUserId),
+            builder: (context, countsSnapshot) {
+              final followingCount =
+                  countsSnapshot.data?['followingCount'] ?? 0;
+              final followersCount =
+                  countsSnapshot.data?['followersCount'] ?? 0;
+              final totalLikes = countsSnapshot.data?['totalLikes'] ?? 0;
+
+              return Column(
+                children: [
+                  // Profile section
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Profile Image
+                        UserAvatar(
+                          avatarURL: avatarURL,
+                          radius: 50,
                         ),
+                        const SizedBox(height: 12),
+                        // Display Name
+                        Text(
+                          displayName,
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    color: Colors.grey[600],
+                                  ),
+                        ),
+                        if (bio.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            bio,
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: Colors.grey[600],
+                                ),
+                          ),
+                        ],
+                        const SizedBox(height: 16),
+                        // Stats Row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _buildStatColumn(context, followingCount.toString(),
+                                'Following'),
+                            _buildStatColumn(context, followersCount.toString(),
+                                'Followers'),
+                            _buildStatColumn(
+                                context, totalLikes.toString(), 'Likes'),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        // Edit Profile Button or Follow Button
+                        if (isCurrentUser)
+                          OutlinedButton(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const EditProfileScreen(),
+                                ),
+                              );
+                            },
+                            style: OutlinedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 36),
+                            ),
+                            child: const Text('Edit Profile'),
+                          )
+                        else
+                          StreamBuilder<bool>(
+                            stream:
+                                _userService.watchFollowStatus(widget.userId!),
+                            builder: (context, followSnapshot) {
+                              final isFollowing = followSnapshot.data ?? false;
+
+                              return ElevatedButton(
+                                onPressed: _isLoading
+                                    ? null
+                                    : () => _handleFollowAction(isFollowing),
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 36),
+                                  backgroundColor: isFollowing
+                                      ? Colors.grey[200]
+                                      : Theme.of(context).primaryColor,
+                                  foregroundColor:
+                                      isFollowing ? Colors.black : Colors.white,
+                                ),
+                                child: _isLoading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : Text(
+                                        isFollowing ? 'Following' : 'Follow'),
+                              );
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Tab Bar
+                  TabBar(
+                    controller: _tabController,
+                    tabs: const [
+                      Tab(text: 'Videos'),
+                      Tab(text: 'Bookmarked'),
+                      Tab(text: 'Collections'),
+                    ],
+                    labelColor: Theme.of(context).primaryColor,
+                    unselectedLabelColor: Colors.grey,
+                    indicatorColor: Theme.of(context).primaryColor,
+                  ),
+                  // Tab Bar View
+                  Expanded(
+                    child: TabBarView(
+                      controller: _tabController,
+                      children: [
+                        // Videos Tab
+                        StreamBuilder<List<Video>>(
+                          stream: videoService.getUserVideos(targetUserId),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.error_outline,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text('Error loading videos',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            final videos = snapshot.data ?? [];
+
+                            if (videos.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.videocam_off,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No videos found',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            return GridView.builder(
+                              padding: const EdgeInsets.all(1),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 0.8,
+                                crossAxisSpacing: 1,
+                                mainAxisSpacing: 1,
+                              ),
+                              itemCount: videos.length,
+                              itemBuilder: (context, index) {
+                                final video = videos[index];
+                                return GestureDetector(
+                                  onTap: () {
+                                    MainNavigationScreen.jumpToVideo(
+                                      context,
+                                      video.id,
+                                      showBackButton: true,
+                                    );
+                                  },
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Image.network(
+                                        video.thumbnailURL,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Positioned(
+                                        bottom: 8,
+                                        left: 8,
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              FontAwesomeIcons.heart,
+                                              color: Colors.white,
+                                              size: 14,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              video.likesCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        // Bookmarked Videos Tab
+                        StreamBuilder<List<Video>>(
+                          stream: videoService.getBookmarkedVideos(),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                  child: CircularProgressIndicator());
+                            }
+
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.error_outline,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text('Error loading bookmarked videos',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            final videos = snapshot.data ?? [];
+
+                            if (videos.isEmpty) {
+                              return Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.bookmark_border,
+                                        size: 48, color: Colors.grey[400]),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No bookmarked videos',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium,
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }
+
+                            return GridView.builder(
+                              padding: const EdgeInsets.all(1),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 3,
+                                childAspectRatio: 0.8,
+                                crossAxisSpacing: 1,
+                                mainAxisSpacing: 1,
+                              ),
+                              itemCount: videos.length,
+                              itemBuilder: (context, index) {
+                                final video = videos[index];
+                                return GestureDetector(
+                                  onTap: () {
+                                    MainNavigationScreen.jumpToVideo(
+                                      context,
+                                      video.id,
+                                      showBackButton: true,
+                                    );
+                                  },
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      Image.network(
+                                        video.thumbnailURL,
+                                        fit: BoxFit.cover,
+                                      ),
+                                      Positioned(
+                                        bottom: 8,
+                                        left: 8,
+                                        child: Row(
+                                          children: [
+                                            const Icon(
+                                              FontAwesomeIcons.heart,
+                                              color: Colors.white,
+                                              size: 14,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              video.likesCount.toString(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          },
+                        ),
+                        // Collections Tab
+                        CollectionsGrid(
+                          key: const ValueKey('collections_grid'),
+                          collections: _collections,
+                          onCreateCollection: _showCreateCollectionDialog,
+                          isLoading: _isLoadingCollections,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-                const SizedBox(height: 16),
-                // Stats Row
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildStatColumn(
-                        context, _videos.length.toString(), 'Videos'),
-                    _buildStatColumn(
-                        context, _collections.length.toString(), 'Collections'),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Edit Profile Button or Follow Button
-                if (isCurrentUser)
-                  OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const EditProfileScreen(),
-                        ),
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      minimumSize: const Size(double.infinity, 36),
-                    ),
-                    child: const Text('Edit Profile'),
-                  )
-                else
-                  StreamBuilder<bool>(
-                    stream: _userService.watchFollowStatus(widget.userId!),
-                    builder: (context, followSnapshot) {
-                      final isFollowing = followSnapshot.data ?? false;
-
-                      return ElevatedButton(
-                        onPressed: _isLoading
-                            ? null
-                            : () => _handleFollowAction(isFollowing),
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: const Size(double.infinity, 36),
-                          backgroundColor: isFollowing
-                              ? Colors.grey[200]
-                              : Theme.of(context).primaryColor,
-                          foregroundColor:
-                              isFollowing ? Colors.black : Colors.white,
-                        ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Text(isFollowing ? 'Following' : 'Follow'),
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          // Tab Bar
-          TabBar(
-            controller: _tabController,
-            tabs: const [
-              Tab(text: 'Videos'),
-              Tab(text: 'Bookmarks'),
-              Tab(text: 'Collections'),
-            ],
-            labelColor: Theme.of(context).primaryColor,
-            unselectedLabelColor: Colors.grey,
-            indicatorColor: Theme.of(context).primaryColor,
-          ),
-          // Tab Bar View
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              physics:
-                  const NeverScrollableScrollPhysics(), // Prevent swipe to change tabs
-              children: [
-                // Videos Tab
-                _buildVideosGrid(),
-                // Bookmarks Tab
-                _buildBookmarksGrid(),
-                // Collections Tab
-                CollectionsGrid(
-                  key: const ValueKey('collections_grid'),
-                  collections: _collections,
-                  onCreateCollection: _showCreateCollectionDialog,
-                  isLoading: _isLoadingCollections,
-                ),
-              ],
-            ),
-          ),
-        ],
+              );
+            },
+          );
+        },
       ),
-    );
-  }
-
-  Widget _buildVideosGrid() {
-    if (_videos.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.videocam_off, size: 48, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No videos found',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(1),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.8,
-        crossAxisSpacing: 1,
-        mainAxisSpacing: 1,
-      ),
-      itemCount: _videos.length,
-      itemBuilder: (context, index) {
-        final video = _videos[index];
-        return GestureDetector(
-          onTap: () {
-            MainNavigationScreen.jumpToVideo(
-              context,
-              video.id,
-              showBackButton: true,
-            );
-          },
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                video.thumbnailURL,
-                fit: BoxFit.cover,
-              ),
-              Positioned(
-                bottom: 8,
-                left: 8,
-                child: Row(
-                  children: [
-                    const Icon(
-                      FontAwesomeIcons.heart,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      video.likesCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildBookmarksGrid() {
-    if (_videos.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.bookmark_border, size: 48, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(
-              'No bookmarked videos',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(1),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 0.8,
-        crossAxisSpacing: 1,
-        mainAxisSpacing: 1,
-      ),
-      itemCount: _videos.length,
-      itemBuilder: (context, index) {
-        final video = _videos[index];
-        return GestureDetector(
-          onTap: () {
-            MainNavigationScreen.jumpToVideo(
-              context,
-              video.id,
-              showBackButton: true,
-            );
-          },
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Image.network(
-                video.thumbnailURL,
-                fit: BoxFit.cover,
-              ),
-              Positioned(
-                bottom: 8,
-                left: 8,
-                child: Row(
-                  children: [
-                    const Icon(
-                      FontAwesomeIcons.heart,
-                      color: Colors.white,
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      video.likesCount.toString(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
