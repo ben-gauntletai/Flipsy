@@ -75,7 +75,7 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         resource.data.userId == request.auth.uid ||
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['likesCount', 'commentsCount', 'shareCount', 'views'])
+          .hasOnly(['likesCount', 'commentsCount', 'shareCount', 'views', 'bookmarkCount'])
       );
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
 
