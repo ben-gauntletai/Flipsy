@@ -284,29 +284,50 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                     const SizedBox(width: 8),
                     // Only show filter button when not searching users
                     if (!_isSearchingUsers)
-                      IconButton.filled(
-                        onPressed: _showFilterSheet,
-                        icon: Stack(
-                          children: [
-                            const Icon(Icons.tune),
-                            if (_currentFilter.hasFilters)
-                              Positioned(
-                                right: 0,
-                                top: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
+                      Row(
+                        children: [
+                          IconButton.filled(
+                            onPressed: _showFilterSheet,
+                            icon: Stack(
+                              children: [
+                                const Icon(Icons.tune),
+                                if (_currentFilter.hasFilters)
+                                  Positioned(
+                                    right: 0,
+                                    top: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 8,
+                                        minHeight: 8,
+                                      ),
+                                    ),
                                   ),
-                                  constraints: const BoxConstraints(
-                                    minWidth: 8,
-                                    minHeight: 8,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton.filled(
+                            onPressed: () {
+                              setState(() {
+                                _currentFilter = const VideoFilter();
+                                _searchController.clear();
+                                _users = [];
+                                _isSearchingUsers = false;
+                              });
+                              _loadVideos(refresh: true);
+                            },
+                            icon: const Icon(Icons.refresh),
+                            style: IconButton.styleFrom(
+                              backgroundColor:
+                                  Theme.of(context).colorScheme.secondary,
+                            ),
+                          ),
+                        ],
                       ),
                   ],
                 ),
