@@ -260,6 +260,16 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                         decoration: InputDecoration(
                           hintText: 'Search @users or #hashtags',
                           prefixIcon: const Icon(Icons.search),
+                          suffixIcon: _isLoading && !_isSearchingUsers
+                              ? Container(
+                                  width: 24,
+                                  height: 24,
+                                  padding: const EdgeInsets.all(8),
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : null,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(8),
                           ),
