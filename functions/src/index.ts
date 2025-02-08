@@ -15,10 +15,11 @@ import {
   onDocumentUpdated,
 } from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
-import { OpenAI } from "openai";
+import OpenAI from "openai";
 import { PineconeService } from "./services/pinecone.service";
 import { initializeApp } from "firebase-admin/app";
 import { VideoVector } from "./types";
+import { VideoProcessorService } from "./services/video-processor.service";
 
 // Custom type for vision messages
 // type VisionContent = {
@@ -1068,7 +1069,7 @@ export const migrateVideosToTags = functions.https.onRequest(async (req, res) =>
 export const analyzeVideo = onDocumentCreated(
   {
     document: "videos/{videoId}",
-    secrets: ["OPENAI_API_KEY"],
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
   },
   async (event) => {
     try {
@@ -1081,84 +1082,85 @@ export const analyzeVideo = onDocumentCreated(
       }
 
       const videoData = snapshot.data();
-      console.log("Video data retrieved:", {
-        hasData: !!videoData,
-        hasThumbnail: !!videoData?.thumbnailURL,
-        videoId: event.params.videoId,
-      });
-
-      if (!videoData || !videoData.thumbnailURL) {
-        console.error("No video data or thumbnail URL found", {
+      if (!videoData || !videoData.videoURL) {
+        console.error("No video data or video URL found", {
           videoId: event.params.videoId,
           videoData: videoData ? "exists" : "null",
-          thumbnailURL: videoData?.thumbnailURL ? "exists" : "null",
+          videoURL: videoData?.videoURL ? "exists" : "null",
         });
         return;
       }
 
-      // Initialize OpenAI client
+      // Use the VideoProcessorService for comprehensive analysis
+      const videoProcessor = new VideoProcessorService();
+      const analysis = await videoProcessor.processVideo(videoData.videoURL, event.params.videoId);
+
+      // Store analysis results
+      await snapshot.ref.update({
+        analysis: {
+          summary: analysis.summary,
+          ingredients: analysis.ingredients,
+          tools: analysis.tools,
+          techniques: analysis.techniques,
+          steps: analysis.steps,
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        processingStatus: "completed",
+      });
+
+      // Generate embeddings for improved search
       const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const systemPrompt =
-        "You are a cooking video analyzer. Describe what is happening in this " +
-        "thumbnail from a cooking video. Focus on the cooking techniques, " +
-        "ingredients, and overall dish being prepared. Be concise but descriptive, " +
-        "and highlight any unique or interesting aspects of the preparation method " +
-        "or presentation.";
+      // Generate embeddings for different aspects of the video
+      const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
+        openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: [
+            analysis.summary,
+            analysis.ingredients.join(" "),
+            analysis.tools.join(" "),
+            analysis.techniques.join(" "),
+          ].join(" "),
+        }),
+        openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: analysis.transcription,
+        }),
+      ]);
 
-      console.log("Preparing messages for OpenAI...");
-      const messages = [
+      // Store vectors in Pinecone
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      await pineconeService.upsert([
         {
-          role: "system" as const,
-          content: systemPrompt,
+          id: `${event.params.videoId}_summary`,
+          values: summaryEmbedding.data[0].embedding,
+          metadata: {
+            videoId: event.params.videoId,
+            type: "summary",
+            ingredients: analysis.ingredients,
+            tools: analysis.tools,
+            techniques: analysis.techniques,
+          },
         },
         {
-          role: "user" as const,
-          content: [
-            {
-              type: "text" as const,
-              text: "Please analyze this cooking video thumbnail:",
-            },
-            {
-              type: "image_url" as const,
-              image_url: {
-                url: videoData.thumbnailURL,
-              },
-            },
-          ],
+          id: `${event.params.videoId}_transcription`,
+          values: transcriptionEmbedding.data[0].embedding,
+          metadata: {
+            videoId: event.params.videoId,
+            type: "transcription",
+          },
         },
-      ];
+      ]);
 
-      console.log("Calling OpenAI API...");
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages,
-        max_tokens: 300,
-      });
-
-      console.log("OpenAI API response received", {
-        hasChoices: !!response.choices.length,
-        firstChoice: !!response.choices[0]?.message?.content,
-      });
-
-      // Store the AI-generated description and update status
-      await snapshot.ref.update({
-        aiEnhancements: {
-          description: response.choices[0].message.content || "",
-          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          status: "completed",
-        },
-        vectorEmbedding: {
-          status: "pending", // Signal that embedding can now be generated
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-      });
-
-      console.log("Successfully analyzed video and stored description", {
+      console.log("Successfully processed video and stored analysis", {
         videoId: event.params.videoId,
-        descriptionLength: response.choices[0].message.content?.length || 0,
+        summaryLength: analysis.summary.length,
+        ingredients: analysis.ingredients.length,
+        tools: analysis.tools.length,
+        techniques: analysis.techniques.length,
+        steps: analysis.steps.length,
       });
     } catch (error) {
       console.error("Error in analyzeVideo:", error);
@@ -1166,11 +1168,8 @@ export const analyzeVideo = onDocumentCreated(
       // Update status to failed
       if (event.data) {
         await event.data.ref.update({
-          aiEnhancements: {
-            status: "failed",
-            error: error instanceof Error ? error.message : "Unknown error",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
+          processingStatus: "failed",
+          error: error instanceof Error ? error.message : "Unknown error",
         });
       }
 
@@ -1199,158 +1198,93 @@ export const analyzeExistingVideos = onCall(
       let processedCount = 0;
       let skippedCount = 0;
       let errorCount = 0;
-      let embeddingsCount = 0;
 
-      // Initialize services
-      const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-
-      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      const videoProcessor = new VideoProcessorService();
 
       for (const doc of videosSnapshot.docs) {
         try {
           const videoData = doc.data();
           const videoId = doc.id;
-          let needsEmbeddingUpdate = false;
-          let aiDescription = videoData.aiEnhancements?.description;
 
-          // Skip if no thumbnail
-          if (!videoData.thumbnailURL) {
-            console.log(`Skipping video ${videoId} - no thumbnail URL`);
+          // Skip if no video URL
+          if (!videoData.videoURL) {
+            console.log(`Skipping video ${videoId} - no video URL`);
             skippedCount++;
             continue;
           }
 
-          // Generate AI description if needed
-          if (!aiDescription || forceRegenerate) {
-            console.log(`Processing AI description for video ${videoId}`);
-
-            const systemPrompt =
-              "You are a cooking video analyzer. Describe what is happening in this " +
-              "thumbnail from a cooking video. Focus on the cooking techniques, " +
-              "ingredients, and overall dish being prepared. Be concise but descriptive, " +
-              "and highlight any unique or interesting aspects of the preparation method " +
-              "or presentation.";
-
-            const messages = [
-              {
-                role: "system" as const,
-                content: systemPrompt,
-              },
-              {
-                role: "user" as const,
-                content: [
-                  {
-                    type: "text" as const,
-                    text: "Please analyze this cooking video thumbnail:",
-                  },
-                  {
-                    type: "image_url" as const,
-                    image_url: {
-                      url: videoData.thumbnailURL,
-                    },
-                  },
-                ],
-              },
-            ];
-
-            const response = await openai.chat.completions.create({
-              model: "gpt-4o-mini",
-              messages,
-              max_tokens: 300,
-            });
-
-            aiDescription = response.choices[0].message.content || "";
-            needsEmbeddingUpdate = true;
-
-            // Store the AI-generated description
-            await doc.ref.update({
-              aiEnhancements: {
-                description: aiDescription,
-                generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                status: "completed",
-              },
-            });
-
-            processedCount++;
-          } else {
-            console.log(`Skipping AI description for video ${videoId} - already exists`);
+          // Skip if already processed and not forcing regeneration
+          if (videoData.analysis && !forceRegenerate) {
+            console.log(`Skipping video ${videoId} - already processed`);
             skippedCount++;
+            continue;
           }
 
-          // Generate or update embedding if needed
-          if (
-            needsEmbeddingUpdate ||
-            !videoData.vectorEmbedding?.status ||
-            videoData.vectorEmbedding.status === "failed"
-          ) {
-            console.log(`Generating embedding for video ${videoId}`);
+          console.log(`Processing video ${videoId}`);
 
-            // Update video with pending status
-            await doc.ref.update({
-              vectorEmbedding: {
-                status: "pending",
-                updatedAt: new Date(),
-              },
-            });
+          // Process video with new comprehensive analysis
+          const analysis = await videoProcessor.processVideo(videoData.videoURL, videoId);
 
-            // Generate embedding using all available content
-            const content = [
-              videoData.description || "",
-              videoData.hashtags?.join(" ") || "",
-              videoData.tags?.join(" ") || "",
-              aiDescription || "",
-            ].join(" ");
+          // Store analysis results
+          await doc.ref.update({
+            analysis: {
+              summary: analysis.summary,
+              ingredients: analysis.ingredients,
+              tools: analysis.tools,
+              techniques: analysis.techniques,
+              steps: analysis.steps,
+              processedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+          });
 
-            const embeddingResponse = await openai.embeddings.create({
+          // Generate embeddings for improved search
+          const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY,
+          });
+
+          // Generate embeddings for different aspects of the video
+          const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
+            openai.embeddings.create({
               model: "text-embedding-3-large",
-              input: content,
-            });
+              input: [
+                analysis.summary,
+                analysis.ingredients.join(" "),
+                analysis.tools.join(" "),
+                analysis.techniques.join(" "),
+              ].join(" "),
+            }),
+            openai.embeddings.create({
+              model: "text-embedding-3-large",
+              input: analysis.transcription,
+            }),
+          ]);
 
-            const embedding = embeddingResponse.data[0].embedding;
-
-            // Create vector record with complete metadata
-            const vector: VideoVector = {
-              id: videoId,
-              values: embedding,
+          // Store vectors in Pinecone
+          const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+          await pineconeService.upsert([
+            {
+              id: `${videoId}_summary`,
+              values: summaryEmbedding.data[0].embedding,
               metadata: {
-                userId: String(videoData.userId),
-                status: String(videoData.status),
-                privacy: String(videoData.privacy),
-                tags: Array.isArray(videoData.tags) ? videoData.tags.map(String) : [],
-                aiDescription: String(videoData.aiEnhancements?.description || ""),
-                version: 1,
-                contentLength: content.length,
-                hasDescription: String(!!videoData.description),
-                hasAiDescription: String(!!videoData.aiEnhancements?.description),
-                hasTags: String(!!(videoData.tags?.length > 0)),
+                videoId,
+                type: "summary",
+                ingredients: analysis.ingredients,
+                tools: analysis.tools,
+                techniques: analysis.techniques,
               },
-            };
-
-            // Upsert to Pinecone
-            await pineconeService.upsertVector(vector);
-            embeddingsCount++;
-
-            // Update Firestore with complete vector embedding metadata
-            await doc.ref.update({
-              vectorEmbedding: {
-                id: videoId,
-                status: "completed",
-                updatedAt: new Date(),
-                model: "text-embedding-3-large",
-                dimensions: embedding.length,
-                version: 1,
-                contentLength: content.length,
-                retryCount: (videoData.vectorEmbedding?.retryCount || 0) + 1,
-                hasDescription: !!videoData.description,
-                hasAiDescription: !!videoData.aiEnhancements?.description,
-                hasTags: (videoData.tags?.length || 0) > 0,
+            },
+            {
+              id: `${videoId}_transcription`,
+              values: transcriptionEmbedding.data[0].embedding,
+              metadata: {
+                videoId,
+                type: "transcription",
               },
-            });
+            },
+          ]);
 
-            console.log(`Successfully generated embedding for video ${videoId}`);
-          }
+          processedCount++;
+          console.log(`Successfully processed video ${videoId}`);
         } catch (error) {
           console.error(`Error processing video ${doc.id}:`, error);
           errorCount++;
@@ -1360,9 +1294,8 @@ export const analyzeExistingVideos = onCall(
       return {
         success: true,
         totalVideos: videosSnapshot.docs.length,
-        processedCount: processedCount,
-        skippedCount: skippedCount,
-        generatedEmbeddings: embeddingsCount,
+        processedCount,
+        skippedCount,
         errorCount,
       };
     } catch (error: unknown) {
@@ -1789,3 +1722,88 @@ export const migrateHashtagsToLowercase = onCall(async () => {
 });
 
 export { migrateDisplayNamesToLowercase } from "./migrations/migrateDisplayNamesToLowercase";
+
+// Function to process video and generate analysis
+export const processVideo = onCall(async (request: CallableRequest) => {
+  try {
+    const { videoId, videoUrl } = request.data;
+    
+    if (!videoId || !videoUrl) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Video ID and URL are required"
+      );
+    }
+
+    const videoProcessor = new VideoProcessorService();
+    const analysis = await videoProcessor.processVideo(videoUrl, videoId);
+
+    // Store analysis results in Firestore
+    const db = admin.firestore();
+    await db.collection("videos").doc(videoId).update({
+      analysis: {
+        summary: analysis.summary,
+        ingredients: analysis.ingredients,
+        tools: analysis.tools,
+        techniques: analysis.techniques,
+        steps: analysis.steps,
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+    });
+
+    // Generate embeddings for improved search
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    // Generate embeddings for different aspects of the video
+    const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
+      openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: [
+          analysis.summary,
+          analysis.ingredients.join(" "),
+          analysis.tools.join(" "),
+          analysis.techniques.join(" "),
+        ].join(" "),
+      }),
+      openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: analysis.transcription,
+      }),
+    ]);
+
+    // Store vectors in Pinecone
+    const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+    await pineconeService.upsert([
+      {
+        id: `${videoId}_summary`,
+        values: summaryEmbedding.data[0].embedding,
+        metadata: {
+          videoId,
+          type: "summary",
+          ingredients: analysis.ingredients,
+          tools: analysis.tools,
+          techniques: analysis.techniques,
+        },
+      },
+      {
+        id: `${videoId}_transcription`,
+        values: transcriptionEmbedding.data[0].embedding,
+        metadata: {
+          videoId,
+          type: "transcription",
+        },
+      },
+    ]);
+
+    return {
+      success: true,
+      message: "Video processed successfully",
+      analysis,
+    };
+  } catch (error) {
+    console.error("Error processing video:", error);
+    throw new functions.https.HttpsError("internal", "Error processing video");
+  }
+});

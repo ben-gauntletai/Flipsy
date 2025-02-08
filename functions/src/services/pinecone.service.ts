@@ -1,12 +1,8 @@
-import { Pinecone } from "@pinecone-database/pinecone";
-import * as functions from "firebase-functions";
+import { Pinecone, RecordMetadata, ScoredPineconeRecord } from "@pinecone-database/pinecone";
+import * as functions from "firebase-functions/v2";
 import { getFirestore } from "firebase-admin/firestore";
 import { VideoMetadata, SearchResultData, VideoVector } from "../types";
-
-// Get Firestore instance
-const getDb = () => {
-  return getFirestore();
-};
+import { getDb } from "../db";
 
 // Status and error tracking interfaces
 interface ProcessingMetrics {
@@ -44,10 +40,14 @@ interface QueryOptions {
   };
 }
 
-interface QueryResponse {
+interface QueryMatch {
   id: string;
   score: number;
-  metadata: VideoVector["metadata"];
+  metadata?: Record<string, any>;
+}
+
+interface QueryResponse {
+  matches: QueryMatch[];
 }
 
 interface VectorEmbeddingUpdate {
@@ -83,14 +83,35 @@ type PineconeMetadata = {
   updatedAt?: string;
 }
 
+interface PineconeVector {
+  id: string;
+  values: number[];
+  metadata?: Record<string, any>;
+}
+
+interface SearchOptions {
+  vector: number[];
+  topK?: number;
+  filter?: Record<string, any>;
+}
+
+interface SearchResult {
+  id: string;
+  score: number;
+  metadata: Record<string, any>;
+  type: string;
+}
+
 /**
  * Service class for interacting with Pinecone vector database
  */
 export class PineconeService {
-  private index;
+  private pinecone: Pinecone;
+  private readonly indexName = "flipsy";
   private db;
   private readonly maxRetries = 3;
   private readonly cooldownPeriodMs = 60000; // 1 minute cooldown
+  private readonly SIMILARITY_THRESHOLD = 0.7;
 
   /**
    * Initialize Pinecone service with API credentials.
@@ -99,10 +120,9 @@ export class PineconeService {
    */
   constructor(apiKey: string) {
     try {
-      const pinecone = new Pinecone({
+      this.pinecone = new Pinecone({
         apiKey,
       });
-      this.index = pinecone.index("flipsy-videos");
       this.db = getDb();
       functions.logger.info("Pinecone service initialized successfully");
     } catch (error) {
@@ -242,7 +262,7 @@ export class PineconeService {
 
       await this.retryOperation(
         async () => {
-          await this.index.upsert([
+          await this.pinecone.index(this.indexName).upsert([
             {
               id: vector.id,
               values: vector.values,
@@ -270,7 +290,7 @@ export class PineconeService {
   async deleteVector(vectorId: string): Promise<void> {
     try {
       await this.retryOperation(async () => {
-        await this.index.deleteOne(vectorId);
+        await this.pinecone.index(this.indexName).deleteOne(vectorId);
       });
       functions.logger.info("Vector deleted successfully", { vectorId });
     } catch (error) {
@@ -293,36 +313,57 @@ export class PineconeService {
    */
   async query(options: QueryOptions): Promise<QueryResponse[]> {
     try {
-      functions.logger.info("Querying similar vectors", { filter: options.filter });
-      const queryResponse = await this.index.query({
+      functions.logger.info("Querying similar vectors", { 
+        filter: options.filter,
+        topK: options.topK,
+        includeMetadata: options.includeMetadata,
+        vectorLength: options.vector.length
+      });
+
+      const queryResponse = await this.pinecone.index(this.indexName).query({
         vector: options.vector,
         topK: options.topK || 10,
         includeMetadata: options.includeMetadata ?? true,
         filter: options.filter,
       });
 
-      functions.logger.info("Query response:", {
+      functions.logger.info("Query response details:", {
         totalMatches: queryResponse.matches.length,
         scores: queryResponse.matches.map((m) => m.score),
+        matchIds: queryResponse.matches.map((m) => m.id),
+        hasMetadata: queryResponse.matches.every((m) => !!m.metadata)
       });
 
-      // Filter matches by score threshold
-      const SIMILARITY_THRESHOLD = 0.3;
-      const filteredMatches = queryResponse.matches.filter((match) => (match.score || 0) >= SIMILARITY_THRESHOLD);
+      const filteredMatches = queryResponse.matches.filter(
+        (match) => (match.score || 0) >= this.SIMILARITY_THRESHOLD
+      );
 
-      functions.logger.info("After threshold filtering:", {
+      functions.logger.info("Post-filtering details:", {
         originalCount: queryResponse.matches.length,
         filteredCount: filteredMatches.length,
-        threshold: SIMILARITY_THRESHOLD,
+        threshold: this.SIMILARITY_THRESHOLD,
+        rejectedScores: queryResponse.matches
+          .filter((m) => (m.score || 0) < this.SIMILARITY_THRESHOLD)
+          .map((m) => m.score)
       });
 
-      return filteredMatches.map((match) => ({
-        id: match.id,
-        score: match.score || 0,
-        metadata: this.mapFromPineconeMetadata(match.metadata || {}),
-      }));
+      return [{
+        matches: filteredMatches.map((match) => ({
+          id: match.id,
+          score: match.score || 0,
+          metadata: this.mapFromPineconeMetadata(match.metadata || {}),
+        })),
+      }];
     } catch (error) {
-      functions.logger.error("Error querying vectors", error);
+      functions.logger.error("Error querying vectors", {
+        error: this.formatError(error),
+        options: {
+          topK: options.topK,
+          hasFilter: !!options.filter,
+          vectorLength: options.vector.length,
+          includeMetadata: options.includeMetadata
+        }
+      });
       throw error;
     }
   }
@@ -386,7 +427,6 @@ export class PineconeService {
   async hybridSearch(options: HybridSearchOptions): Promise<SearchResponse> {
     try {
       const { query, queryVector, filter, limit = 20 } = options;
-      const SIMILARITY_THRESHOLD = 0.3;
 
       // Prepare query options with required topK
       const queryOptions: QueryOptions = {
@@ -400,7 +440,7 @@ export class PineconeService {
       };
 
       // Perform semantic search
-      const semanticResults = await this.index.query(queryOptions);
+      const semanticResults = await this.pinecone.index(this.indexName).query(queryOptions);
       
       // Log raw scores for debugging
       functions.logger.info("Semantic search raw scores:", 
@@ -408,12 +448,12 @@ export class PineconeService {
 
       // Filter by threshold before any processing
       let results: SearchResultData[] = semanticResults.matches
-        .filter((match) => (match.score || 0) >= SIMILARITY_THRESHOLD)
+        .filter((match) => (match.score || 0) >= this.SIMILARITY_THRESHOLD)
         .map((match) => this.createSearchResult(match, "semantic"));
 
       // If exact matching is needed, perform exact match search
       if (query && query.trim()) {
-        const exactResults = await this.index.query({
+        const exactResults = await this.pinecone.index(this.indexName).query({
           ...queryOptions,
           filter: {
             ...queryOptions.filter,
@@ -438,7 +478,7 @@ export class PineconeService {
         query,
         totalMatches: semanticResults.matches.length,
         matchesAboveThreshold: results.length,
-        thresholdUsed: SIMILARITY_THRESHOLD,
+        thresholdUsed: this.SIMILARITY_THRESHOLD,
         topScores: results.slice(0, 3).map((r) => ({
           id: r.id,
           score: r.score,
@@ -495,7 +535,7 @@ export class PineconeService {
       }
 
       // Update the vector metadata
-      const updateResponse = await this.index.update({
+      const updateResponse = await this.pinecone.index(this.indexName).update({
         id: videoId,
         metadata: this.mapToPineconeMetadata({
           ...afterData,
@@ -537,5 +577,59 @@ export class PineconeService {
     }
 
     return result;
+  }
+
+  async upsert(vectors: PineconeVector[]): Promise<void> {
+    const index = this.pinecone.index(this.indexName);
+    await index.upsert(vectors);
+  }
+
+  async querySimilar(options: SearchOptions): Promise<SearchResult[]> {
+    try {
+      const queryResponse = await this.pinecone.index(this.indexName).query({
+        vector: options.vector,
+        topK: options.topK || 10,
+        filter: options.filter,
+      });
+
+      return queryResponse.matches
+        .filter((match) => (match.score || 0) >= this.SIMILARITY_THRESHOLD)
+        .map((match) => ({
+          id: match.id,
+          score: match.score || 0,
+          metadata: match.metadata || {},
+          type: "semantic",
+        }));
+    } catch (error) {
+      functions.logger.error("Error querying similar vectors:", error);
+      throw error;
+    }
+  }
+
+  async searchContent(query: string): Promise<SearchResult[]> {
+    try {
+      const queryOptions = {
+        vector: [], // You'll need to generate this from the query
+        topK: 20,
+      };
+
+      const semanticResults = await this.pinecone.index(this.indexName).query(queryOptions);
+      
+      functions.logger.info("Raw semantic search scores:", 
+        semanticResults.matches.map((match) => match.score)
+      );
+
+      return semanticResults.matches
+        .filter((match) => (match.score || 0) >= this.SIMILARITY_THRESHOLD)
+        .map((match) => ({
+          id: match.id,
+          score: match.score || 0,
+          metadata: match.metadata || {},
+          type: "semantic",
+        }));
+    } catch (error) {
+      functions.logger.error("Error in searchContent:", error);
+      return [];
+    }
   }
 }

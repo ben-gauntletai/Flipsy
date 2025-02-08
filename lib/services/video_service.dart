@@ -219,6 +219,8 @@ class VideoService {
         'prepTimeMinutes': prepTimeMinutes,
         'hashtags': hashtags,
         'tags': tags,
+        'processingStatus': 'pending',
+        'analysis': null,
       });
 
       print('VideoService: Created document with ID: ${videoDoc.id}');
@@ -228,6 +230,22 @@ class VideoService {
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      // Trigger video processing
+      try {
+        print('VideoService: Triggering video processing');
+        final functions = FirebaseFunctions.instance;
+        final callable = functions.httpsCallable('processVideo');
+        await callable.call({
+          'videoId': videoDoc.id,
+          'videoURL': videoURL,
+        });
+        print('VideoService: Video processing triggered successfully');
+      } catch (e) {
+        print('VideoService: Error triggering video processing: $e');
+        // Don't throw here - we still want to return the video object
+        // The processing can be retried later if needed
+      }
 
       // Get the document immediately after creation
       final doc = await videoDoc.get();

@@ -25,6 +25,8 @@ class Video {
   final int prepTimeMinutes; // Preparation time in minutes
   final List<String> hashtags; // Added field for hashtags
   final List<String> tags; // Added field for combined tags
+  final String processingStatus;
+  final VideoAnalysis? analysis;
 
   // Static methods for bucket calculation
   static String calculateBudgetBucket(double budget) {
@@ -88,28 +90,23 @@ class Video {
     required this.likesCount,
     required this.commentsCount,
     required this.shareCount,
-    this.bookmarkCount = 0,
+    required this.bookmarkCount,
     required this.duration,
     required this.width,
     required this.height,
     required this.status,
     this.aiEnhancements,
-    this.allowComments = true,
-    this.privacy = 'everyone',
-    this.spiciness = 0,
-    this.budget = 0.0,
-    this.calories = 0,
-    this.prepTimeMinutes = 0,
-    this.hashtags = const [],
-    List<String>? tags,
-  }) : tags = tags ??
-            generateTags(
-              budget: budget,
-              calories: calories,
-              prepTimeMinutes: prepTimeMinutes,
-              spiciness: spiciness,
-              hashtags: hashtags,
-            );
+    required this.allowComments,
+    required this.privacy,
+    required this.spiciness,
+    required this.budget,
+    required this.calories,
+    required this.prepTimeMinutes,
+    required this.hashtags,
+    required this.tags,
+    this.processingStatus = 'pending',
+    this.analysis,
+  });
 
   factory Video.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
@@ -178,6 +175,10 @@ class Video {
       prepTimeMinutes: prepTimeMinutes,
       hashtags: hashtags,
       tags: tags,
+      processingStatus: data['processingStatus'] as String? ?? 'pending',
+      analysis: data['analysis'] != null
+          ? VideoAnalysis.fromMap(data['analysis'])
+          : null,
     );
   }
 
@@ -210,6 +211,8 @@ class Video {
       'prepTimeMinutes': prepTimeMinutes,
       'hashtags': hashtags,
       'tags': tags,
+      'processingStatus': processingStatus,
+      'analysis': analysis?.toMap(),
     };
   }
 
@@ -252,6 +255,8 @@ class Video {
     int? prepTimeMinutes,
     List<String>? hashtags,
     List<String>? tags,
+    String? processingStatus,
+    VideoAnalysis? analysis,
   }) {
     return Video(
       id: id ?? this.id,
@@ -278,6 +283,8 @@ class Video {
       prepTimeMinutes: prepTimeMinutes ?? this.prepTimeMinutes,
       hashtags: hashtags ?? this.hashtags,
       tags: tags ?? this.tags,
+      processingStatus: processingStatus ?? this.processingStatus,
+      analysis: analysis ?? this.analysis,
     );
   }
 
@@ -309,11 +316,58 @@ class Video {
       likesCount: (map['likesCount'] as num?)?.toInt() ?? 0,
       commentsCount: (map['commentsCount'] as num?)?.toInt() ?? 0,
       shareCount: (map['shareCount'] as num?)?.toInt() ?? 0,
+      bookmarkCount: (map['bookmarkCount'] as num?)?.toInt() ?? 0,
       duration: (map['duration'] as num?)?.toDouble() ?? 0.0,
       width: (map['width'] as num?)?.toInt() ?? 0,
       height: (map['height'] as num?)?.toInt() ?? 0,
       hashtags: hashtags,
       tags: tags,
+      processingStatus: map['processingStatus'] as String? ?? 'pending',
+      analysis: map['analysis'] != null
+          ? VideoAnalysis.fromMap(map['analysis'])
+          : null,
+      allowComments: map['allowComments'] as bool? ?? true,
+      privacy: map['privacy'] as String? ?? 'everyone',
     );
+  }
+}
+
+class VideoAnalysis {
+  final String summary;
+  final List<String> ingredients;
+  final List<String> tools;
+  final List<String> techniques;
+  final List<String> steps;
+  final DateTime processedAt;
+
+  VideoAnalysis({
+    required this.summary,
+    required this.ingredients,
+    required this.tools,
+    required this.techniques,
+    required this.steps,
+    required this.processedAt,
+  });
+
+  factory VideoAnalysis.fromMap(Map<String, dynamic> map) {
+    return VideoAnalysis(
+      summary: map['summary'] ?? '',
+      ingredients: List<String>.from(map['ingredients'] ?? []),
+      tools: List<String>.from(map['tools'] ?? []),
+      techniques: List<String>.from(map['techniques'] ?? []),
+      steps: List<String>.from(map['steps'] ?? []),
+      processedAt: (map['processedAt'] as Timestamp).toDate(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'summary': summary,
+      'ingredients': ingredients,
+      'tools': tools,
+      'techniques': techniques,
+      'steps': steps,
+      'processedAt': processedAt,
+    };
   }
 }
