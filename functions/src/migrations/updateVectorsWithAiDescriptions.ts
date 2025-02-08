@@ -61,6 +61,11 @@ export const updateVectorsWithAiDescriptions = onRequest(
               privacy: videoData.privacy,
               tags: videoData.tags || [],
               aiDescription: videoData.aiEnhancements?.description,
+              version: 1,
+              contentLength: content.length,
+              hasDescription: String(!!videoData.description),
+              hasAiDescription: String(!!videoData.aiEnhancements?.description),
+              hasTags: String(videoData.tags?.length > 0),
             },
           });
 
@@ -90,5 +95,5 @@ export const updateVectorsWithAiDescriptions = onRequest(
       console.error("Migration failed:", error);
       res.status(500).json({ error: "Migration failed" });
     }
-  }
+  },
 );

@@ -13,14 +13,13 @@ import {
   onDocumentCreated,
   onDocumentDeleted,
   onDocumentUpdated,
-  DocumentSnapshot,
 } from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
-import OpenAI from "openai";
-import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import { PineconeService, VideoVector } from "./services/pinecone.service";
+import { OpenAI } from "openai";
+import { PineconeService } from "./services/pinecone.service";
 import { initializeApp } from "firebase-admin/app";
-// import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
+import { VideoVector } from "./types";
 
 // Custom type for vision messages
 // type VisionContent = {
@@ -38,7 +37,6 @@ import { initializeApp } from "firebase-admin/app";
 
 // Initialize Firebase Admin
 initializeApp();
-// const db = getFirestore();
 
 // Initialize OpenAI
 // const openai = new OpenAI({
@@ -70,14 +68,11 @@ export const createUser = functions.https.onCall(async (request) => {
     const displayNameQuery = await admin
       .firestore()
       .collection("users")
-      .where("displayName", "==", data.displayName)
+      .where("displayNameLower", "==", data.displayName.toLowerCase())
       .get();
 
     if (!displayNameQuery.empty) {
-      throw new functions.https.HttpsError(
-        "already-exists",
-        "This display name is already taken.",
-      );
+      throw new functions.https.HttpsError("already-exists", "This display name is already taken.");
     }
 
     // Create user with Firebase Auth
@@ -91,6 +86,7 @@ export const createUser = functions.https.onCall(async (request) => {
     await admin.firestore().collection("users").doc(userRecord.uid).set({
       email: data.email,
       displayName: data.displayName,
+      displayNameLower: data.displayName.toLowerCase(), // Add lowercase version for searching
       avatarURL: null,
       bio: null,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -124,10 +120,7 @@ export const createUser = functions.https.onCall(async (request) => {
     }
 
     if (firebaseError.code === "auth/invalid-email") {
-      throw new functions.https.HttpsError(
-        "invalid-argument",
-        "The email address is not valid.",
-      );
+      throw new functions.https.HttpsError("invalid-argument", "The email address is not valid.");
     }
 
     if (firebaseError.code === "auth/weak-password") {
@@ -137,10 +130,7 @@ export const createUser = functions.https.onCall(async (request) => {
       );
     }
 
-    throw new functions.https.HttpsError(
-      "internal",
-      "An error occurred while creating the user.",
-    );
+    throw new functions.https.HttpsError("internal", "An error occurred while creating the user.");
   }
 });
 
@@ -267,7 +257,7 @@ export const onCommentCreated = onDocumentCreated(
     } catch (error) {
       console.error("Error in onCommentCreated:", error);
     }
-  }
+  },
 );
 
 // Function to handle comment deletion
@@ -372,7 +362,7 @@ export const onCommentDeleted = onDocumentDeleted(
     } catch (error) {
       console.error("Error in onCommentDeleted:", error);
     }
-  }
+  },
 );
 
 // Function to handle comment like changes
@@ -389,11 +379,7 @@ export const onCommentLikeChange = onDocumentUpdated(
       const batch = db.batch();
 
       // Update the comment's like count
-      const commentRef = db
-        .collection("videos")
-        .doc(videoId)
-        .collection("comments")
-        .doc(commentId);
+      const commentRef = db.collection("videos").doc(videoId).collection("comments").doc(commentId);
 
       batch.update(commentRef, {
         likesCount: admin.firestore.FieldValue.increment(increment),
@@ -436,7 +422,7 @@ export const onCommentLikeChange = onDocumentUpdated(
     } catch (error) {
       console.error("Error in onCommentLikeChange:", error);
     }
-  }
+  },
 );
 
 interface FollowData {
@@ -584,150 +570,144 @@ export const unfollowUser = functions.https.onCall(async (data: CallableRequest<
 });
 
 // Add trigger for follows collection changes
-export const onFollowChange = onDocumentUpdated(
-  "follows/{followId}",
-  async (event) => {
-    const beforeData = event.data?.before.data();
-    const afterData = event.data?.after.data();
-    const followId = event.params.followId;
+export const onFollowChange = onDocumentUpdated("follows/{followId}", async (event) => {
+  const beforeData = event.data?.before.data();
+  const afterData = event.data?.after.data();
+  const followId = event.params.followId;
 
-    console.log(`Follow document change detected: ${followId}`);
-    console.log("Before:", beforeData);
-    console.log("After:", afterData);
+  console.log(`Follow document change detected: ${followId}`);
+  console.log("Before:", beforeData);
+  console.log("After:", afterData);
 
-    try {
-      const db = admin.firestore();
+  try {
+    const db = admin.firestore();
 
-      // Document was deleted
-      if (beforeData && !afterData) {
-        console.log("Follow relationship deleted");
-        return;
-      }
-
-      // Document was created or updated
-      if (afterData) {
-        const { followerId, followingId, createdAt } = afterData;
-        console.log(`Follow relationship: ${followerId} -> ${followingId}`);
-        console.log("Created at:", createdAt);
-
-        // Verify document ID matches the data
-        const expectedId = `${followerId}_${followingId}`;
-        if (followId !== expectedId) {
-          console.error(`Invalid follow document ID. Expected: ${expectedId}, Got: ${followId}`);
-          // Fix the document ID
-          const followRef = event.data?.after.ref;
-          if (followRef) {
-            await db.runTransaction(async (transaction) => {
-              transaction.delete(followRef);
-              transaction.set(db.collection("follows").doc(expectedId), afterData);
-            });
-          }
-        }
-      }
-    } catch (error) {
-      console.error("Error in onFollowChange:", error);
-    }
-  }
-);
-
-// Function to handle video like count changes and update user total likes
-export const onVideoLikeCountChange = onDocumentUpdated(
-  "videos/{videoId}",
-  async (event) => {
-    const beforeData = event.data?.before.data();
-    const afterData = event.data?.after.data();
-    const videoRef = event.data?.after.ref;
-
-    // Only proceed if likesCount has changed
-    if (beforeData?.likesCount === afterData?.likesCount) {
+    // Document was deleted
+    if (beforeData && !afterData) {
+      console.log("Follow relationship deleted");
       return;
     }
 
-    console.log(`Video ${event.params.videoId} likes changed:`, {
-      before: beforeData?.likesCount,
-      after: afterData?.likesCount,
-    });
+    // Document was created or updated
+    if (afterData) {
+      const { followerId, followingId, createdAt } = afterData;
+      console.log(`Follow relationship: ${followerId} -> ${followingId}`);
+      console.log("Created at:", createdAt);
 
-    try {
-      const db = admin.firestore();
-      const uploaderId = afterData?.userId || afterData?.uploaderId;
-
-      if (!uploaderId) {
-        console.error("No uploaderId found for video", event.params.videoId);
-        return;
-      }
-
-      // Calculate the difference in likes
-      const likeDiff = (afterData?.likesCount || 0) - (beforeData?.likesCount || 0);
-      console.log(`Updating user ${uploaderId} totalLikes by ${likeDiff}`);
-
-      let retryCount = 0;
-      const maxRetries = 3;
-
-      while (retryCount < maxRetries) {
-        try {
-          // Update user's totalLikes using a transaction for consistency
+      // Verify document ID matches the data
+      const expectedId = `${followerId}_${followingId}`;
+      if (followId !== expectedId) {
+        console.error(`Invalid follow document ID. Expected: ${expectedId}, Got: ${followId}`);
+        // Fix the document ID
+        const followRef = event.data?.after.ref;
+        if (followRef) {
           await db.runTransaction(async (transaction) => {
-            const userRef = db.collection("users").doc(uploaderId);
-            const userDoc = await transaction.get(userRef);
+            transaction.delete(followRef);
+            transaction.set(db.collection("follows").doc(expectedId), afterData);
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error in onFollowChange:", error);
+  }
+});
 
-            if (!userDoc.exists) {
-              console.error(`User document ${uploaderId} not found`);
+// Function to handle video like count changes and update user total likes
+export const onVideoLikeCountChange = onDocumentUpdated("videos/{videoId}", async (event) => {
+  const beforeData = event.data?.before.data();
+  const afterData = event.data?.after.data();
+  const videoRef = event.data?.after.ref;
+
+  // Only proceed if likesCount has changed
+  if (beforeData?.likesCount === afterData?.likesCount) {
+    return;
+  }
+
+  console.log(`Video ${event.params.videoId} likes changed:`, {
+    before: beforeData?.likesCount,
+    after: afterData?.likesCount,
+  });
+
+  try {
+    const db = admin.firestore();
+    const uploaderId = afterData?.userId || afterData?.uploaderId;
+
+    if (!uploaderId) {
+      console.error("No uploaderId found for video", event.params.videoId);
+      return;
+    }
+
+    // Calculate the difference in likes
+    const likeDiff = (afterData?.likesCount || 0) - (beforeData?.likesCount || 0);
+    console.log(`Updating user ${uploaderId} totalLikes by ${likeDiff}`);
+
+    let retryCount = 0;
+    const maxRetries = 3;
+
+    while (retryCount < maxRetries) {
+      try {
+        // Update user's totalLikes using a transaction for consistency
+        await db.runTransaction(async (transaction) => {
+          const userRef = db.collection("users").doc(uploaderId);
+          const userDoc = await transaction.get(userRef);
+
+          if (!userDoc.exists) {
+            console.error(`User document ${uploaderId} not found`);
+            return;
+          }
+
+          const currentTotalLikes = userDoc.data()?.totalLikes || 0;
+          const newTotalLikes = Math.max(0, currentTotalLikes + likeDiff);
+
+          // Verify the video still exists and has the expected like count
+          if (videoRef) {
+            const videoDoc = await transaction.get(videoRef);
+            if (!videoDoc.exists) {
+              console.error("Video no longer exists");
               return;
             }
 
-            const currentTotalLikes = userDoc.data()?.totalLikes || 0;
-            const newTotalLikes = Math.max(0, currentTotalLikes + likeDiff);
-
-            // Verify the video still exists and has the expected like count
-            if (videoRef) {
-              const videoDoc = await transaction.get(videoRef);
-              if (!videoDoc.exists) {
-                console.error("Video no longer exists");
-                return;
-              }
-
-              const currentLikesCount = videoDoc.data()?.likesCount || 0;
-              if (currentLikesCount !== afterData?.likesCount) {
-                console.log("Like count changed during transaction, retrying");
-                throw new Error("Retry needed - like count changed");
-              }
+            const currentLikesCount = videoDoc.data()?.likesCount || 0;
+            if (currentLikesCount !== afterData?.likesCount) {
+              console.log("Like count changed during transaction, retrying");
+              throw new Error("Retry needed - like count changed");
             }
+          }
 
-            transaction.update(userRef, { totalLikes: newTotalLikes });
-            console.log(`Successfully updated user ${uploaderId} totalLikes to ${newTotalLikes}`);
-          });
-
-          // If successful, break the retry loop
-          break;
-        } catch (e) {
-          retryCount++;
-          console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
-          if (retryCount === maxRetries) throw e;
-          // Wait before retrying (exponential backoff)
-          await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
-        }
-      }
-    } catch (error) {
-      console.error("Error in onVideoLikeCountChange:", error);
-
-      // Add to reconciliation queue for retry
-      try {
-        const db = admin.firestore();
-        await db.collection("reconciliation_queue").add({
-          userId: afterData?.userId || afterData?.uploaderId,
-          videoId: event.params.videoId,
-          type: "like_count_change",
-          expectedLikeCount: afterData?.likesCount,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          transaction.update(userRef, { totalLikes: newTotalLikes });
+          console.log(`Successfully updated user ${uploaderId} totalLikes to ${newTotalLikes}`);
         });
-        console.log("Added to reconciliation queue for retry");
+
+        // If successful, break the retry loop
+        break;
       } catch (e) {
-        console.error("Error adding to reconciliation queue:", e);
+        retryCount++;
+        console.log(`Retry attempt ${retryCount} of ${maxRetries}`);
+        if (retryCount === maxRetries) throw e;
+        // Wait before retrying (exponential backoff)
+        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
       }
     }
+  } catch (error) {
+    console.error("Error in onVideoLikeCountChange:", error);
+
+    // Add to reconciliation queue for retry
+    try {
+      const db = admin.firestore();
+      await db.collection("reconciliation_queue").add({
+        userId: afterData?.userId || afterData?.uploaderId,
+        videoId: event.params.videoId,
+        type: "like_count_change",
+        expectedLikeCount: afterData?.likesCount,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      console.log("Added to reconciliation queue for retry");
+    } catch (e) {
+      console.error("Error adding to reconciliation queue:", e);
+    }
   }
-);
+});
 
 // Utility function to recalculate user's total likes
 export const recalculateUserTotalLikes = onCall(async (request: CallableRequest) => {
@@ -740,12 +720,8 @@ export const recalculateUserTotalLikes = onCall(async (request: CallableRequest)
     const db = admin.firestore();
     // Query videos where either 'userId' or 'uploaderId' equals the given userId (no status filter)
     const [query1, query2] = await Promise.all([
-      db.collection("videos")
-        .where("userId", "==", userId)
-        .get(),
-      db.collection("videos")
-        .where("uploaderId", "==", userId)
-        .get(),
+      db.collection("videos").where("userId", "==", userId).get(),
+      db.collection("videos").where("uploaderId", "==", userId).get(),
     ]);
     // Use a map to avoid duplicate documents if both fields exist
     const videosMap = new Map<string, number>();
@@ -902,13 +878,16 @@ export const forceReconcileAllUsers = onCall(async () => {
     const usersSnapshot = await db.collection("users").get();
 
     console.log(`Starting reconciliation for ${usersSnapshot.docs.length} users`);
-    const results: Record<string, {
-      success: boolean;
-      oldCount?: number;
-      newCount?: number;
-      unchanged?: boolean;
-      error?: string;
-    }> = {};
+    const results: Record<
+      string,
+      {
+        success: boolean;
+        oldCount?: number;
+        newCount?: number;
+        unchanged?: boolean;
+        error?: string;
+      }
+    > = {};
 
     for (const userDoc of usersSnapshot.docs) {
       const userId = userDoc.id;
@@ -923,7 +902,7 @@ export const forceReconcileAllUsers = onCall(async () => {
         // Calculate total likes
         let totalLikes = 0;
         videosSnapshot.docs.forEach((doc) => {
-          totalLikes += (doc.data().likesCount || 0);
+          totalLikes += doc.data().likesCount || 0;
         });
 
         // Get current user data
@@ -958,7 +937,11 @@ export const forceReconcileAllUsers = onCall(async () => {
   }
 });
 
-// Helper functions for bucket calculation
+/**
+ * Calculate the budget bucket for a given budget amount.
+ * @param {number} budget The budget amount in currency units
+ * @return {string} The budget range bucket identifier
+ */
 function calculateBudgetBucket(budget: number): string {
   if (budget <= 10) return "0-10";
   if (budget <= 25) return "10-25";
@@ -967,6 +950,11 @@ function calculateBudgetBucket(budget: number): string {
   return "100+";
 }
 
+/**
+ * Calculate the calories bucket for a given calorie count.
+ * @param {number} calories The number of calories
+ * @return {string} The calorie range bucket identifier
+ */
 function calculateCaloriesBucket(calories: number): string {
   if (calories <= 300) return "0-300";
   if (calories <= 600) return "300-600";
@@ -975,6 +963,11 @@ function calculateCaloriesBucket(calories: number): string {
   return "1500+";
 }
 
+/**
+ * Calculate the preparation time bucket for given minutes.
+ * @param {number} prepTimeMinutes The preparation time in minutes
+ * @return {string} The time range bucket identifier
+ */
 function calculatePrepTimeBucket(prepTimeMinutes: number): string {
   if (prepTimeMinutes <= 15) return "0-15";
   if (prepTimeMinutes <= 30) return "15-30";
@@ -983,6 +976,15 @@ function calculatePrepTimeBucket(prepTimeMinutes: number): string {
   return "120+";
 }
 
+/**
+ * Generate tags for a video based on its properties.
+ * @param {number} budget The video's budget amount
+ * @param {number} calories The calorie count for the recipe
+ * @param {number} prepTimeMinutes The preparation time in minutes
+ * @param {number} spiciness The spiciness level
+ * @param {string[]} hashtags Additional hashtags to include
+ * @return {string[]} Array of generated tags
+ */
 function generateTags(
   budget: number,
   calories: number,
@@ -1028,7 +1030,7 @@ export const migrateVideosToTags = functions.https.onRequest(async (req, res) =>
           video.calories || 0,
           video.prepTimeMinutes || 0,
           video.spiciness || 0,
-          video.hashtags || []
+          video.hashtags || [],
         );
         // Update the video with tags
         await videosRef.doc(doc.id).update({
@@ -1041,15 +1043,20 @@ export const migrateVideosToTags = functions.https.onRequest(async (req, res) =>
         console.error(`Error updating video ${doc.id}:`, err);
       }
     }
-    const message =
-      `Migration completed. Updated: ${updatedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`;
+    const message = [
+      "Migration completed.",
+      `Updated: ${updatedCount},`,
+      `Skipped: ${skippedCount},`,
+      `Errors: ${errorCount}`,
+    ].join(" ");
     console.log(message);
     res.status(200).json({
       success: true,
       updatedCount,
       skippedCount,
       errorCount,
-      message: `Successfully migrated ${updatedCount} videos. ` +
+      message:
+        `Successfully migrated ${updatedCount} videos. ` +
         `Skipped ${skippedCount}. Encountered ${errorCount} errors.`,
     });
   } catch (error) {
@@ -1064,7 +1071,7 @@ export const analyzeVideo = onDocumentCreated(
     document: "videos/{videoId}",
     secrets: ["OPENAI_API_KEY"],
   },
-  async (event: { data: DocumentSnapshot | undefined; params: { videoId: string } }) => {
+  async (event) => {
     try {
       console.log("analyzeVideo function started", { videoId: event.params.videoId });
 
@@ -1090,16 +1097,9 @@ export const analyzeVideo = onDocumentCreated(
         return;
       }
 
-      console.log("Getting OpenAI API key from environment...");
-      const apiKey = process.env.OPENAI_API_KEY;
-      if (!apiKey) {
-        console.error("OpenAI API key not found in environment variables");
-        throw new Error("OpenAI API key not configured");
-      }
-
-      console.log("Initializing OpenAI client...");
+      // Initialize OpenAI client
       const openai = new OpenAI({
-        apiKey: apiKey,
+        apiKey: process.env.OPENAI_API_KEY,
       });
 
       const systemPrompt =
@@ -1110,7 +1110,7 @@ export const analyzeVideo = onDocumentCreated(
         "or presentation.";
 
       console.log("Preparing messages for OpenAI...");
-      const messages: ChatCompletionMessageParam[] = [
+      const messages = [
         {
           role: "system" as const,
           content: systemPrompt,
@@ -1132,10 +1132,7 @@ export const analyzeVideo = onDocumentCreated(
         },
       ];
 
-      console.log("Calling OpenAI API...", {
-        thumbnailURL: videoData.thumbnailURL.substring(0, 50) + "...",
-      });
-
+      console.log("Calling OpenAI API...");
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages,
@@ -1147,13 +1144,16 @@ export const analyzeVideo = onDocumentCreated(
         firstChoice: !!response.choices[0]?.message?.content,
       });
 
-      // Store the AI-generated description
-      console.log("Storing AI-generated description...");
-      const db = admin.firestore();
-      await db.collection("videos").doc(event.params.videoId).update({
+      // Store the AI-generated description and update status
+      await snapshot.ref.update({
         aiEnhancements: {
           description: response.choices[0].message.content || "",
           generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "completed",
+        },
+        vectorEmbedding: {
+          status: "pending", // Signal that embedding can now be generated
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
       });
 
@@ -1161,18 +1161,20 @@ export const analyzeVideo = onDocumentCreated(
         videoId: event.params.videoId,
         descriptionLength: response.choices[0].message.content?.length || 0,
       });
-    } catch (error: unknown) {
+    } catch (error) {
       console.error("Error in analyzeVideo:", error);
-      if (error instanceof Error) {
-        console.error("Error details:", {
-          name: error.name,
-          message: error.message,
-          stack: error.stack,
-          videoId: event.params.videoId,
+
+      // Update status to failed
+      if (event.data) {
+        await event.data.ref.update({
+          aiEnhancements: {
+            status: "failed",
+            error: error instanceof Error ? error.message : "Unknown error",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
         });
-      } else {
-        console.error("Unknown error type:", error);
       }
+
       throw error;
     }
   },
@@ -1189,9 +1191,7 @@ export const analyzeExistingVideos = onCall(
 
       // Get all active videos
       const db = admin.firestore();
-      const videosSnapshot = await db.collection("videos")
-        .where("status", "==", "active")
-        .get();
+      const videosSnapshot = await db.collection("videos").where("status", "==", "active").get();
 
       console.log(`Found ${videosSnapshot.docs.length} active videos to process`, {
         forceRegenerate,
@@ -1207,9 +1207,7 @@ export const analyzeExistingVideos = onCall(
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const pineconeService = new PineconeService(
-        process.env.PINECONE_API_KEY || ""
-      );
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
 
       for (const doc of videosSnapshot.docs) {
         try {
@@ -1272,6 +1270,7 @@ export const analyzeExistingVideos = onCall(
               aiEnhancements: {
                 description: aiDescription,
                 generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                status: "completed",
               },
             });
 
@@ -1282,7 +1281,8 @@ export const analyzeExistingVideos = onCall(
           }
 
           // Generate or update embedding if needed
-          if (needsEmbeddingUpdate ||
+          if (
+            needsEmbeddingUpdate ||
             !videoData.vectorEmbedding?.status ||
             videoData.vectorEmbedding.status === "failed"
           ) {
@@ -1311,7 +1311,7 @@ export const analyzeExistingVideos = onCall(
 
             const embedding = embeddingResponse.data[0].embedding;
 
-            // Create vector record
+            // Create vector record with complete metadata
             const vector = {
               id: videoId,
               values: embedding,
@@ -1321,6 +1321,11 @@ export const analyzeExistingVideos = onCall(
                 privacy: videoData.privacy,
                 tags: videoData.tags || [],
                 aiDescription,
+                version: 1,
+                contentLength: content.length,
+                hasDescription: String(!!videoData.description),
+                hasAiDescription: String(!!aiDescription),
+                hasTags: String(videoData.tags?.length > 0),
               },
             };
 
@@ -1358,127 +1363,34 @@ export const analyzeExistingVideos = onCall(
       }
       throw new functions.https.HttpsError("internal", "Failed to process videos");
     }
-  }
+  },
 );
 
 /**
  * Generate vector embedding for video content
+ * This function now triggers on document updates to ensure AI description is ready
  */
-export const generateVideoEmbedding = onDocumentCreated(
+export const generateVideoEmbedding = onDocumentUpdated(
   {
     document: "videos/{videoId}",
     secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
     region: "us-central1",
   },
   async (event) => {
-    const snapshot = event.data;
-    if (!snapshot) {
-      console.error("No data associated with the event");
-      return;
-    }
-
-    const videoData = snapshot.data();
-    const videoId = event.params.videoId;
-
-    functions.logger.info("Generating vector embedding for video", { videoId });
-
-    try {
-      // Initialize services with secrets
-      const openai = new OpenAI({
-        apiKey: process.env.OPENAI_API_KEY,
-      });
-
-      const pineconeService = new PineconeService(
-        process.env.PINECONE_API_KEY || ""
-      );
-
-      // Update video with pending status
-      await snapshot.ref.update({
-        vectorEmbedding: {
-          status: "pending",
-          updatedAt: new Date(),
-        },
-      });
-
-      // Generate embedding using video description, tags, and AI description
-      const content = [
-        videoData.description || "",
-        videoData.hashtags?.join(" ") || "",
-        videoData.tags?.join(" ") || "",
-        videoData.aiEnhancements?.description || "", // Include AI description
-      ].join(" ");
-
-      functions.logger.info("Generating embedding for content", {
-        contentLength: content.length,
-        hasAiDescription: !!videoData.aiEnhancements?.description,
-      });
-
-      const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: content,
-      });
-
-      const embedding = embeddingResponse.data[0].embedding;
-
-      // Create vector record
-      const vector: VideoVector = {
-        id: videoId,
-        values: embedding,
-        metadata: {
-          userId: videoData.userId,
-          status: videoData.status,
-          privacy: videoData.privacy,
-          tags: videoData.tags || [],
-          aiDescription: videoData.aiEnhancements?.description, // Include in metadata
-        },
-      };
-
-      // Upsert to Pinecone
-      await pineconeService.upsertVector(vector);
-
-      functions.logger.info("Successfully generated and stored vector embedding", {
-        videoId,
-        hasAiDescription: !!videoData.aiEnhancements?.description,
-      });
-    } catch (error) {
-      functions.logger.error("Error generating vector embedding", { error, videoId });
-
-      // Update video with failed status
-      await snapshot.ref.update({
-        vectorEmbedding: {
-          status: "failed",
-          updatedAt: new Date(),
-          error: error instanceof Error ? error.message : "Unknown error",
-        },
-      });
-    }
-  }
-);
-
-/**
- * Update vector embedding when video is updated
- */
-export const updateVideoEmbedding = onDocumentUpdated(
-  {
-    document: "videos/{videoId}",
-    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
-    region: "us-central1",
-  },
-  async (event) => {
-    const beforeData = event.data?.before.data();
     const afterData = event.data?.after.data();
+    const prevData = event.data?.before.data();
     const videoId = event.params.videoId;
 
-    if (!beforeData || !afterData || !event.data) {
+    if (!afterData || !prevData || !event.data) {
       console.error("Missing data in update event");
       return;
     }
 
     // Check if relevant fields were updated
     const shouldUpdateEmbedding =
-      beforeData.description !== afterData.description ||
-      JSON.stringify(beforeData.hashtags) !== JSON.stringify(afterData.hashtags) ||
-      JSON.stringify(beforeData.tags) !== JSON.stringify(afterData.tags);
+      prevData.description !== afterData.description ||
+      JSON.stringify(prevData.hashtags) !== JSON.stringify(afterData.hashtags) ||
+      JSON.stringify(prevData.tags) !== JSON.stringify(afterData.tags);
 
     if (!shouldUpdateEmbedding) {
       functions.logger.info("No relevant changes for vector embedding", { videoId });
@@ -1493,9 +1405,7 @@ export const updateVideoEmbedding = onDocumentUpdated(
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const pineconeService = new PineconeService(
-        process.env.PINECONE_API_KEY || ""
-      );
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
 
       // Update video with pending status
       await event.data.after.ref.update({
@@ -1513,7 +1423,7 @@ export const updateVideoEmbedding = onDocumentUpdated(
       ].join(" ");
 
       const embeddingResponse = await openai.embeddings.create({
-        model: "text-embedding-3-small",
+        model: "text-embedding-3-large",
         input: content,
       });
 
@@ -1528,6 +1438,11 @@ export const updateVideoEmbedding = onDocumentUpdated(
           status: afterData.status,
           privacy: afterData.privacy,
           tags: afterData.tags || [],
+          version: 1,
+          contentLength: content.length,
+          hasDescription: String(!!afterData.description),
+          hasAiDescription: String(!!afterData.aiEnhancements?.description),
+          hasTags: String(afterData.tags?.length > 0),
         },
       };
 
@@ -1547,7 +1462,7 @@ export const updateVideoEmbedding = onDocumentUpdated(
         },
       });
     }
-  }
+  },
 );
 
 /**
@@ -1565,25 +1480,20 @@ export const deleteVideoEmbedding = onDocumentDeleted(
     functions.logger.info("Deleting vector embedding for video", { videoId });
 
     try {
-      const pineconeService = new PineconeService(
-        process.env.PINECONE_API_KEY || ""
-      );
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
 
       await pineconeService.deleteVector(videoId);
       functions.logger.info("Successfully deleted vector embedding", { videoId });
     } catch (error) {
       functions.logger.error("Error deleting vector embedding", { error, videoId });
     }
-  }
+  },
 );
 
 export const getVideoSummary = onCall(async (request: CallableRequest) => {
   const { videoId } = request.data;
   if (!videoId) {
-    throw new functions.https.HttpsError(
-      "invalid-argument",
-      "Video ID is required"
-    );
+    throw new functions.https.HttpsError("invalid-argument", "Video ID is required");
   }
 
   const summary = "Video summary placeholder";
@@ -1602,10 +1512,7 @@ export const generateVideoSummary = onCall(
   async (request) => {
     const { videoId } = request.data;
     if (!videoId) {
-      throw new functions.https.HttpsError(
-        "invalid-argument",
-        "Video ID is required"
-      );
+      throw new functions.https.HttpsError("invalid-argument", "Video ID is required");
     }
 
     try {
@@ -1614,10 +1521,7 @@ export const generateVideoSummary = onCall(
       const videoData = videoDoc.data();
 
       if (!videoData) {
-        throw new functions.https.HttpsError(
-          "not-found",
-          "Video not found"
-        );
+        throw new functions.https.HttpsError("not-found", "Video not found");
       }
 
       const openai = new OpenAI({
@@ -1630,7 +1534,8 @@ export const generateVideoSummary = onCall(
         videoData.aiEnhancements?.description || "",
       ].join("\n\n");
 
-      const systemPrompt = "You are a cooking video summarizer. Create a concise summary of the video content " +
+      const systemPrompt =
+        "You are a cooking video summarizer. Create a concise summary of the video content " +
         "and extract relevant keywords.";
 
       const response = await openai.chat.completions.create({
@@ -1642,20 +1547,26 @@ export const generateVideoSummary = onCall(
           },
           {
             role: "user",
-            content: `Please summarize this cooking video content and extract keywords:\n\n${content}`,
+            content: [
+              "Please summarize this cooking video content",
+              "and extract keywords:",
+              "",
+              content,
+            ].join("\n"),
           },
         ],
         max_tokens: 300,
       });
 
       const summary = response.choices[0].message.content || "";
-      const keywords = summary
-        .split("\n")
-        .find((line) => line.toLowerCase().startsWith("keywords:"))
-        ?.replace(/^keywords:/i, "")
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean) || [];
+      const keywords =
+        summary
+          .split("\n")
+          .find((line) => line.toLowerCase().startsWith("keywords:"))
+          ?.replace(/^keywords:/i, "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter(Boolean) || [];
 
       return {
         summary,
@@ -1663,11 +1574,337 @@ export const generateVideoSummary = onCall(
       };
     } catch (error) {
       console.error("Error generating video summary:", error);
-      throw new functions.https.HttpsError(
-        "internal",
-        "Failed to generate video summary"
-      );
+      throw new functions.https.HttpsError("internal", "Failed to generate video summary");
     }
-  }
+  },
 );
 
+interface SearchOptions {
+  query: string;
+  limit?: number;
+}
+
+interface SearchResultData {
+  id: string;
+  type: "user" | "video";
+  data: {
+    id?: string;
+    userId?: string;
+    displayName?: string;
+    photoURL?: string;
+    description?: string;
+    thumbnailUrl?: string;
+    status?: string;
+    privacy?: string;
+    tags?: string[];
+    aiEnhancements?: {
+      description?: string;
+      generatedAt?: FirebaseFirestore.Timestamp;
+      status?: string;
+    };
+  };
+  score?: number;
+}
+
+export const searchContent = onCall(
+  {
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY"],
+  },
+  async (request: CallableRequest<SearchOptions>) => {
+    try {
+      const { query, limit = 20 } = request.data;
+
+      if (!query) {
+        throw new functions.https.HttpsError("invalid-argument", "Search query is required");
+      }
+
+      functions.logger.info("Processing search request", {
+        query,
+        limit,
+      });
+
+      const db = getFirestore();
+      const results: SearchResultData[] = [];
+
+      // Convert query to lowercase for case-insensitive comparison
+      const lowercaseQuery = query.toLowerCase();
+
+      // Check for user search (@)
+      if (query.startsWith("@")) {
+        const username = lowercaseQuery.slice(1);
+        console.log(`Performing user search for: ${username}`);
+        const usersRef = db.collection("users");
+        let queryRef;
+
+        if (username.trim() === "") {
+          // If just @ is entered, return all users up to the limit
+          console.log("Empty username search - returning all users");
+          queryRef = usersRef
+            .orderBy("displayNameLower")
+            .limit(limit);
+        } else {
+          // Otherwise, search for specific username
+          console.log(`Search query range: from '${username}' to '${username}z'`);
+          queryRef = usersRef
+            .where("displayNameLower", ">=", username)
+            .where("displayNameLower", "<", username + "z")
+            .orderBy("displayNameLower")
+            .limit(limit);
+        }
+
+        console.log("Query built with filters");
+        const usersSnapshot = await queryRef.get();
+        console.log(`Query executed, found ${usersSnapshot.docs.length} users`);
+
+        if (usersSnapshot.empty) {
+          console.log("No users found matching the query");
+          console.log("Current query conditions:", {
+            field: "displayNameLower",
+            rangeStart: username,
+            rangeEnd: username + "z",
+            limit,
+          });
+        }
+
+        usersSnapshot.docs.forEach((doc) => {
+          const userData = doc.data();
+          console.log("Found user:", {
+            id: doc.id,
+            displayName: userData.displayName,
+            displayNameLower: userData.displayNameLower,
+          });
+          results.push({
+            id: doc.id,
+            type: "user",
+            data: {
+              id: doc.id,
+              userId: doc.id,
+              displayName: userData.displayName,
+              photoURL: userData.photoURL,
+            },
+          });
+        });
+
+        functions.logger.info("User search completed", {
+          usersFound: results.length,
+          searchTerm: username,
+        });
+      } else if (query.startsWith("#")) {
+        const hashtag = lowercaseQuery.slice(1);
+        console.log(`Performing hashtag search for: ${hashtag}`);
+        const videosSnapshot = await db
+          .collection("videos")
+          .where("hashtags", "array-contains", hashtag)
+          .where("status", "==", "active")
+          .where("privacy", "==", "everyone")
+          .limit(limit)
+          .get();
+
+        videosSnapshot.docs.forEach((doc) => {
+          const videoData = doc.data();
+          results.push({
+            id: doc.id,
+            type: "video",
+            data: {
+              id: doc.id,
+              userId: videoData.userId,
+              description: videoData.description,
+              thumbnailUrl: videoData.thumbnailURL,
+              status: videoData.status,
+              privacy: videoData.privacy,
+              tags: videoData.tags,
+              aiEnhancements: videoData.aiEnhancements,
+            },
+          });
+        });
+
+        functions.logger.info("Hashtag search completed", {
+          videosFound: results.length,
+          hashtag,
+        });
+      } else {
+        // Initialize OpenAI and Pinecone
+        const openai = new OpenAI({
+          apiKey: process.env.OPENAI_API_KEY,
+        });
+
+        const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+
+        // Generate embedding for the query
+        const embeddingResponse = await openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: lowercaseQuery, // Use lowercase query for consistency
+        });
+
+        const queryVector = embeddingResponse.data[0].embedding;
+
+        // Perform hybrid search
+        const searchResults = await pineconeService.hybridSearch({
+          query: lowercaseQuery, // Use lowercase query for consistency
+          queryVector,
+          limit,
+        });
+
+        // Fetch full video data for each result
+        const videoIds = searchResults.map((result) => result.id);
+        const videosSnapshot = await db
+          .collection("videos")
+          .where("__name__", "in", videoIds)
+          .get();
+
+        // Add search results with full video data
+        searchResults.forEach((searchResult) => {
+          const videoDoc = videosSnapshot.docs.find((doc) => doc.id === searchResult.id);
+          if (videoDoc) {
+            const videoData = videoDoc.data();
+            results.push({
+              id: videoDoc.id,
+              type: "video",
+              data: {
+                id: videoDoc.id,
+                userId: videoData.userId,
+                description: videoData.description,
+                thumbnailUrl: videoData.thumbnailURL,
+                status: videoData.status,
+                privacy: videoData.privacy,
+                tags: videoData.tags,
+                aiEnhancements: videoData.aiEnhancements,
+              },
+              score: searchResult.score,
+            });
+          }
+        });
+
+        functions.logger.info("Semantic search completed", {
+          resultsFound: results.length,
+        });
+      }
+
+      return {
+        results,
+        query,
+      };
+    } catch (error) {
+      functions.logger.error("Error in searchContent:", error);
+      throw new functions.https.HttpsError("internal", "An error occurred while searching");
+    }
+  },
+);
+
+// Migration function to add lowercase display names
+export const migrateUsersDisplayNames = onCall(async () => {
+  try {
+    const db = admin.firestore();
+    const usersSnapshot = await db.collection("users").get();
+
+    console.log(`Starting migration for ${usersSnapshot.docs.length} users`);
+    const results: Record<
+      string,
+      {
+        success: boolean;
+        error?: string;
+      }
+    > = {};
+
+    for (const userDoc of usersSnapshot.docs) {
+      try {
+        const userData = userDoc.data();
+        if (!userData.displayNameLower && userData.displayName) {
+          await userDoc.ref.update({
+            displayNameLower: userData.displayName.toLowerCase(),
+          });
+          results[userDoc.id] = { success: true };
+          console.log(`Updated user ${userDoc.id} with lowercase display name`);
+        } else {
+          results[userDoc.id] = { success: true };
+          console.log(`User ${userDoc.id} already has lowercase display name`);
+        }
+      } catch (error) {
+        console.error(`Error updating user ${userDoc.id}:`, error);
+        results[userDoc.id] = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    return { success: true, results };
+  } catch (error) {
+    console.error("Error in migrateUsersDisplayNames:", error);
+    throw new functions.https.HttpsError("internal", "Failed to migrate user display names");
+  }
+});
+
+// Migration function to convert hashtags to lowercase
+export const migrateHashtagsToLowercase = onCall(async () => {
+  try {
+    const db = admin.firestore();
+    const videosSnapshot = await db.collection("videos").get();
+
+    console.log(`Starting hashtag migration for ${videosSnapshot.docs.length} videos`);
+    const results: Record<
+      string,
+      {
+        success: boolean;
+        error?: string;
+        hashtagsChanged?: boolean;
+      }
+    > = {};
+
+    for (const videoDoc of videosSnapshot.docs) {
+      try {
+        const videoData = videoDoc.data();
+        if (videoData.hashtags && Array.isArray(videoData.hashtags)) {
+          const originalHashtags = videoData.hashtags;
+          const lowercaseHashtags = originalHashtags.map((tag) => tag.toLowerCase());
+
+          // Check if any hashtags would actually change
+          const needsUpdate = originalHashtags.some(
+            (tag, index) => tag !== lowercaseHashtags[index],
+          );
+
+          if (needsUpdate) {
+            await videoDoc.ref.update({
+              hashtags: lowercaseHashtags,
+            });
+            results[videoDoc.id] = {
+              success: true,
+              hashtagsChanged: true,
+            };
+            console.log(`Updated video ${videoDoc.id} with lowercase hashtags`);
+          } else {
+            results[videoDoc.id] = {
+              success: true,
+              hashtagsChanged: false,
+            };
+            console.log(`Video ${videoDoc.id} hashtags already lowercase`);
+          }
+        } else {
+          results[videoDoc.id] = {
+            success: true,
+            hashtagsChanged: false,
+          };
+        }
+      } catch (error) {
+        console.error(`Error updating video ${videoDoc.id}:`, error);
+        results[videoDoc.id] = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    return {
+      success: true,
+      results,
+      totalProcessed: videosSnapshot.docs.length,
+      totalUpdated: Object.values(results).filter((r) => r.hashtagsChanged).length,
+      totalErrors: Object.values(results).filter((r) => !r.success).length,
+    };
+  } catch (error) {
+    console.error("Error in migrateHashtagsToLowercase:", error);
+    throw new functions.https.HttpsError("internal", "Failed to migrate hashtags to lowercase");
+  }
+});
+
+export { migrateDisplayNamesToLowercase } from "./migrations/migrateDisplayNamesToLowercase";

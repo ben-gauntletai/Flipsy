@@ -580,11 +580,12 @@ class UserService {
   Future<List<Map<String, dynamic>>> searchUsers(String query) async {
     print('\nUserService: Searching for users with query: $query');
     try {
+      final lowercaseQuery = query.toLowerCase();
       // Create a query that searches for display names that start with the search query
       final querySnapshot = await _firestore
           .collection('users')
-          .where('displayName', isGreaterThanOrEqualTo: query)
-          .where('displayName', isLessThan: '${query}z')
+          .where('displayNameLower', isGreaterThanOrEqualTo: lowercaseQuery)
+          .where('displayNameLower', isLessThan: '${lowercaseQuery}z')
           .limit(10)
           .get();
 
