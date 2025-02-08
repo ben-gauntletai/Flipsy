@@ -1916,4 +1916,50 @@ class VideoService {
     }
     _videoCountSubscriptions.clear();
   }
+
+  /// Performs a semantic search for videos
+  Future<List<Video>> searchContent(String query) async {
+    try {
+      print('VideoService: Starting search with query: "$query"');
+
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('searchContent');
+      print('VideoService: Calling cloud function searchContent');
+
+      final result = await callable.call({
+        'query': query,
+        'limit': 20,
+      });
+
+      print('VideoService: Search results received');
+      print('VideoService: Raw response data: ${result.data}');
+
+      if (result.data == null) {
+        print('VideoService: No results returned from search');
+        return [];
+      }
+
+      final List<dynamic> results = result.data['results'] ?? [];
+      print('VideoService: Processing ${results.length} results');
+
+      // Get the IDs from the search results
+      final videoIds =
+          results.map((result) => result['data']['id'].toString()).toList();
+      print('VideoService: Found video IDs: $videoIds');
+
+      // Fetch all videos in parallel
+      final videos = await Future.wait(
+        videoIds.map((id) => getVideoById(id)).toList(),
+      );
+
+      // Filter out nulls and return valid videos
+      final validVideos = videos.where((v) => v != null).cast<Video>().toList();
+      print('VideoService: Returning ${validVideos.length} valid videos');
+      return validVideos;
+    } catch (e, stackTrace) {
+      print('VideoService: Error in searchContent: $e');
+      print('VideoService: Stack trace: $stackTrace');
+      rethrow;
+    }
+  }
 }

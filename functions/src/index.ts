@@ -18,7 +18,6 @@ import * as admin from "firebase-admin";
 import { OpenAI } from "openai";
 import { PineconeService } from "./services/pinecone.service";
 import { initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
 import { VideoVector } from "./types";
 
 // Custom type for vision messages
@@ -1312,26 +1311,43 @@ export const analyzeExistingVideos = onCall(
             const embedding = embeddingResponse.data[0].embedding;
 
             // Create vector record with complete metadata
-            const vector = {
+            const vector: VideoVector = {
               id: videoId,
               values: embedding,
               metadata: {
-                userId: videoData.userId,
-                status: videoData.status,
-                privacy: videoData.privacy,
-                tags: videoData.tags || [],
-                aiDescription,
+                userId: String(videoData.userId),
+                status: String(videoData.status),
+                privacy: String(videoData.privacy),
+                tags: Array.isArray(videoData.tags) ? videoData.tags.map(String) : [],
+                aiDescription: String(videoData.aiEnhancements?.description || ""),
                 version: 1,
                 contentLength: content.length,
                 hasDescription: String(!!videoData.description),
-                hasAiDescription: String(!!aiDescription),
-                hasTags: String(videoData.tags?.length > 0),
+                hasAiDescription: String(!!videoData.aiEnhancements?.description),
+                hasTags: String(!!(videoData.tags?.length > 0)),
               },
             };
 
             // Upsert to Pinecone
             await pineconeService.upsertVector(vector);
             embeddingsCount++;
+
+            // Update Firestore with complete vector embedding metadata
+            await doc.ref.update({
+              vectorEmbedding: {
+                id: videoId,
+                status: "completed",
+                updatedAt: new Date(),
+                model: "text-embedding-3-large",
+                dimensions: embedding.length,
+                version: 1,
+                contentLength: content.length,
+                retryCount: (videoData.vectorEmbedding?.retryCount || 0) + 1,
+                hasDescription: !!videoData.description,
+                hasAiDescription: !!videoData.aiEnhancements?.description,
+                hasTags: (videoData.tags?.length || 0) > 0,
+              },
+            });
 
             console.log(`Successfully generated embedding for video ${videoId}`);
           }
@@ -1344,8 +1360,8 @@ export const analyzeExistingVideos = onCall(
       return {
         success: true,
         totalVideos: videosSnapshot.docs.length,
-        processedDescriptions: processedCount,
-        skippedDescriptions: skippedCount,
+        processedCount: processedCount,
+        skippedCount: skippedCount,
         generatedEmbeddings: embeddingsCount,
         errorCount,
       };
@@ -1434,31 +1450,65 @@ export const generateVideoEmbedding = onDocumentUpdated(
         id: videoId,
         values: embedding,
         metadata: {
-          userId: afterData.userId,
-          status: afterData.status,
-          privacy: afterData.privacy,
-          tags: afterData.tags || [],
+          userId: String(afterData.userId),
+          status: String(afterData.status),
+          privacy: String(afterData.privacy),
+          tags: Array.isArray(afterData.tags) ? afterData.tags.map(String) : [],
+          aiDescription: String(afterData.aiEnhancements?.description || ""),
           version: 1,
           contentLength: content.length,
           hasDescription: String(!!afterData.description),
           hasAiDescription: String(!!afterData.aiEnhancements?.description),
-          hasTags: String(afterData.tags?.length > 0),
+          hasTags: String(!!(afterData.tags?.length > 0)),
         },
       };
 
       // Upsert to Pinecone
       await pineconeService.upsertVector(vector);
 
-      functions.logger.info("Successfully updated vector embedding", { videoId });
+      // Update video with completed status and embedding metadata
+      await event.data.after.ref.update({
+        vectorEmbedding: {
+          id: videoId,
+          status: "completed",
+          updatedAt: new Date(),
+          model: "text-embedding-3-large",
+          dimensions: embedding.length,
+          version: 1,
+          contentLength: content.length,
+          retryCount: (afterData.vectorEmbedding?.retryCount || 0) + 1,
+          hasDescription: !!afterData.description,
+          hasAiDescription: !!afterData.aiEnhancements?.description,
+          hasTags: (afterData.tags?.length || 0) > 0,
+        },
+      });
+
+      functions.logger.info("Successfully updated vector embedding", {
+        videoId,
+        dimensions: embedding.length,
+        model: "text-embedding-3-large",
+        contentLength: content.length,
+      });
     } catch (error) {
       functions.logger.error("Error updating vector embedding", { error, videoId });
 
-      // Update video with failed status
+      // Update video with failed status and detailed error information
       await event.data.after.ref.update({
         vectorEmbedding: {
+          id: videoId,
           status: "failed",
           updatedAt: new Date(),
           error: error instanceof Error ? error.message : "Unknown error",
+          errorDetails:
+            error instanceof Error
+              ? {
+                  name: error.name,
+                  message: error.message,
+                  stack: error.stack,
+                }
+              : undefined,
+          retryCount: (afterData.vectorEmbedding?.retryCount || 0) + 1,
+          lastAttemptedModel: "text-embedding-3-large",
         },
       });
     }
@@ -1584,28 +1634,6 @@ interface SearchOptions {
   limit?: number;
 }
 
-interface SearchResultData {
-  id: string;
-  type: "user" | "video";
-  data: {
-    id?: string;
-    userId?: string;
-    displayName?: string;
-    photoURL?: string;
-    description?: string;
-    thumbnailUrl?: string;
-    status?: string;
-    privacy?: string;
-    tags?: string[];
-    aiEnhancements?: {
-      description?: string;
-      generatedAt?: FirebaseFirestore.Timestamp;
-      status?: string;
-    };
-  };
-  score?: number;
-}
-
 export const searchContent = onCall(
   {
     secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY"],
@@ -1613,180 +1641,33 @@ export const searchContent = onCall(
   async (request: CallableRequest<SearchOptions>) => {
     try {
       const { query, limit = 20 } = request.data;
+      console.log(`Searching content with query: "${query}"`);
 
-      if (!query) {
-        throw new functions.https.HttpsError("invalid-argument", "Search query is required");
-      }
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
 
-      functions.logger.info("Processing search request", {
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+
+      const embedding = await openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: query,
+      });
+
+      const queryVector = embedding.data[0].embedding;
+
+      const searchResponse = await pineconeService.hybridSearch({
         query,
+        queryVector,
         limit,
       });
 
-      const db = getFirestore();
-      const results: SearchResultData[] = [];
+      console.log(`Found ${searchResponse.results.length} results`);
 
-      // Convert query to lowercase for case-insensitive comparison
-      const lowercaseQuery = query.toLowerCase();
-
-      // Check for user search (@)
-      if (query.startsWith("@")) {
-        const username = lowercaseQuery.slice(1);
-        console.log(`Performing user search for: ${username}`);
-        const usersRef = db.collection("users");
-        let queryRef;
-
-        if (username.trim() === "") {
-          // If just @ is entered, return all users up to the limit
-          console.log("Empty username search - returning all users");
-          queryRef = usersRef
-            .orderBy("displayNameLower")
-            .limit(limit);
-        } else {
-          // Otherwise, search for specific username
-          console.log(`Search query range: from '${username}' to '${username}z'`);
-          queryRef = usersRef
-            .where("displayNameLower", ">=", username)
-            .where("displayNameLower", "<", username + "z")
-            .orderBy("displayNameLower")
-            .limit(limit);
-        }
-
-        console.log("Query built with filters");
-        const usersSnapshot = await queryRef.get();
-        console.log(`Query executed, found ${usersSnapshot.docs.length} users`);
-
-        if (usersSnapshot.empty) {
-          console.log("No users found matching the query");
-          console.log("Current query conditions:", {
-            field: "displayNameLower",
-            rangeStart: username,
-            rangeEnd: username + "z",
-            limit,
-          });
-        }
-
-        usersSnapshot.docs.forEach((doc) => {
-          const userData = doc.data();
-          console.log("Found user:", {
-            id: doc.id,
-            displayName: userData.displayName,
-            displayNameLower: userData.displayNameLower,
-          });
-          results.push({
-            id: doc.id,
-            type: "user",
-            data: {
-              id: doc.id,
-              userId: doc.id,
-              displayName: userData.displayName,
-              photoURL: userData.photoURL,
-            },
-          });
-        });
-
-        functions.logger.info("User search completed", {
-          usersFound: results.length,
-          searchTerm: username,
-        });
-      } else if (query.startsWith("#")) {
-        const hashtag = lowercaseQuery.slice(1);
-        console.log(`Performing hashtag search for: ${hashtag}`);
-        const videosSnapshot = await db
-          .collection("videos")
-          .where("hashtags", "array-contains", hashtag)
-          .where("status", "==", "active")
-          .where("privacy", "==", "everyone")
-          .limit(limit)
-          .get();
-
-        videosSnapshot.docs.forEach((doc) => {
-          const videoData = doc.data();
-          results.push({
-            id: doc.id,
-            type: "video",
-            data: {
-              id: doc.id,
-              userId: videoData.userId,
-              description: videoData.description,
-              thumbnailUrl: videoData.thumbnailURL,
-              status: videoData.status,
-              privacy: videoData.privacy,
-              tags: videoData.tags,
-              aiEnhancements: videoData.aiEnhancements,
-            },
-          });
-        });
-
-        functions.logger.info("Hashtag search completed", {
-          videosFound: results.length,
-          hashtag,
-        });
-      } else {
-        // Initialize OpenAI and Pinecone
-        const openai = new OpenAI({
-          apiKey: process.env.OPENAI_API_KEY,
-        });
-
-        const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
-
-        // Generate embedding for the query
-        const embeddingResponse = await openai.embeddings.create({
-          model: "text-embedding-3-large",
-          input: lowercaseQuery, // Use lowercase query for consistency
-        });
-
-        const queryVector = embeddingResponse.data[0].embedding;
-
-        // Perform hybrid search
-        const searchResults = await pineconeService.hybridSearch({
-          query: lowercaseQuery, // Use lowercase query for consistency
-          queryVector,
-          limit,
-        });
-
-        // Fetch full video data for each result
-        const videoIds = searchResults.map((result) => result.id);
-        const videosSnapshot = await db
-          .collection("videos")
-          .where("__name__", "in", videoIds)
-          .get();
-
-        // Add search results with full video data
-        searchResults.forEach((searchResult) => {
-          const videoDoc = videosSnapshot.docs.find((doc) => doc.id === searchResult.id);
-          if (videoDoc) {
-            const videoData = videoDoc.data();
-            results.push({
-              id: videoDoc.id,
-              type: "video",
-              data: {
-                id: videoDoc.id,
-                userId: videoData.userId,
-                description: videoData.description,
-                thumbnailUrl: videoData.thumbnailURL,
-                status: videoData.status,
-                privacy: videoData.privacy,
-                tags: videoData.tags,
-                aiEnhancements: videoData.aiEnhancements,
-              },
-              score: searchResult.score,
-            });
-          }
-        });
-
-        functions.logger.info("Semantic search completed", {
-          resultsFound: results.length,
-        });
-      }
-
-      return {
-        results,
-        query,
-      };
+      return searchResponse;
     } catch (error) {
-      functions.logger.error("Error in searchContent:", error);
-      throw new functions.https.HttpsError("internal", "An error occurred while searching");
+      console.error("Error in searchContent:", error);
+      throw new functions.https.HttpsError("internal", `Failed to search content: ${error}`);
     }
   },
 );

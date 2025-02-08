@@ -174,14 +174,15 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
           _isLoading = false;
         });
       }
-    } else {
-      // Handle hashtag search as before
+    } else if (searchText.startsWith('#')) {
+      // Handle hashtag search
       setState(() {
         _isSearchingUsers = false;
       });
       try {
         setState(() {
-          _currentFilter = _currentFilter.addHashtag(searchText);
+          _currentFilter = _currentFilter
+              .addHashtag(searchText.substring(1)); // Remove # symbol
           _searchController.clear();
         });
         _loadVideos(refresh: true);
@@ -189,6 +190,43 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(e.toString()),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } else {
+      // Handle semantic search (RAG)
+      setState(() {
+        _isSearchingUsers = false;
+        _isLoading = true;
+      });
+      try {
+        final videos = await _videoService.searchContent(searchText);
+        print('Search returned ${videos.length} videos');
+
+        setState(() {
+          _videos = videos;
+          _searchController.clear();
+          _isLoading = false;
+        });
+
+        if (videos.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                  'No relevant videos found. Try a different search term.'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } catch (e) {
+        print('Search error: $e');
+        setState(() {
+          _isLoading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error performing search: $e'),
             duration: const Duration(seconds: 2),
           ),
         );

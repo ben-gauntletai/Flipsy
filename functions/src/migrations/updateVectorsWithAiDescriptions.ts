@@ -3,6 +3,7 @@ import { getFirestore } from "firebase-admin/firestore";
 import { PineconeService } from "../services/pinecone.service";
 import { OpenAIService } from "../services/openai.service";
 import { Request, Response } from "express";
+import { VideoVector } from "../types";
 
 const db = getFirestore();
 
@@ -52,22 +53,24 @@ export const updateVectorsWithAiDescriptions = onRequest(
           const embedding = await openaiService.generateEmbedding(content);
 
           // Update vector in Pinecone
-          await pineconeService.upsertVector({
+          const vector: VideoVector = {
             id: videoId,
             values: embedding,
             metadata: {
-              userId: videoData.userId,
-              status: videoData.status,
-              privacy: videoData.privacy,
-              tags: videoData.tags || [],
-              aiDescription: videoData.aiEnhancements?.description,
+              userId: String(videoData.userId),
+              status: String(videoData.status),
+              privacy: String(videoData.privacy),
+              tags: Array.isArray(videoData.tags) ? videoData.tags.map(String) : [],
+              aiDescription: String(videoData.aiEnhancements?.description || ""),
               version: 1,
               contentLength: content.length,
               hasDescription: String(!!videoData.description),
               hasAiDescription: String(!!videoData.aiEnhancements?.description),
-              hasTags: String(videoData.tags?.length > 0),
+              hasTags: String(!!(videoData.tags?.length > 0)),
             },
-          });
+          };
+
+          await pineconeService.upsertVector(vector);
 
           // Update Firestore to mark AI description as included
           await doc.ref.update({
