@@ -27,6 +27,8 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   final TextEditingController _caloriesController = TextEditingController();
   final TextEditingController _prepTimeController = TextEditingController();
   final ValueNotifier<double> _progressNotifier = ValueNotifier<double>(0.0);
+  final ScrollController _scrollController = ScrollController();
+  bool _keyboardVisible = false;
   File? _videoFile;
   bool _isUploading = false;
   VideoPlayerController? _videoController;
@@ -37,7 +39,18 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   int _spiciness = 0;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() {
+        _keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
+      });
+    });
+  }
+
+  @override
   void dispose() {
+    _scrollController.dispose();
     _descriptionController.dispose();
     _budgetController.dispose();
     _caloriesController.dispose();
@@ -248,6 +261,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomPadding = MediaQuery.of(context).viewPadding.bottom;
+    _keyboardVisible = MediaQuery.of(context).viewInsets.bottom > 0;
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -294,326 +308,430 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
               ),
             // Main content area
             Expanded(
-              child: Column(
-                children: [
-                  // Video takes all remaining space
-                  Expanded(
-                    child: _videoController?.value.isInitialized ?? false
-                        ? Container(
-                            width: double.infinity,
-                            height: double.infinity,
-                            color: Colors.black,
-                            child: Stack(
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                reverse: true,
+                physics: _keyboardVisible
+                    ? const ClampingScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                child: Column(
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        border: Border(
+                          top: BorderSide(color: Colors.grey[200]!),
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Divider(height: 1),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                            child: TextField(
+                              controller: _descriptionController,
+                              decoration: const InputDecoration(
+                                hintText:
+                                    'Describe your post, add hashtags, or mention creators that inspired you',
+                                hintStyle:
+                                    TextStyle(color: Colors.grey, fontSize: 15),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              maxLines: 3,
+                              minLines: 1,
+                              style: const TextStyle(fontSize: 15),
+                              enabled: !_isUploading,
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                            child: Row(
                               children: [
-                                Center(
-                                  child: AspectRatio(
-                                    aspectRatio:
-                                        _videoController!.value.aspectRatio,
-                                    child: VideoPlayer(_videoController!),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _budgetController,
+                                    decoration: const InputDecoration(
+                                      labelText: ' Cost',
+                                      prefixText: '\$',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 12),
+                                    ),
+                                    keyboardType:
+                                        TextInputType.numberWithOptions(
+                                            decimal: true),
+                                    enabled: !_isUploading,
                                   ),
                                 ),
-                                Positioned(
-                                  bottom: 8,
-                                  left: 0,
-                                  right: 0,
-                                  child: Center(
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.black.withOpacity(0.6),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: const Text(
-                                        'Select cover',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                        ),
-                                      ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextField(
+                                    controller: _caloriesController,
+                                    decoration: const InputDecoration(
+                                      labelText: ' Calories',
+                                      suffixText: 'cal',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 12),
                                     ),
+                                    keyboardType: TextInputType.number,
+                                    enabled: !_isUploading,
                                   ),
                                 ),
                               ],
                             ),
-                          )
-                        : GestureDetector(
-                            onTap: _isUploading ? null : _pickVideo,
-                            child: Container(
-                              color: Colors.black,
-                              child: Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      Icons.video_library,
-                                      size: 48,
-                                      color: Colors.white.withOpacity(0.8),
+                          ),
+                          const Divider(height: 1),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: TextField(
+                                    controller: _prepTimeController,
+                                    decoration: const InputDecoration(
+                                      labelText: ' Prep Time',
+                                      suffixText: 'min',
+                                      border: OutlineInputBorder(),
+                                      contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 12),
                                     ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      'Select Video',
-                                      style: TextStyle(
-                                        color: Colors.white.withOpacity(0.8),
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
+                                    keyboardType: TextInputType.number,
+                                    enabled: !_isUploading,
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      const Padding(
+                                        padding:
+                                            EdgeInsets.only(left: 8, bottom: 4),
+                                        child: Text(
+                                          'Spiciness',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.black54,
+                                          ),
+                                        ),
+                                      ),
+                                      SpicinessSelector(
+                                        value: _spiciness,
+                                        onChanged: (value) {
+                                          setState(() {
+                                            _spiciness = value;
+                                          });
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                  ),
-                  // Bottom section with description and settings
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border(
-                        top: BorderSide(color: Colors.grey[200]!),
+                          const Divider(height: 1),
+                          ListTile(
+                            leading: const Icon(Icons.lock_outline),
+                            title: const Text('Who can watch this video'),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _privacy == 'everyone'
+                                      ? 'Everyone'
+                                      : _privacy == 'followers'
+                                          ? 'Followers'
+                                          : 'Private',
+                                  style: TextStyle(
+                                    color: Colors.grey[600],
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Icon(Icons.chevron_right,
+                                    color: Colors.grey[400]),
+                              ],
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            minLeadingWidth: 24,
+                            horizontalTitleGap: 8,
+                            dense: true,
+                            onTap: _isUploading
+                                ? null
+                                : () {
+                                    showModalBottomSheet(
+                                      context: context,
+                                      builder: (context) => SafeArea(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
+                                          children: [
+                                            Padding(
+                                              padding: const EdgeInsets.all(12),
+                                              child: Text(
+                                                'Who can watch this video',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.grey[800],
+                                                ),
+                                              ),
+                                            ),
+                                            const Divider(height: 1),
+                                            ListTile(
+                                              title: const Text('Everyone'),
+                                              subtitle: const Text(
+                                                  'Anyone on Flipsy can watch this video'),
+                                              trailing: _privacy == 'everyone'
+                                                  ? const Icon(Icons.check,
+                                                      color: Color(0xFFFF2B55))
+                                                  : null,
+                                              onTap: () {
+                                                setState(() =>
+                                                    _privacy = 'everyone');
+                                                Navigator.pop(context);
+                                              },
+                                            ),
+                                            ListTile(
+                                              title: const Text('Followers'),
+                                              subtitle: const Text(
+                                                  'Only your followers can watch this video'),
+                                              trailing: _privacy == 'followers'
+                                                  ? const Icon(Icons.check,
+                                                      color: Color(0xFFFF2B55))
+                                                  : null,
+                                              onTap: () {
+                                                setState(() =>
+                                                    _privacy = 'followers');
+                                                Navigator.pop(context);
+                                              },
+                                            ),
+                                            ListTile(
+                                              title: const Text('Private'),
+                                              subtitle: const Text(
+                                                  'Only you can watch this video'),
+                                              trailing: _privacy == 'private'
+                                                  ? const Icon(Icons.check,
+                                                      color: Color(0xFFFF2B55))
+                                                  : null,
+                                              onTap: () {
+                                                setState(
+                                                    () => _privacy = 'private');
+                                                Navigator.pop(context);
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      backgroundColor: Colors.white,
+                                    );
+                                  },
+                          ),
+                          const Divider(height: 1),
+                          SwitchListTile(
+                            value: _allowComments,
+                            onChanged: (bool value) {
+                              setState(() {
+                                _allowComments = value;
+                              });
+                            },
+                            title: const Text('Allow comments'),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            activeColor: const Color(0xFF34C759),
+                            dense: true,
+                          ),
+                          const Divider(height: 1),
+                        ],
                       ),
                     ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Divider(height: 1),
-                        // Description field remains full width
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                          child: TextField(
-                            controller: _descriptionController,
-                            decoration: const InputDecoration(
-                              hintText:
-                                  'Describe your post, add hashtags, or mention creators that inspired you',
-                              hintStyle:
-                                  TextStyle(color: Colors.grey, fontSize: 15),
-                              border: InputBorder.none,
-                              isDense: true,
-                              contentPadding: EdgeInsets.zero,
-                            ),
-                            maxLines: 3,
-                            minLines: 1,
-                            style: const TextStyle(fontSize: 15),
-                            enabled: !_isUploading,
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Cost and Calories in one row
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                          child: Row(
-                            children: [
-                              // Budget field
-                              Expanded(
-                                child: TextField(
-                                  controller: _budgetController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Cost',
-                                    hintText: 'Meal cost',
-                                    prefixText: '\$',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 12),
+                    SizedBox(
+                      height: MediaQuery.of(context).size.height * 0.3,
+                      child: _videoController?.value.isInitialized ?? false
+                          ? Container(
+                              width: double.infinity,
+                              height: double.infinity,
+                              margin: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
                                   ),
-                                  keyboardType: TextInputType.numberWithOptions(
-                                      decimal: true),
-                                  enabled: !_isUploading,
-                                ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              // Calories field
-                              Expanded(
-                                child: TextField(
-                                  controller: _caloriesController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Calories',
-                                    hintText: 'Cal count',
-                                    suffixText: 'cal',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 12),
-                                  ),
-                                  keyboardType: TextInputType.number,
-                                  enabled: !_isUploading,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        // Prep Time and Spiciness in one row
-                        Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                          child: Row(
-                            children: [
-                              // Prep Time field
-                              Expanded(
-                                child: TextField(
-                                  controller: _prepTimeController,
-                                  decoration: const InputDecoration(
-                                    labelText: 'Prep Time',
-                                    hintText: 'Minutes',
-                                    suffixText: 'min',
-                                    border: OutlineInputBorder(),
-                                    contentPadding: EdgeInsets.symmetric(
-                                        horizontal: 8, vertical: 12),
-                                  ),
-                                  keyboardType: TextInputType.number,
-                                  enabled: !_isUploading,
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              // Spiciness field
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Stack(
                                   children: [
-                                    const Padding(
-                                      padding:
-                                          EdgeInsets.only(left: 8, bottom: 4),
-                                      child: Text(
-                                        'Spiciness',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.black54,
+                                    Center(
+                                      child: AspectRatio(
+                                        aspectRatio:
+                                            _videoController!.value.aspectRatio,
+                                        child: VideoPlayer(_videoController!),
+                                      ),
+                                    ),
+                                    // Gradient overlay
+                                    Positioned.fill(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: [
+                                              Colors.black.withOpacity(0.4),
+                                              Colors.transparent,
+                                              Colors.black.withOpacity(0.4),
+                                            ],
+                                            stops: const [0.0, 0.5, 1.0],
+                                          ),
                                         ),
                                       ),
                                     ),
-                                    SpicinessSelector(
-                                      value: _spiciness,
-                                      onChanged: (value) {
-                                        setState(() {
-                                          _spiciness = value;
-                                        });
-                                      },
+                                    // Video duration
+                                    Positioned(
+                                      top: 8,
+                                      right: 8,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withOpacity(0.6),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          _formatDuration(
+                                              _videoController!.value.duration),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    // Cover selection button
+                                    Positioned(
+                                      bottom: 8,
+                                      left: 0,
+                                      right: 0,
+                                      child: Center(
+                                        child: Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            onTap: () {
+                                              // TODO: Implement cover selection
+                                            },
+                                            borderRadius:
+                                                BorderRadius.circular(20),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 16,
+                                                vertical: 8,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black
+                                                    .withOpacity(0.6),
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                                border: Border.all(
+                                                  color: Colors.white
+                                                      .withOpacity(0.3),
+                                                ),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: const [
+                                                  Icon(
+                                                    Icons.image,
+                                                    color: Colors.white,
+                                                    size: 16,
+                                                  ),
+                                                  SizedBox(width: 8),
+                                                  Text(
+                                                    'Select cover',
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.lock_outline),
-                          title: const Text('Who can watch this video'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _privacy == 'everyone'
-                                    ? 'Everyone'
-                                    : _privacy == 'followers'
-                                        ? 'Followers'
-                                        : 'Private',
-                                style: TextStyle(
-                                  color: Colors.grey[600],
-                                  fontSize: 14,
+                            )
+                          : GestureDetector(
+                              onTap: _isUploading ? null : _pickVideo,
+                              child: Container(
+                                margin: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey[100],
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.grey[300]!,
+                                    width: 2,
+                                    style: BorderStyle.solid,
+                                  ),
+                                ),
+                                child: Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(16),
+                                        decoration: BoxDecoration(
+                                          color: Colors.grey[200],
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.video_library,
+                                          size: 32,
+                                          color: Theme.of(context).primaryColor,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'Tap to select a video',
+                                        style: TextStyle(
+                                          color: Colors.grey[800],
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 4),
-                              Icon(Icons.chevron_right,
-                                  color: Colors.grey[400]),
-                            ],
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          minLeadingWidth: 24,
-                          horizontalTitleGap: 8,
-                          dense: true,
-                          onTap: _isUploading
-                              ? null
-                              : () {
-                                  showModalBottomSheet(
-                                    context: context,
-                                    builder: (context) => SafeArea(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.stretch,
-                                        children: [
-                                          Padding(
-                                            padding: const EdgeInsets.all(12),
-                                            child: Text(
-                                              'Who can watch this video',
-                                              style: TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w600,
-                                                color: Colors.grey[800],
-                                              ),
-                                            ),
-                                          ),
-                                          const Divider(height: 1),
-                                          ListTile(
-                                            title: const Text('Everyone'),
-                                            subtitle: const Text(
-                                                'Anyone on Flipsy can watch this video'),
-                                            trailing: _privacy == 'everyone'
-                                                ? const Icon(Icons.check,
-                                                    color: Color(0xFFFF2B55))
-                                                : null,
-                                            onTap: () {
-                                              setState(
-                                                  () => _privacy = 'everyone');
-                                              Navigator.pop(context);
-                                            },
-                                          ),
-                                          ListTile(
-                                            title: const Text('Followers'),
-                                            subtitle: const Text(
-                                                'Only your followers can watch this video'),
-                                            trailing: _privacy == 'followers'
-                                                ? const Icon(Icons.check,
-                                                    color: Color(0xFFFF2B55))
-                                                : null,
-                                            onTap: () {
-                                              setState(
-                                                  () => _privacy = 'followers');
-                                              Navigator.pop(context);
-                                            },
-                                          ),
-                                          ListTile(
-                                            title: const Text('Private'),
-                                            subtitle: const Text(
-                                                'Only you can watch this video'),
-                                            trailing: _privacy == 'private'
-                                                ? const Icon(Icons.check,
-                                                    color: Color(0xFFFF2B55))
-                                                : null,
-                                            onTap: () {
-                                              setState(
-                                                  () => _privacy = 'private');
-                                              Navigator.pop(context);
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    backgroundColor: Colors.white,
-                                  );
-                                },
-                        ),
-                        const Divider(height: 1),
-                        SwitchListTile(
-                          value: _allowComments,
-                          onChanged: (bool value) {
-                            setState(() {
-                              _allowComments = value;
-                            });
-                          },
-                          title: const Text('Allow comments'),
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          activeColor: const Color(0xFF00F2EA),
-                          dense: true,
-                        ),
-                        const Divider(height: 1),
-                      ],
+                            ),
                     ),
-                  ),
-                ],
+                  ].reversed.toList(),
+                ),
               ),
             ),
             // Post button
@@ -670,5 +788,12 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
         ),
       ),
     );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
+    return "${duration.inHours > 0 ? '${twoDigits(duration.inHours)}:' : ''}$twoDigitMinutes:$twoDigitSeconds";
   }
 }
