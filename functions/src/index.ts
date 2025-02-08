@@ -20,6 +20,7 @@ import { PineconeService } from "./services/pinecone.service";
 import { initializeApp } from "firebase-admin/app";
 import { VideoVector } from "./types";
 import { VideoProcessorService } from "./services/video-processor.service";
+import { Storage } from "@google-cloud/storage";
 
 // Custom type for vision messages
 // type VisionContent = {
@@ -36,7 +37,9 @@ import { VideoProcessorService } from "./services/video-processor.service";
 // });
 
 // Initialize Firebase Admin
-initializeApp();
+initializeApp({
+  storageBucket: process.env.STORAGE_BUCKET,
+});
 
 // Initialize OpenAI
 // const openai = new OpenAI({
@@ -1069,7 +1072,9 @@ export const migrateVideosToTags = functions.https.onRequest(async (req, res) =>
 export const analyzeVideo = onDocumentCreated(
   {
     document: "videos/{videoId}",
-    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT", "STORAGE_BUCKET"],
   },
   async (event) => {
     try {
@@ -1142,6 +1147,15 @@ export const analyzeVideo = onDocumentCreated(
             ingredients: analysis.ingredients,
             tools: analysis.tools,
             techniques: analysis.techniques,
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: 0,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
           },
         },
         {
@@ -1150,6 +1164,15 @@ export const analyzeVideo = onDocumentCreated(
           metadata: {
             videoId: event.params.videoId,
             type: "transcription",
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: 0,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
           },
         },
       ]);
@@ -1180,7 +1203,10 @@ export const analyzeVideo = onDocumentCreated(
 
 export const analyzeExistingVideos = onCall(
   {
-    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT", "STORAGE_BUCKET"],
+    maxInstances: 10,
   },
   async (request) => {
     try {
@@ -1271,6 +1297,15 @@ export const analyzeExistingVideos = onCall(
                 ingredients: analysis.ingredients,
                 tools: analysis.tools,
                 techniques: analysis.techniques,
+                userId: videoData.userId,
+                status: videoData.status || "active",
+                privacy: videoData.privacy || "everyone",
+                tags: videoData.tags || [],
+                version: 1,
+                contentLength: 0,
+                hasDescription: "true",
+                hasAiDescription: "true",
+                hasTags: String(videoData.tags?.length > 0),
               },
             },
             {
@@ -1279,6 +1314,15 @@ export const analyzeExistingVideos = onCall(
               metadata: {
                 videoId,
                 type: "transcription",
+                userId: videoData.userId,
+                status: videoData.status || "active",
+                privacy: videoData.privacy || "everyone",
+                tags: videoData.tags || [],
+                version: 1,
+                contentLength: 0,
+                hasDescription: "true",
+                hasAiDescription: "true",
+                hasTags: String(videoData.tags?.length > 0),
               },
             },
           ]);
@@ -1724,86 +1768,201 @@ export const migrateHashtagsToLowercase = onCall(async () => {
 export { migrateDisplayNamesToLowercase } from "./migrations/migrateDisplayNamesToLowercase";
 
 // Function to process video and generate analysis
-export const processVideo = onCall(async (request: CallableRequest) => {
-  try {
-    const { videoId, videoUrl } = request.data;
-    
-    if (!videoId || !videoUrl) {
-      throw new functions.https.HttpsError(
-        "invalid-argument",
-        "Video ID and URL are required"
-      );
-    }
+export const processVideo = onCall(
+  {
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT", "STORAGE_BUCKET"],
+  },
+  async (request: CallableRequest) => {
+    try {
+      const { videoId, videoUrl } = request.data;
+      
+      if (!videoId || !videoUrl) {
+        throw new functions.https.HttpsError(
+          "invalid-argument",
+          "Video ID and URL are required"
+        );
+      }
 
-    const videoProcessor = new VideoProcessorService();
-    const analysis = await videoProcessor.processVideo(videoUrl, videoId);
+      // Get video data from Firestore
+      const db = admin.firestore();
+      const videoDoc = await db.collection("videos").doc(videoId).get();
+      const videoData = videoDoc.data();
 
-    // Store analysis results in Firestore
-    const db = admin.firestore();
-    await db.collection("videos").doc(videoId).update({
-      analysis: {
-        summary: analysis.summary,
-        ingredients: analysis.ingredients,
-        tools: analysis.tools,
-        techniques: analysis.techniques,
-        steps: analysis.steps,
-        processedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-    });
+      if (!videoData) {
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Video data not found"
+        );
+      }
 
-    // Generate embeddings for improved search
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+      const videoProcessor = new VideoProcessorService();
+      const analysis = await videoProcessor.processVideo(videoUrl, videoId);
 
-    // Generate embeddings for different aspects of the video
-    const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
-      openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: [
-          analysis.summary,
-          analysis.ingredients.join(" "),
-          analysis.tools.join(" "),
-          analysis.techniques.join(" "),
-        ].join(" "),
-      }),
-      openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: analysis.transcription,
-      }),
-    ]);
-
-    // Store vectors in Pinecone
-    const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
-    await pineconeService.upsert([
-      {
-        id: `${videoId}_summary`,
-        values: summaryEmbedding.data[0].embedding,
-        metadata: {
-          videoId,
-          type: "summary",
+      // Store analysis results in Firestore
+      await videoDoc.ref.update({
+        analysis: {
+          summary: analysis.summary,
           ingredients: analysis.ingredients,
           tools: analysis.tools,
           techniques: analysis.techniques,
+          steps: analysis.steps,
+          processedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
-      },
-      {
-        id: `${videoId}_transcription`,
-        values: transcriptionEmbedding.data[0].embedding,
-        metadata: {
-          videoId,
-          type: "transcription",
+      });
+
+      // Generate embeddings for improved search
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      // Generate embeddings for different aspects of the video
+      const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
+        openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: [
+            analysis.summary,
+            analysis.ingredients.join(" "),
+            analysis.tools.join(" "),
+            analysis.techniques.join(" "),
+          ].join(" "),
+        }),
+        openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: analysis.transcription,
+        }),
+      ]);
+
+      // Store vectors in Pinecone
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      await pineconeService.upsert([
+        {
+          id: `${videoId}_summary`,
+          values: summaryEmbedding.data[0].embedding,
+          metadata: {
+            videoId,
+            type: "summary",
+            ingredients: analysis.ingredients,
+            tools: analysis.tools,
+            techniques: analysis.techniques,
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: 0,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
+          },
         },
-      },
-    ]);
+        {
+          id: `${videoId}_transcription`,
+          values: transcriptionEmbedding.data[0].embedding,
+          metadata: {
+            videoId,
+            type: "transcription",
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: 0,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
+          },
+        },
+      ]);
+
+      return {
+        success: true,
+        message: "Video processed successfully",
+        analysis,
+      };
+    } catch (error) {
+      console.error("Error processing video:", error);
+      throw new functions.https.HttpsError("internal", "Error processing video");
+    }
+  },
+);
+
+export const verifyEnvironment = onCall(
+  {
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    secrets: ["OPENAI_API_KEY", "PINECONE_API_KEY", "PINECONE_ENVIRONMENT", "STORAGE_BUCKET"],
+  },
+  async () => {
+    const checks: Record<string, boolean> = {};
+    const errors: string[] = [];
+
+    try {
+      // Check OpenAI
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+      const openaiResponse = await openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: "test",
+      });
+      checks.openai = openaiResponse.data.length > 0;
+    } catch (error) {
+      checks.openai = false;
+      errors.push(`OpenAI check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      // Check Pinecone
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      await pineconeService.hybridSearch({
+        query: "test",
+        queryVector: new Array(1536).fill(0),
+        limit: 1,
+      });
+      checks.pinecone = true;
+    } catch (error) {
+      checks.pinecone = false;
+      errors.push(`Pinecone check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      // Check Firebase Storage
+      if (!process.env.STORAGE_BUCKET) {
+        throw new Error("STORAGE_BUCKET secret is not set");
+      }
+      const storage = new Storage();
+      const bucket = storage.bucket(process.env.STORAGE_BUCKET);
+      await bucket.exists();
+      checks.storage = true;
+    } catch (error) {
+      checks.storage = false;
+      errors.push(`Storage check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    try {
+      // Check Firestore
+      const db = admin.firestore();
+      await db.collection("_test_").doc("_test_").set({ test: true });
+      await db.collection("_test_").doc("_test_").delete();
+      checks.firestore = true;
+    } catch (error) {
+      checks.firestore = false;
+      errors.push(`Firestore check failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const allChecksPass = Object.values(checks).every(Boolean);
 
     return {
-      success: true,
-      message: "Video processed successfully",
-      analysis,
+      success: allChecksPass,
+      checks,
+      errors: errors.length > 0 ? errors : undefined,
+      timestamp: new Date().toISOString(),
+      environment: {
+        storageBucket: process.env.STORAGE_BUCKET || "not set",
+        region: process.env.FUNCTION_REGION || "not set",
+      },
     };
-  } catch (error) {
-    console.error("Error processing video:", error);
-    throw new functions.https.HttpsError("internal", "Error processing video");
-  }
-});
+  },
+);

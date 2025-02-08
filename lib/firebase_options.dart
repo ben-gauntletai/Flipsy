@@ -51,7 +51,7 @@ class DefaultFirebaseOptions {
     appId: 'YOUR-IOS-APP-ID',
     messagingSenderId: '185837991801',
     projectId: 'flipsy-gauntlet',
-    storageBucket: 'flipsy-gauntlet.appspot.com',
+    storageBucket: 'flipsy-gauntlet.firebasestorage.app',
     iosClientId: 'YOUR-IOS-CLIENT-ID',
     iosBundleId: 'com.gauntletai.flipsy',
   );

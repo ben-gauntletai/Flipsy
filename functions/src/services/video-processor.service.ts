@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions";
+import * as functions from "firebase-functions/v2";
 import * as ffmpeg from "fluent-ffmpeg";
 import * as fs from "fs";
 import * as os from "os";
@@ -39,52 +39,138 @@ interface VideoAnalysis {
 export class VideoProcessorService {
   private openai: OpenAI;
   private storage: Storage;
+  private storageBucket: string;
+  private readonly MAX_FILE_SIZE_MB = 100;
+  private readonly PROCESSING_TIMEOUT_MS = 540000; // 9 minutes (Cloud Function timeout is 10 minutes)
 
   constructor() {
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const storageBucket = process.env.STORAGE_BUCKET;
+    
+    if (!openaiKey) {
+      throw new Error("OpenAI API key is required");
+    }
+    
+    if (!storageBucket) {
+      throw new Error("STORAGE_BUCKET environment variable is required");
+    }
+    
     this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: openaiKey,
     });
-    this.storage = new Storage();
+    
+    this.storageBucket = storageBucket;
+    
+    try {
+      this.storage = new Storage({
+        projectId: process.env.GCLOUD_PROJECT,
+      });
+      functions.logger.info("VideoProcessorService initialized successfully with bucket:", this.storageBucket);
+    } catch (error) {
+      functions.logger.error("Failed to initialize Storage", error);
+      throw new Error("Storage initialization failed");
+    }
   }
 
   async processVideo(videoUrl: string, videoId: string): Promise<VideoAnalysis> {
+    const startTime = Date.now();
+    let tempFilePath: string | null = null;
+    let frameFiles: string[] = [];
+    
     try {
       functions.logger.info(`Starting video processing for ${videoId}`);
       
       // Download video to temp directory
-      const tempFilePath = path.join(os.tmpdir(), `${videoId}.mp4`);
+      tempFilePath = path.join(os.tmpdir(), `video-${videoId}.mp4`);
       await this.downloadVideo(videoUrl, tempFilePath);
 
+      // Check file size
+      const stats = await fs.promises.stat(tempFilePath);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      if (fileSizeMB > this.MAX_FILE_SIZE_MB) {
+        throw new Error(
+          `Video file size (${fileSizeMB.toFixed(2)}MB) exceeds maximum allowed size (${this.MAX_FILE_SIZE_MB}MB)`
+        );
+      }
+
+      // Check remaining time
+      const timeElapsed = Date.now() - startTime;
+      if (timeElapsed > this.PROCESSING_TIMEOUT_MS) {
+        throw new Error("Processing timeout exceeded");
+      }
+
       // Extract frames
+      const checkTimeout = () => {
+        const timeElapsed = Date.now() - startTime;
+        if (timeElapsed > this.PROCESSING_TIMEOUT_MS) {
+          throw new Error("Processing timeout exceeded");
+        }
+      };
+
+      checkTimeout();
       functions.logger.info("Extracting frames...");
-      const frameFiles = await this.extractFrames(tempFilePath, videoId);
+      frameFiles = await this.extractFrames(tempFilePath, videoId);
       
-      // Analyze frames with GPT-4 Vision
+      // Analyze frames
+      checkTimeout();
       functions.logger.info("Analyzing frames...");
       const frameAnalyses = await this.analyzeFrames(frameFiles);
 
       // Transcribe audio
+      checkTimeout();
       functions.logger.info("Transcribing audio...");
       const transcription = await this.transcribeAudio(tempFilePath);
 
       // Generate comprehensive analysis
+      checkTimeout();
       functions.logger.info("Generating comprehensive analysis...");
       const analysis = await this.generateAnalysis(frameAnalyses, transcription);
 
       // Clean up temporary files
-      await this.cleanup([tempFilePath, ...frameFiles]);
+      await this.cleanup([...(tempFilePath ? [tempFilePath] : []), ...frameFiles]);
 
       return analysis;
     } catch (error) {
+      // Ensure cleanup happens even on error
+      if (tempFilePath || frameFiles.length > 0) {
+        try {
+          await this.cleanup([...(tempFilePath ? [tempFilePath] : []), ...frameFiles]);
+        } catch (cleanupError) {
+          functions.logger.warn("Error during cleanup:", cleanupError);
+        }
+      }
+      
       functions.logger.error("Error processing video:", error);
       throw error;
     }
   }
 
   private async downloadVideo(url: string, destPath: string): Promise<void> {
-    const bucket = this.storage.bucket(url.split("/")[2]);
-    const file = bucket.file(url.split("/").slice(3).join("/"));
-    await file.download({ destination: destPath });
+    try {
+      if (!url || !destPath) {
+        throw new Error("URL and destination path are required for video download");
+      }
+      
+      functions.logger.info("Downloading video", { url, destPath });
+      
+      // Extract the file path from the URL
+      const filePathMatch = url.match(/\/v0\/b\/[^/]+\/o\/(.+?)\?/);
+      if (!filePathMatch) {
+        throw new Error("Invalid video URL format");
+      }
+      
+      const filePath = decodeURIComponent(filePathMatch[1]);
+      functions.logger.info("Parsed video location", { bucket: this.storageBucket, filePath });
+      
+      const bucket = this.storage.bucket(this.storageBucket);
+      const file = bucket.file(filePath);
+      
+      await file.download({ destination: destPath });
+      functions.logger.info(`Video downloaded successfully to ${destPath}`);
+    } catch (error) {
+      functions.logger.error("Error downloading video:", error);
+      throw error;
+    }
   }
 
   private async extractFrames(videoPath: string, videoId: string): Promise<string[]> {
@@ -204,28 +290,31 @@ export class VideoProcessorService {
   }
 
   private parseVisionResponse(content: string, frameIndex: number): FrameAnalysis {
-    // Implement parsing logic for GPT-4 Vision response
-    // This is a simplified version - enhance based on actual response format
+    // Extract information using regex or other parsing methods
+    const ingredients = content.match(/ingredients?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((i) => i.trim()) || [];
+    const tools = content.match(/tools?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((t) => t.trim()) || [];
+    const techniques = content.match(/techniques?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((t) => t.trim()) || [];
+    
     return {
-      timestamp: frameIndex * 5, // Assuming 5-second intervals
-      description: content,
-      detectedIngredients: [],
-      detectedTools: [],
-      detectedTechniques: [],
+        timestamp: frameIndex * 5,
+        description: content,
+        detectedIngredients: ingredients,
+        detectedTools: tools,
+        detectedTechniques: techniques,
     };
   }
 
   private parseAnalysisResponse(content: string): VideoAnalysis {
-    // Implement parsing logic for final analysis
-    // This is a simplified version - enhance based on actual response format
+    const sections = content.split(/\n\d+\./);
+    
     return {
-      frames: [],
-      transcription: "",
-      summary: "",
-      ingredients: [],
-      tools: [],
-      techniques: [],
-      steps: [],
+        frames: [],
+        transcription: "",
+        summary: sections[1]?.trim() || "",
+        ingredients: sections[2]?.split(",").map((i) => i.trim()) || [],
+        tools: sections[3]?.split(",").map((t) => t.trim()) || [],
+        techniques: sections[4]?.split(",").map((t) => t.trim()) || [],
+        steps: sections[5]?.split("\n").map((s) => s.trim()).filter(Boolean) || [],
     };
   }
 
