@@ -516,7 +516,7 @@ export class VideoProcessorService {
       Frame Analyses: ${JSON.stringify(frameAnalyses, null, 2)}
       Audio Transcription: ${transcriptionText}
       
-      Provide your analysis in the following EXACT format, maintaining these exact headings:
+      Provide your analysis in the following EXACT format, maintaining these exact headings and formatting:
 
       SUMMARY:
       Write a clear, concise summary of the recipe in a single paragraph.
@@ -540,18 +540,24 @@ export class VideoProcessorService {
       etc.
 
       STEPS:
-      List the complete recipe steps in order, one per line:
+      List the complete recipe steps in order, one per line, numbered:
       1. First step
       2. Second step
+      3. Third step
       etc.
 
       IMPORTANT:
+      - Follow the EXACT formatting shown above for each section
+      - Each section MUST start with the heading (e.g., "STEPS:")
+      - Use bullet points (-) for ingredients, tools, and techniques
+      - Use numbers (1., 2., etc.) for steps
       - Do not include labels like "Tools:" or "Ingredients:" within the lists themselves
       - Keep each item concise and avoid mixing categories
-      - For tools, only include physical equipment (e.g., "bowl", "whisk")
-      - For techniques, only include actions (e.g., "whisking", "blending")
+      - For tools, only include all physical cooking equipment (e.g., "bowl", "whisk", "knife", blender)
+      - For techniques, only include actions (e.g., "whisking", "blending", "cutting", "stirring")
       - For ingredients, only include food/drink items
       - Ensure steps are complete sentences
+      - Each step must be on its own line and start with a number
     `;
 
     const response = await this.openai.chat.completions.create({
@@ -602,39 +608,121 @@ export class VideoProcessorService {
   private parseAnalysisResponse(content: string): Omit<VideoAnalysis, 'frames' | 'transcription'> {
     functions.logger.info("Starting to parse analysis response");
 
-    const extractSection = (section: string, text: string): string[] => {
+    // Log the entire raw content first
+    functions.logger.info("Raw content to parse:", {
+      content: content,
+      contentLength: content.length
+    });
+
+    const extractListSection = (section: string, text: string): string[] => {
       const regex = new RegExp(`${section}:\\s*([\\s\\S]*?)(?=\\n\\s*(?:[A-Z]+:|$))`, "i");
       const match = text.match(regex);
-      if (!match) return [];
       
-      return match[1]
+      // Log the regex match details
+      functions.logger.info(`${section} extraction details:`, {
+        hasMatch: !!match,
+        matchGroups: match ? match.length : 0,
+        rawMatch: match ? match[0] : null,
+        extractedContent: match ? match[1] : null
+      });
+      
+      if (!match) {
+        functions.logger.warn(`No match found for section: ${section}`);
+        return [];
+      }
+      
+      const lines = match[1]
         .split("\n")
         .map(line => line.trim())
-        .filter(line => line)  // Remove empty lines
+        .filter(line => line);  // Remove empty lines
+
+      // Log the lines before processing
+      functions.logger.info(`${section} lines before processing:`, lines);
+      
+      const processedLines = lines
         .map(line => line
           .replace(/^[-*•]\s*/, '')  // Remove bullet points
-          .replace(/^[0-9]+\.\s*/, '')  // Remove numbered list markers
           .trim()
         )
         .filter(Boolean);  // Remove any lines that became empty
+
+      // Log the final processed lines
+      functions.logger.info(`${section} final processed lines:`, processedLines);
+      
+      return processedLines;
+    };
+
+    const extractSteps = (text: string): string[] => {
+      // First try to match everything between STEPS: and the next section
+      const stepsRegex = /STEPS:\s*([\s\S]*?)(?=\n\s*[A-Z]+:|$)/i;
+      // If that fails, match everything after STEPS: to the end
+      const fallbackRegex = /STEPS:\s*([\s\S]*$)/i;
+      
+      let match = text.match(stepsRegex) || text.match(fallbackRegex);
+      
+      functions.logger.info("Steps extraction details:", {
+        hasMatch: !!match,
+        matchGroups: match ? match.length : 0,
+        rawMatch: match ? match[0] : null,
+        extractedContent: match ? match[1] : null
+      });
+      
+      if (!match) {
+        functions.logger.warn("No steps section found");
+        return [];
+      }
+      
+      const lines = match[1]
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line && /^\d+\./.test(line));  // Only keep numbered lines
+
+      functions.logger.info("Steps before processing:", lines);
+      
+      const processedLines = lines
+        .map(line => {
+          // Preserve the number but clean up the rest of the line
+          const numberMatch = line.match(/^(\d+)\.\s*(.+)$/);
+          if (!numberMatch) return line.trim();
+          const [, number, content] = numberMatch;
+          return `${number}. ${content.trim()}`;
+        })
+        .filter(line => line.length > 5);  // Ensure we have actual content
+
+      functions.logger.info("Final processed steps:", processedLines);
+      
+      return processedLines;
     };
 
     // Extract each section with detailed logging
     const summaryMatch = content.match(/SUMMARY:\s*([\s\S]*?)(?=\n\s*(?:INGREDIENTS:|$))/);
     const summary = (summaryMatch?.[1] || "").trim();
 
-    functions.logger.info("Raw content sections:", {
+    // Log raw section matches before extraction
+    const rawMatches = {
       summary: summaryMatch?.[0] || "no match",
       ingredients: content.match(/INGREDIENTS:[\s\S]*?(?=\n\s*(?:TOOLS:|$))/)?.[0] || "no match",
       tools: content.match(/TOOLS:[\s\S]*?(?=\n\s*(?:TECHNIQUES:|$))/)?.[0] || "no match",
       techniques: content.match(/TECHNIQUES:[\s\S]*?(?=\n\s*(?:STEPS:|$))/)?.[0] || "no match",
-      steps: content.match(/STEPS:[\s\S]*?$/)?.[0] || "no match"
-    });
+      steps: content.match(/STEPS:[\s\S]*$/)?.[0] || "no match"
+    };
 
-    const ingredients = extractSection("INGREDIENTS", content);
-    const tools = extractSection("TOOLS", content);
-    const techniques = extractSection("TECHNIQUES", content);
-    const steps = extractSection("STEPS", content);
+    functions.logger.info("Raw content section matches:", rawMatches);
+
+    const ingredients = extractListSection("INGREDIENTS", content);
+    const tools = extractListSection("TOOLS", content);
+    const techniques = extractListSection("TECHNIQUES", content);
+    const steps = extractSteps(content);
+
+    // Validate steps specifically
+    if (steps.length === 0) {
+      functions.logger.error("Steps extraction failed. Content analysis:", {
+        hasStepsSection: content.includes("STEPS:"),
+        stepsIndex: content.indexOf("STEPS:"),
+        contentAfterSteps: content.slice(content.indexOf("STEPS:")),
+        rawStepsMatch: rawMatches.steps
+      });
+    }
 
     // Log detailed extraction results
     functions.logger.info("Detailed section extraction results:", {
@@ -660,19 +748,34 @@ export class VideoProcessorService {
       steps: {
         items: steps,
         count: steps.length,
-        raw: steps
+        raw: steps,
+        // Add more details about steps
+        hasNumberedItems: steps.every(step => /^\d+\./.test(step)),
+        itemLengths: steps.map(step => step.length),
+        numbersPresent: steps.map(step => step.match(/^\d+/)?.[0] || 'none')
       }
     });
 
-    // Validate that we have at least some content
-    if (!summary || ingredients.length === 0 || tools.length === 0 || techniques.length === 0 || steps.length === 0) {
-      functions.logger.warn("Some sections are missing content:", {
-        hasSummary: !!summary,
-        ingredientsCount: ingredients.length,
-        toolsCount: tools.length,
-        techniquesCount: techniques.length,
-        stepsCount: steps.length
-      });
+    // Enhanced validation
+    const validationResults = {
+      hasSummary: !!summary,
+      hasIngredients: ingredients.length > 0,
+      hasTools: tools.length > 0,
+      hasTechniques: techniques.length > 0,
+      hasSteps: steps.length > 0,
+      stepsHaveContent: steps.every(step => step.length > 10), // Each step should be a complete sentence
+      stepsAreNumbered: steps.every(step => /^\d+\./.test(step)),
+      sectionsFound: {
+        summary: content.includes("SUMMARY:"),
+        ingredients: content.includes("INGREDIENTS:"),
+        tools: content.includes("TOOLS:"),
+        techniques: content.includes("TECHNIQUES:"),
+        steps: content.includes("STEPS:")
+      }
+    };
+
+    if (!validationResults.hasSteps || !validationResults.stepsHaveContent || !validationResults.stepsAreNumbered) {
+      functions.logger.warn("Steps validation failed:", validationResults);
     }
 
     return {
