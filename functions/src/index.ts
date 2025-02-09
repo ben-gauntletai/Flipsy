@@ -1083,7 +1083,7 @@ export const analyzeVideo = onDocumentCreated(
       const snapshot = event.data;
       if (!snapshot) {
         console.error("No data associated with the event");
-        return;
+        return null;
       }
 
       const videoData = snapshot.data();
@@ -1093,51 +1093,68 @@ export const analyzeVideo = onDocumentCreated(
           videoData: videoData ? "exists" : "null",
           videoURL: videoData?.videoURL ? "exists" : "null",
         });
-        return;
+        return null;
       }
 
       // Use the VideoProcessorService for comprehensive analysis
       const videoProcessor = new VideoProcessorService();
       const analysis = await videoProcessor.processVideo(videoData.videoURL, event.params.videoId);
 
-      // Store analysis results
+      // Force early materialization of analysis values to avoid losing dynamic getter data
+      const materializedAnalysis = {
+        summary: '' + analysis.summary,
+        transcription: '' + analysis.transcription,
+        ingredients: Array.isArray(analysis.ingredients) ? [ ...analysis.ingredients ] : [],
+        tools: Array.isArray(analysis.tools) ? [ ...analysis.tools ] : [],
+        techniques: Array.isArray(analysis.techniques) ? [ ...analysis.techniques ] : [],
+        steps: Array.isArray(analysis.steps) ? [ ...analysis.steps ] : []
+      };
+
+      // Use materializedAnalysis for Firestore update
       await snapshot.ref.update({
         analysis: {
-          summary: analysis.summary,
-          ingredients: analysis.ingredients,
-          tools: analysis.tools,
-          techniques: analysis.techniques,
-          steps: analysis.steps,
-          transcription: analysis.transcription,
+          summary: materializedAnalysis.summary,
+          ingredients: materializedAnalysis.ingredients,
+          tools: materializedAnalysis.tools,
+          techniques: materializedAnalysis.techniques,
+          steps: materializedAnalysis.steps,
+          transcription: materializedAnalysis.transcription,
           processedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         processingStatus: "completed",
       });
 
-      // Generate embeddings for improved search
+      console.log("Analysis stored in Firestore successfully", { videoId: event.params.videoId });
+
+      // Generate embeddings using materializedAnalysis
       const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      // Generate embeddings for different aspects of the video
+      console.log("Generating embeddings", { videoId: event.params.videoId });
+
       const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
         openai.embeddings.create({
           model: "text-embedding-3-large",
           input: [
-            analysis.summary,
-            analysis.ingredients.join(" "),
-            analysis.tools.join(" "),
-            analysis.techniques.join(" "),
+            materializedAnalysis.summary,
+            materializedAnalysis.ingredients.join(" "),
+            materializedAnalysis.tools.join(" "),
+            materializedAnalysis.techniques.join(" ")
           ].join(" "),
         }),
         openai.embeddings.create({
           model: "text-embedding-3-large",
-          input: analysis.transcription,
+          input: materializedAnalysis.transcription,
         }),
       ]);
 
-      // Store vectors in Pinecone
+      console.log("Embeddings generated successfully", { videoId: event.params.videoId });
+
+      // Store vectors in Pinecone using materializedAnalysis values in metadata
       const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      console.log("Storing vectors in Pinecone", { videoId: event.params.videoId });
+      
       await pineconeService.upsert([
         {
           id: `${event.params.videoId}_summary`,
@@ -1145,18 +1162,25 @@ export const analyzeVideo = onDocumentCreated(
           metadata: {
             videoId: event.params.videoId,
             type: "summary",
-            ingredients: analysis.ingredients,
-            tools: analysis.tools,
-            techniques: analysis.techniques,
+            summary: materializedAnalysis.summary,
+            ingredients: materializedAnalysis.ingredients,
+            tools: materializedAnalysis.tools,
+            techniques: materializedAnalysis.techniques,
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
             tags: videoData.tags || [],
             version: 1,
-            contentLength: 0,
+            contentLength: materializedAnalysis.summary.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
+            searchableText: [
+              materializedAnalysis.summary,
+              materializedAnalysis.ingredients.join(" "),
+              materializedAnalysis.tools.join(" "),
+              materializedAnalysis.techniques.join(" ")
+            ].join(" ").toLowerCase()
           },
         },
         {
@@ -1165,27 +1189,28 @@ export const analyzeVideo = onDocumentCreated(
           metadata: {
             videoId: event.params.videoId,
             type: "transcription",
+            transcription: materializedAnalysis.transcription,
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
             tags: videoData.tags || [],
             version: 1,
-            contentLength: 0,
+            contentLength: materializedAnalysis.transcription.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
+            searchableText: materializedAnalysis.transcription.toLowerCase()
           },
         },
       ]);
 
-      console.log("Successfully processed video and stored analysis", {
-        videoId: event.params.videoId,
-        summaryLength: analysis.summary.length,
-        ingredients: analysis.ingredients.length,
-        tools: analysis.tools.length,
-        techniques: analysis.techniques.length,
-        steps: analysis.steps.length,
-      });
+      console.log("Vectors stored in Pinecone successfully", { videoId: event.params.videoId });
+
+      return {
+        success: true,
+        message: "Video processed successfully",
+        analysis: materializedAnalysis,
+      };
     } catch (error) {
       console.error("Error in analyzeVideo:", error);
 
@@ -1295,6 +1320,7 @@ export const analyzeExistingVideos = onCall(
               metadata: {
                 videoId,
                 type: "summary",
+                summary: analysis.summary,
                 ingredients: analysis.ingredients,
                 tools: analysis.tools,
                 techniques: analysis.techniques,
@@ -1303,10 +1329,16 @@ export const analyzeExistingVideos = onCall(
                 privacy: videoData.privacy || "everyone",
                 tags: videoData.tags || [],
                 version: 1,
-                contentLength: 0,
+                contentLength: analysis.summary.length,
                 hasDescription: "true",
                 hasAiDescription: "true",
                 hasTags: String(videoData.tags?.length > 0),
+                searchableText: [
+                  analysis.summary,
+                  analysis.ingredients.join(" "),
+                  analysis.tools.join(" "),
+                  analysis.techniques.join(" ")
+                ].join(" ").toLowerCase()
               },
             },
             {
@@ -1315,15 +1347,17 @@ export const analyzeExistingVideos = onCall(
               metadata: {
                 videoId,
                 type: "transcription",
+                transcription: analysis.transcription,
                 userId: videoData.userId,
                 status: videoData.status || "active",
                 privacy: videoData.privacy || "everyone",
                 tags: videoData.tags || [],
                 version: 1,
-                contentLength: 0,
+                contentLength: analysis.transcription.length,
                 hasDescription: "true",
                 hasAiDescription: "true",
                 hasTags: String(videoData.tags?.length > 0),
+                searchableText: analysis.transcription.toLowerCase()
               },
             },
           ]);
@@ -1925,15 +1959,25 @@ export const processVideo = onCall(
           stepsCount: analysis.steps.length,
         });
 
-        // Store analysis results in Firestore
+        // Force early materialization of analysis values to avoid losing dynamic getter data
+        const materializedAnalysis = {
+          summary: '' + analysis.summary,
+          transcription: '' + analysis.transcription,
+          ingredients: Array.isArray(analysis.ingredients) ? [ ...analysis.ingredients ] : [],
+          tools: Array.isArray(analysis.tools) ? [ ...analysis.tools ] : [],
+          techniques: Array.isArray(analysis.techniques) ? [ ...analysis.techniques ] : [],
+          steps: Array.isArray(analysis.steps) ? [ ...analysis.steps ] : []
+        };
+
+        // Use materializedAnalysis for Firestore update
         await videoDoc.ref.update({
           analysis: {
-            summary: analysis.summary,
-            ingredients: analysis.ingredients,
-            tools: analysis.tools,
-            techniques: analysis.techniques,
-            steps: analysis.steps,
-            transcription: analysis.transcription,
+            summary: materializedAnalysis.summary,
+            ingredients: materializedAnalysis.ingredients,
+            tools: materializedAnalysis.tools,
+            techniques: materializedAnalysis.techniques,
+            steps: materializedAnalysis.steps,
+            transcription: materializedAnalysis.transcription,
             processedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           processingStatus: "completed",
@@ -1941,35 +1985,33 @@ export const processVideo = onCall(
 
         console.log("Analysis stored in Firestore successfully", { videoId });
 
-        // Generate embeddings for improved search
+        // Generate embeddings using materializedAnalysis
         const openai = new OpenAI({
           apiKey: process.env.OPENAI_API_KEY,
         });
 
         console.log("Generating embeddings", { videoId });
 
-        // Generate embeddings for different aspects of the video
         const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
           openai.embeddings.create({
             model: "text-embedding-3-large",
             input: [
-              analysis.summary,
-              analysis.ingredients.join(" "),
-              analysis.tools.join(" "),
-              analysis.techniques.join(" "),
+              materializedAnalysis.summary,
+              materializedAnalysis.ingredients.join(" "),
+              materializedAnalysis.tools.join(" "),
+              materializedAnalysis.techniques.join(" ")
             ].join(" "),
           }),
           openai.embeddings.create({
             model: "text-embedding-3-large",
-            input: analysis.transcription,
+            input: materializedAnalysis.transcription,
           }),
         ]);
 
         console.log("Embeddings generated successfully", { videoId });
 
-        // Store vectors in Pinecone
+        // Store vectors in Pinecone using materializedAnalysis values in metadata
         const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
-        
         console.log("Storing vectors in Pinecone", { videoId });
         
         await pineconeService.upsert([
@@ -1979,18 +2021,25 @@ export const processVideo = onCall(
             metadata: {
               videoId,
               type: "summary",
-              ingredients: analysis.ingredients,
-              tools: analysis.tools,
-              techniques: analysis.techniques,
+              summary: materializedAnalysis.summary,
+              ingredients: materializedAnalysis.ingredients,
+              tools: materializedAnalysis.tools,
+              techniques: materializedAnalysis.techniques,
               userId: videoData.userId,
               status: videoData.status || "active",
               privacy: videoData.privacy || "everyone",
               tags: videoData.tags || [],
               version: 1,
-              contentLength: 0,
+              contentLength: materializedAnalysis.summary.length,
               hasDescription: "true",
               hasAiDescription: "true",
               hasTags: String(videoData.tags?.length > 0),
+              searchableText: [
+                materializedAnalysis.summary,
+                materializedAnalysis.ingredients.join(" "),
+                materializedAnalysis.tools.join(" "),
+                materializedAnalysis.techniques.join(" ")
+              ].join(" ").toLowerCase()
             },
           },
           {
@@ -1999,15 +2048,17 @@ export const processVideo = onCall(
             metadata: {
               videoId,
               type: "transcription",
+              transcription: materializedAnalysis.transcription,
               userId: videoData.userId,
               status: videoData.status || "active",
               privacy: videoData.privacy || "everyone",
               tags: videoData.tags || [],
               version: 1,
-              contentLength: 0,
+              contentLength: materializedAnalysis.transcription.length,
               hasDescription: "true",
               hasAiDescription: "true",
               hasTags: String(videoData.tags?.length > 0),
+              searchableText: materializedAnalysis.transcription.toLowerCase()
             },
           },
         ]);
@@ -2017,7 +2068,7 @@ export const processVideo = onCall(
         return {
           success: true,
           message: "Video processed successfully",
-          analysis,
+          analysis: materializedAnalysis,
         };
       } catch (processingError) {
         console.error("Error in video processing:", {

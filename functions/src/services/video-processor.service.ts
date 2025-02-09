@@ -157,26 +157,42 @@ export class VideoProcessorService {
       const summaryMetadata: VideoMetadata = {
             videoId,
             type: "summary",
-        summary: validateMetadata(analysis.summary),
-        ingredients: analysis.ingredients.slice(0, 100),
-        tools: analysis.tools.slice(0, 50),
-        techniques: analysis.techniques.slice(0, 50),
-        steps: analysis.steps.slice(0, 100),
+            summary: analysis.summary,
+            ingredients: analysis.ingredients.slice(0, 100),
+            tools: analysis.tools.slice(0, 50),
+            techniques: analysis.techniques.slice(0, 50),
+            steps: analysis.steps.slice(0, 100),
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
-        tags: (videoData.tags || []).slice(0, 50),
+            tags: (videoData.tags || []).slice(0, 50),
             version: 1,
             contentLength: analysis.summary.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
-        searchableText: validateMetadata([
-          analysis.summary,
-          analysis.ingredients.join(" "),
-          analysis.tools.join(" "),
-          analysis.techniques.join(" ")
-        ].join(" ").toLowerCase())
+            searchableText: [
+              analysis.summary,
+              analysis.ingredients.join(" "),
+              analysis.tools.join(" "),
+              analysis.techniques.join(" ")
+            ].join(" ").toLowerCase()
+      };
+
+      const transcriptionMetadata: VideoMetadata = {
+            videoId,
+            type: "transcription",
+            transcription: analysis.transcription,
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: (videoData.tags || []).slice(0, 50),
+            version: 1,
+            contentLength: analysis.transcription.length,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
+            searchableText: analysis.transcription.toLowerCase()
       };
 
       // Add initial state validation
@@ -228,22 +244,6 @@ export class VideoProcessorService {
           }
         }
       });
-
-      const transcriptionMetadata: VideoMetadata = {
-            videoId,
-            type: "transcription",
-        transcription: validateMetadata(analysis.transcription),
-            userId: videoData.userId,
-            status: videoData.status || "active",
-            privacy: videoData.privacy || "everyone",
-        tags: (videoData.tags || []).slice(0, 50),
-            version: 1,
-            contentLength: analysis.transcription.length,
-            hasDescription: "true",
-            hasAiDescription: "true",
-            hasTags: String(videoData.tags?.length > 0),
-        searchableText: validateMetadata(analysis.transcription.toLowerCase())
-      };
 
       // Add detailed validation logging for transcription metadata
       functions.logger.info("Transcription metadata validation:", {
