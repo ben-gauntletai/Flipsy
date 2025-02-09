@@ -132,7 +132,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       final metadata = await _videoService.getVideoMetadata(_videoFile!);
       print('Video metadata: $metadata');
 
-      // Show upload progress dialog
+      // Show upload progress dialog only for the file upload phase
       if (!mounted) return;
       showDialog(
         context: context,
@@ -143,8 +143,6 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
             builder: (context, progress, _) {
               return UploadProgressDialog(
                 progress: progress,
-                isCompleting: _isCompleting,
-                videoId: _video?.id,
                 onCancel: () {
                   Navigator.of(context).pop();
                   _cancelUpload();
@@ -172,7 +170,7 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       );
       print('Video uploaded: $videoURL');
 
-      // Create video document first
+      // Create video document with processing status
       print('Creating video document');
       _video = await _videoService.createVideoDocument(
         userId: user.uid,
@@ -191,102 +189,37 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       );
       print('Video document created with ID: ${_video!.id}');
 
-      // Set processing state before starting processing
-      if (mounted) {
-        setState(() {
-          _isCompleting = true;
-        });
-      }
-
-      // Now we can safely update the processing status
-      await FirebaseFirestore.instance
-          .collection('videos')
-          .doc(_video!.id)
-          .update({'processingStatus': 'processing'});
-
-      // Trigger video processing
-      try {
-        print('Triggering video processing');
-        final functions = FirebaseFunctions.instance;
-        final callable = functions.httpsCallable('processVideo');
-        await callable.call({
-          'videoId': _video!.id,
-          'videoUrl': videoURL,
-        });
-        print('Video processing triggered successfully');
-      } catch (e) {
-        print('Error triggering video processing: $e');
-        // Update status to failed if processing couldn't be triggered
-        await FirebaseFirestore.instance
-            .collection('videos')
-            .doc(_video!.id)
-            .update({
-          'processingStatus': 'failed',
-          'error': 'Failed to trigger processing: ${e.toString()}'
-        });
-
-        if (mounted) {
-          setState(() {
-            _isCompleting = false;
-            _error = 'Error processing video: $e';
-          });
-          Navigator.of(context).pop(); // Close progress dialog
-        }
-        return; // Exit the method here to prevent further processing
-      }
-
-      // Keep dialog open until processing is complete
-      if (mounted) {
-        setState(() {
-          _isCompleting = true;
-        });
-      }
-
-      // Wait for processing to complete
-      bool processingComplete = false;
-      while (!processingComplete && mounted) {
-        final doc = await FirebaseFirestore.instance
-            .collection('videos')
-            .doc(_video!.id)
-            .get();
-        final status = doc.data()?['processingStatus'] as String?;
-        print('Current processing status: $status');
-
-        if (status == 'completed' || status == 'failed') {
-          processingComplete = true;
-          if (status == 'failed') {
-            throw Exception('Video processing failed');
-          }
-        } else {
-          await Future.delayed(const Duration(seconds: 2));
-        }
-      }
-
+      // Close the upload progress dialog
       if (mounted) {
         Navigator.of(context).pop(); // Close progress dialog
+      }
 
-        // First dispose the video controller
-        await _videoController?.dispose();
-        _videoController = null;
+      // First dispose the video controller
+      await _videoController?.dispose();
+      _videoController = null;
 
-        // Then reset the form state
-        _resetForm();
+      // Then reset the form state
+      _resetForm();
 
-        // Show success message
+      // Show success message
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Video uploaded successfully!')),
+          const SnackBar(
+            content: Text(
+                'Video uploaded! Processing will continue in the background.'),
+            duration: Duration(seconds: 4),
+          ),
         );
+      }
 
-        // Finally trigger navigation callback
-        if (widget.onVideoUploaded != null) {
-          widget.onVideoUploaded!(_video!.id);
-        }
+      // Finally trigger navigation callback
+      if (widget.onVideoUploaded != null) {
+        widget.onVideoUploaded!(_video!.id);
       }
     } catch (e) {
       print('Error in upload process: $e');
       if (mounted) {
         setState(() {
-          _isCompleting = false;
           _error = 'Error uploading video: $e';
         });
         Navigator.of(context).pop(); // Close progress dialog
@@ -295,9 +228,6 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
       if (mounted) {
         setState(() {
           _isUploading = false;
-          if (_error != null) {
-            _isCompleting = false;
-          }
         });
       }
     }
