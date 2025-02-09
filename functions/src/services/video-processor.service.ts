@@ -80,7 +80,7 @@ export class VideoProcessorService {
     const startTime = Date.now();
     let tempFilePath: string | null = null;
     let framesDir: string | null = null;
-    let frameFiles: string[] = [];
+    let audioPath: string | null = null;
     
     try {
       functions.logger.info(`Starting video processing for ${videoId}`);
@@ -94,14 +94,45 @@ export class VideoProcessorService {
         throw new Error("Video data not found");
       }
       
-      // Create temp directory for this process
+      // Create temp directories and paths
       framesDir = path.join(os.tmpdir(), videoId);
-      await fs.promises.mkdir(framesDir, { recursive: true });
-      functions.logger.info(`Created temporary directory: ${framesDir}`);
-      
-      // Download video to temp directory
       tempFilePath = path.join(framesDir, `video.mp4`);
-      await this.downloadVideo(videoUrl, tempFilePath);
+      audioPath = path.join(os.tmpdir(), `${videoId}_audio.mp3`);
+
+      // Create temp directory
+      await fs.promises.mkdir(framesDir, { recursive: true });
+
+      // Extract file path from URL
+      const filePathMatch = videoUrl.match(/\/o\/(.+?)\?/);
+      if (!filePathMatch) {
+        throw new Error("Invalid video URL format");
+      }
+      const filePath = decodeURIComponent(filePathMatch[1]);
+      functions.logger.info("Parsed video location", { bucket: this.storageBucket, filePath });
+
+      // Start video streaming and processing
+      const videoStream = this.storage.bucket(this.storageBucket).file(filePath).createReadStream();
+      const writeStream = fs.createWriteStream(tempFilePath);
+
+      // Process video as it streams
+      await new Promise<void>((resolve, reject) => {
+        videoStream
+          .on('error', (error) => {
+            functions.logger.error("Error streaming video:", error);
+            reject(error);
+          })
+          .pipe(writeStream)
+          .on('finish', () => {
+            functions.logger.info(`Video streamed successfully to ${tempFilePath}`);
+            resolve();
+          })
+          .on('error', (error) => {
+            functions.logger.error("Error writing video stream:", error);
+            reject(error);
+          });
+      });
+
+      functions.logger.info(`Video streaming completed`);
 
       // Check file size
       const stats = await fs.promises.stat(tempFilePath);
@@ -118,9 +149,46 @@ export class VideoProcessorService {
         throw new Error("Processing timeout exceeded");
       }
 
-      // Extract frames - this will throw an error if any frame fails
-      functions.logger.info("Starting frame extraction...");
-      frameFiles = await this.extractFrames(tempFilePath, framesDir);
+      // Start audio extraction and transcription immediately
+      const transcriptionPromise = new Promise<string>(async (resolve, reject) => {
+        try {
+          // Extract audio
+          await new Promise<void>((resolveExtraction, rejectExtraction) => {
+            ffmpeg(tempFilePath)
+              .toFormat("mp3")
+              .audioChannels(1) // Mono audio
+              .audioFrequency(16000) // 16kHz sample rate (standard for speech)
+              .audioBitrate('32k') // Lower bitrate
+              .outputOptions([
+                '-preset ultrafast', // Fastest encoding
+                '-movflags +faststart', // Optimize for fast start
+                '-af aresample=async=1', // Handle async audio resampling
+                '-ac 1', // Force mono
+                '-ar 16000', // Force 16kHz
+              ])
+              .on("end", () => {
+                functions.logger.info("Audio extraction completed");
+                resolveExtraction();
+              })
+              .on("error", (err) => {
+                functions.logger.error("Error extracting audio:", err);
+                rejectExtraction(err);
+              })
+              .save(audioPath!);
+          });
+
+          // Start transcription immediately after extraction
+          functions.logger.info("Starting transcription");
+          const transcription = await this.transcribeAudio(audioPath!);
+          resolve(transcription);
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      // Extract frames in parallel with audio processing
+      functions.logger.info("Starting frame extraction");
+      const frameFiles = await this.extractFrames(tempFilePath, framesDir);
       
       // Double check we have exactly 12 frames
       if (frameFiles.length !== 12) {
@@ -128,11 +196,70 @@ export class VideoProcessorService {
       }
       
       functions.logger.info("All 12 frames extracted successfully. Starting analysis...");
-      
-      // Now that we have all frames, proceed with analysis
-      const [frameAnalyses, transcription] = await Promise.all([
-        this.analyzeFrames(frameFiles),
-        this.transcribeAudio(tempFilePath)
+
+      // Process each frame individually
+      const frameAnalysesPromises = frameFiles.map(async (framePath, frameIndex) => {
+        functions.logger.info(`Analyzing frame ${frameIndex + 1} of ${frameFiles.length}`);
+        
+        const imageBase64 = await fs.promises.readFile(framePath, { encoding: "base64" });
+        const frameContent = {
+          type: "image_url" as const,
+          image_url: {
+            url: `data:image/jpeg;base64,${imageBase64}`,
+          },
+        } as ChatCompletionContentPartImage;
+
+        const response = await this.openai.chat.completions.create({
+          model: "gpt-4o-mini",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Analyze this frame from a cooking video. " +
+                        "Identify:\n" +
+                        "1. Ingredients visible\n" +
+                        "2. Cooking tools being used\n" +
+                        "3. Cooking techniques being demonstrated\n" +
+                        "4. A description of what's happening\n\n" +
+                        "Format your response as a JSON object containing:\n" +
+                        "- description: string\n" +
+                        "- ingredients: string[]\n" +
+                        "- tools: string[]\n" +
+                        "- techniques: string[]\n\n" +
+                        "Ensure the response is valid JSON. Do not include any trailing commas.",
+                } as ChatCompletionContentPartText,
+                frameContent,
+              ],
+            },
+          ],
+          max_tokens: 1000,
+          temperature: 0.7,
+        });
+
+        const content = response.choices[0].message.content || "{}";
+        let parsedAnalysis = JSON.parse(
+          content
+            .replace(/```json\n?/g, '')
+            .replace(/```\n?/g, '')
+            .replace(/,(\s*[}\]])/g, '$1')
+            .trim()
+        );
+
+        return {
+          timestamp: frameIndex * 5,
+          description: parsedAnalysis.description || "No description available",
+          detectedIngredients: Array.isArray(parsedAnalysis.ingredients) ? parsedAnalysis.ingredients : [],
+          detectedTools: Array.isArray(parsedAnalysis.tools) ? parsedAnalysis.tools : [],
+          detectedTechniques: Array.isArray(parsedAnalysis.techniques) ? parsedAnalysis.techniques : [],
+        };
+      });
+
+      // Wait for both transcription and frame analyses to complete
+      const [transcription, ...frameAnalyses] = await Promise.all([
+        transcriptionPromise,
+        ...frameAnalysesPromises
       ]);
 
       functions.logger.info("Frame analysis and transcription complete. Generating final analysis...");
@@ -400,79 +527,56 @@ export class VideoProcessorService {
       });
 
       // Create embeddings with detailed logging
-      functions.logger.info("Starting OpenAI embedding creation for summary");
-      const summaryEmbedding = await this.openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: summaryEmbeddingInput,
-      });
+      functions.logger.info("Starting parallel OpenAI embedding creation");
+      const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
+        this.openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: summaryEmbeddingInput,
+        }),
+        this.openai.embeddings.create({
+          model: "text-embedding-3-large",
+          input: analysis.transcription,
+        })
+      ]);
       
-      functions.logger.info("Raw OpenAI summary embedding response:", {
-        hasData: !!summaryEmbedding.data,
-        dataLength: summaryEmbedding.data?.length,
-        firstEmbedding: summaryEmbedding.data?.[0] ? {
-          hasEmbedding: !!summaryEmbedding.data[0].embedding,
-          embeddingLength: summaryEmbedding.data[0].embedding?.length,
-          embeddingType: typeof summaryEmbedding.data[0].embedding,
-          isArray: Array.isArray(summaryEmbedding.data[0].embedding),
-          firstFewValues: summaryEmbedding.data[0].embedding?.slice(0, 5),
-          hasNullOrUndefined: summaryEmbedding.data[0].embedding?.some(v => v === null || v === undefined),
-          hasNonFinite: summaryEmbedding.data[0].embedding?.some(v => !Number.isFinite(v))
-        } : null,
-        model: summaryEmbedding.model,
-        object: summaryEmbedding.object
-      });
-
-      functions.logger.info("Summary embedding created:", {
-        hasEmbedding: !!summaryEmbedding,
-        embeddingData: summaryEmbedding.data ? {
-          length: summaryEmbedding.data.length,
-          firstEmbeddingLength: summaryEmbedding.data[0]?.embedding?.length,
-          hasValidEmbedding: !!summaryEmbedding.data[0]?.embedding,
-          embeddingStats: summaryEmbedding.data[0]?.embedding ? {
+      functions.logger.info("Raw OpenAI embeddings response:", {
+        summary: {
+          hasData: !!summaryEmbedding.data,
+          dataLength: summaryEmbedding.data?.length,
+          firstEmbedding: summaryEmbedding.data?.[0] ? {
+            hasEmbedding: !!summaryEmbedding.data[0].embedding,
+            embeddingLength: summaryEmbedding.data[0].embedding?.length,
+            embeddingType: typeof summaryEmbedding.data[0].embedding,
             isArray: Array.isArray(summaryEmbedding.data[0].embedding),
-            hasNulls: summaryEmbedding.data[0].embedding.some(val => val === null),
-            firstFewValues: summaryEmbedding.data[0].embedding.slice(0, 5),
-            valueStats: {
-              min: Math.min(...summaryEmbedding.data[0].embedding),
-              max: Math.max(...summaryEmbedding.data[0].embedding),
-              hasInfinity: summaryEmbedding.data[0].embedding.some(val => !Number.isFinite(val))
-            }
-          } : null
-        } : null
+            firstFewValues: summaryEmbedding.data[0].embedding?.slice(0, 5),
+            hasNullOrUndefined: summaryEmbedding.data[0].embedding?.some(v => v === null || v === undefined),
+            hasNonFinite: summaryEmbedding.data[0].embedding?.some(v => !Number.isFinite(v))
+          } : null,
+          model: summaryEmbedding.model,
+          object: summaryEmbedding.object
+        },
+        transcription: {
+          hasData: !!transcriptionEmbedding.data,
+          dataLength: transcriptionEmbedding.data?.length,
+          firstEmbedding: transcriptionEmbedding.data?.[0] ? {
+            hasEmbedding: !!transcriptionEmbedding.data[0].embedding,
+            embeddingLength: transcriptionEmbedding.data[0].embedding?.length,
+            embeddingType: typeof transcriptionEmbedding.data[0].embedding,
+            isArray: Array.isArray(transcriptionEmbedding.data[0].embedding),
+            firstFewValues: transcriptionEmbedding.data[0].embedding?.slice(0, 5),
+            hasNullOrUndefined: transcriptionEmbedding.data[0].embedding?.some(v => v === null || v === undefined),
+            hasNonFinite: transcriptionEmbedding.data[0].embedding?.some(v => !Number.isFinite(v))
+          } : null,
+          model: transcriptionEmbedding.model,
+          object: transcriptionEmbedding.object
+        }
       });
 
-      // Validate summary embedding
+      // Validate embeddings
       if (!summaryEmbedding.data[0]?.embedding || 
           summaryEmbedding.data[0].embedding.some(val => val === null || !Number.isFinite(val))) {
         throw new Error("Invalid summary embedding values from OpenAI");
       }
-
-      functions.logger.info("Starting OpenAI embedding creation for transcription");
-      const transcriptionEmbedding = await this.openai.embeddings.create({
-        model: "text-embedding-3-large",
-        input: analysis.transcription,
-      });
-      
-      functions.logger.info("Transcription embedding created:", {
-        hasEmbedding: !!transcriptionEmbedding,
-        embeddingData: transcriptionEmbedding.data ? {
-          length: transcriptionEmbedding.data.length,
-          firstEmbeddingLength: transcriptionEmbedding.data[0]?.embedding?.length,
-          hasValidEmbedding: !!transcriptionEmbedding.data[0]?.embedding,
-          embeddingStats: transcriptionEmbedding.data[0]?.embedding ? {
-            isArray: Array.isArray(transcriptionEmbedding.data[0].embedding),
-            hasNulls: transcriptionEmbedding.data[0].embedding.some(val => val === null),
-            firstFewValues: transcriptionEmbedding.data[0].embedding.slice(0, 5),
-            valueStats: {
-              min: Math.min(...transcriptionEmbedding.data[0].embedding),
-              max: Math.max(...transcriptionEmbedding.data[0].embedding),
-              hasInfinity: transcriptionEmbedding.data[0].embedding.some(val => !Number.isFinite(val))
-            }
-          } : null
-        } : null
-      });
-
-      // Validate transcription embedding
       if (!transcriptionEmbedding.data[0]?.embedding || 
           transcriptionEmbedding.data[0].embedding.some(val => val === null || !Number.isFinite(val))) {
         throw new Error("Invalid transcription embedding values from OpenAI");
@@ -700,48 +804,55 @@ export class VideoProcessorService {
           fs.mkdirSync(framesDir, { recursive: true });
         }
 
-        // Process each frame individually for better reliability
-        let processedFrames = 0;
+        // Process all frames in parallel
         const expectedFiles: string[] = [];
+        let completedFrames = 0;
+        let hasError = false;
 
-        const processNextFrame = (index: number) => {
-          if (index >= totalFrames) {
-            functions.logger.info("All frames processed, starting verification");
-            verifyFrames();
-            return;
-          }
+        functions.logger.info(`Processing all ${totalFrames} frames in parallel`);
 
-          const timestamp = timestamps[index];
-          const outputPath = path.join(framesDir, `frame-${index + 1}.jpg`);
-          expectedFiles.push(outputPath);
+        // Create promises for all frames
+        const framePromises = timestamps.map((timestamp, frameIndex) => {
+          const outputPath = path.join(framesDir, `frame-${frameIndex + 1}.jpg`);
+          expectedFiles[frameIndex] = outputPath;
 
-          functions.logger.info(`Processing frame ${index + 1} at timestamp ${timestamp}s`);
+          functions.logger.info(`Processing frame ${frameIndex + 1} at timestamp ${timestamp}s`);
 
-          ffmpeg(videoPath)
-            .screenshots({
-              timestamps: [timestamp],
-              filename: `frame-${index + 1}.jpg`,
-              folder: framesDir,
-              size: "1280x720"
-            })
-            .on('end', () => {
-              processedFrames++;
-              functions.logger.info(`Frame ${index + 1} extracted successfully`);
-              processNextFrame(index + 1);
-            })
-            .on('error', (err: Error) => {
-              functions.logger.error(`Error extracting frame ${index + 1}:`, err);
-              reject(err);
-            });
-        };
+          return new Promise<void>((resolveFrame, rejectFrame) => {
+            ffmpeg(videoPath)
+              .screenshots({
+                timestamps: [timestamp],
+                filename: `frame-${frameIndex + 1}.jpg`,
+                folder: framesDir,
+                size: "1280x720"
+              })
+              .on('end', () => {
+                completedFrames++;
+                functions.logger.info(`Frame ${frameIndex + 1} extracted successfully (${completedFrames}/${totalFrames})`);
+                resolveFrame();
+              })
+              .on('error', (err: Error) => {
+                functions.logger.error(`Error extracting frame ${frameIndex + 1}:`, err);
+                rejectFrame(err);
+              });
+          });
+        });
+
+        // Process all frames in parallel
+        Promise.all(framePromises)
+          .then(async () => {
+            // Verify frames after all are complete
+            await verifyFrames();
+          })
+          .catch((error) => {
+            hasError = true;
+            reject(error);
+          });
 
         const verifyFrames = async () => {
           try {
             functions.logger.info(`Starting frame verification. Expected ${totalFrames} frames.`);
             
-            // Add a small delay to ensure filesystem has completed writing
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
             // Verify each frame exists and has content
             const fileChecks = await Promise.all(
               expectedFiles.map(async (framePath, index) => {
@@ -774,239 +885,59 @@ export class VideoProcessorService {
             reject(error);
           }
         };
-
-        // Start processing frames
-        processNextFrame(0);
       });
     });
   }
 
-  private async analyzeFrames(frameFiles: string[]): Promise<FrameAnalysis[]> {
+  private async transcribeAudio(audioPath: string): Promise<string> {
+    functions.logger.info("Starting audio transcription");
+    
     try {
-      // Verify we have exactly 12 frames before starting analysis
-      if (frameFiles.length !== 12) {
-        throw new Error(`Cannot analyze frames: Expected 12 frames but got ${frameFiles.length}`);
-      }
+      // Create a readable stream from the audio file
+      const audioStream = fs.createReadStream(audioPath);
       
-      functions.logger.info("Starting batch frame analysis");
+      functions.logger.info("Starting OpenAI transcription with streaming");
       
-      // Verify all frames exist and are readable before starting analysis
-      await Promise.all(
-        frameFiles.map(async (framePath) => {
-          try {
-            const stats = await fs.promises.stat(framePath);
-            if (stats.size === 0) {
-              throw new Error(`Frame file is empty: ${framePath}`);
-            }
-          } catch (error) {
-            functions.logger.error(`Frame verification failed for ${framePath}:`, error);
-            throw new Error(`Frame verification failed: ${framePath}`);
-          }
-        })
-      );
-      
-      functions.logger.info("All frames verified. Reading frame contents...");
-      
-      // Read all frames in parallel
-      const frameContents = await Promise.all(
-        frameFiles.map(async (framePath, index) => {
-          const imageBase64 = await fs.promises.readFile(framePath, { encoding: "base64" });
-          return {
-            index,
-            base64: imageBase64,
-          };
-        })
-      );
-      
-      functions.logger.info(`Successfully loaded ${frameContents.length} frames for analysis`);
+      // Create a File object from the stream
+      const file = new File([await this.streamToBuffer(audioStream)], "audio.mp3", { type: "audio/mp3" });
 
-      // Create a single message with all frames
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "user",
-            content: [
-              { 
-                type: "text", 
-                text: "Analyze these frames from a cooking video in sequence. " +
-                      "For each frame, identify:\n" +
-                      "1. Ingredients visible\n" +
-                      "2. Cooking tools being used\n" +
-                      "3. Cooking techniques being demonstrated\n" +
-                      "4. A description of what's happening\n\n" +
-                      "Format your response as a JSON array with each frame analysis containing:\n" +
-                      "- description: string\n" +
-                      "- ingredients: string[]\n" +
-                      "- tools: string[]\n" +
-                      "- techniques: string[]\n\n" +
-                      "Ensure the response is valid JSON. Do not include any trailing commas in arrays or objects. " +
-                      "Each frame analysis must be complete and properly formatted.",
-              } as ChatCompletionContentPartText,
-              ...frameContents.map(({ base64 }) => ({
-                type: "image_url" as const,
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64}`,
-                },
-              } as ChatCompletionContentPartImage)),
-            ],
-          },
-        ],
-        max_tokens: 4096,
-        temperature: 0.7,
+      // Transcribe audio
+      const response = await this.openai.audio.transcriptions.create({
+        file,
+        model: "whisper-1",
+        language: "en",
       });
 
-      functions.logger.info("OpenAI response details:", {
-        hasChoices: response.choices.length > 0,
-        firstChoice: response.choices[0] ? {
-          finishReason: response.choices[0].finish_reason,
-          hasContent: !!response.choices[0].message.content,
-          contentLength: response.choices[0].message.content?.length || 0,
-          contentPreview: response.choices[0].message.content?.substring(0, 100) || "NO CONTENT"
-        } : "NO CHOICES"
+      const transcription = response.text;
+      functions.logger.info("Transcription details:", {
+        hasResponse: !!response,
+        hasText: !!response.text,
+        transcriptionLength: transcription.length,
+        transcriptionPreview: transcription.substring(0, 100) + "...",
+        isEmpty: transcription.length === 0,
+        model: "whisper-1"
       });
 
-      const content = response.choices[0].message.content || "[]";
+      functions.logger.info("Transcription completed", {
+        transcriptionLength: transcription.length,
+        transcriptionPreview: transcription.substring(0, 100) + "..."
+      });
       
-      // Log the raw response for debugging
-      functions.logger.info("Raw GPT response:", content);
-      
-      let parsedAnalyses: Array<{
-        description: string;
-        ingredients: string[];
-        tools: string[];
-        techniques: string[];
-      }>;
-
-      try {
-        // Clean up the response string
-        const cleanedContent = content
-          .replace(/```json\n?/g, '')     // Remove ```json
-          .replace(/```\n?/g, '')         // Remove closing ```
-          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-          .trim();
-        
-        functions.logger.info("Cleaned content for parsing:", cleanedContent);
-        
-        // Try to parse the JSON
-        parsedAnalyses = JSON.parse(cleanedContent);
-        
-        // Validate the response structure
-        if (!Array.isArray(parsedAnalyses)) {
-          throw new Error("Response is not an array");
-        }
-
-        functions.logger.info(`Received ${parsedAnalyses.length} frame analyses from OpenAI`);
-
-        // Handle cases where we get more or fewer than 12 analyses
-        if (parsedAnalyses.length > 12) {
-          functions.logger.warn(`Got ${parsedAnalyses.length} analyses, trimming to 12`);
-          parsedAnalyses = parsedAnalyses.slice(0, 12);
-        } else if (parsedAnalyses.length < 12) {
-          functions.logger.warn(`Got only ${parsedAnalyses.length} analyses, padding to 12`);
-          const padding = Array(12 - parsedAnalyses.length).fill({
-            description: "No analysis available",
-            ingredients: [],
-            tools: [],
-            techniques: []
-          });
-          parsedAnalyses = [...parsedAnalyses, ...padding];
-        }
-
-        // Validate each analysis object and provide defaults if needed
-        parsedAnalyses = parsedAnalyses.map((analysis, index) => {
-          if (!analysis || typeof analysis !== 'object') {
-            functions.logger.warn(`Analysis ${index} is not an object, creating default structure`);
-            return {
-              description: "Invalid analysis",
-              ingredients: [],
-              tools: [],
-              techniques: []
-            };
-          }
-          
-          return {
-            description: typeof analysis.description === 'string' ? analysis.description : "No description available",
-            ingredients: Array.isArray(analysis.ingredients) ? analysis.ingredients : [],
-            tools: Array.isArray(analysis.tools) ? analysis.tools : [],
-            techniques: Array.isArray(analysis.techniques) ? analysis.techniques : []
-          };
-        });
-
-      } catch (error) {
-        functions.logger.error("JSON parsing error:", error);
-        functions.logger.error("Failed content:", content);
-        throw new Error(`Failed to parse frame analysis response: ${error.message}`);
-      }
-
-      // Map the parsed analyses to our FrameAnalysis type
-      return parsedAnalyses.map((analysis, index) => ({
-        timestamp: index * 5,
-        description: analysis.description,
-        detectedIngredients: analysis.ingredients,
-        detectedTools: analysis.tools,
-        detectedTechniques: analysis.techniques,
-      }));
-
+      return transcription;
     } catch (error) {
-      functions.logger.error("Error in batch frame analysis:", error);
+      functions.logger.error("Error in transcribeAudio:", error);
       throw error;
     }
   }
 
-  private async transcribeAudio(videoPath: string): Promise<string> {
-    const audioPath = path.join(os.tmpdir(), "audio.mp3");
-    
-    functions.logger.info("Starting audio extraction for transcription");
-    
-    // Extract audio from video
-    await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .toFormat("mp3")
-        .on("end", () => {
-          functions.logger.info("Audio extraction completed successfully");
-          resolve(null);
-        })
-        .on("error", (err) => {
-          functions.logger.error("Error extracting audio:", err);
-          reject(err);
-        })
-        .save(audioPath);
+  // Helper function to convert stream to buffer
+  private async streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('error', reject);
     });
-
-    functions.logger.info("Reading audio file for transcription");
-    // Create a File-like object for the audio file
-    const audioFile = await fs.promises.readFile(audioPath);
-    const audioBlob = new Blob([audioFile], { type: "audio/mp3" });
-    const file = new File([audioBlob], "audio.mp3", { type: "audio/mp3" });
-
-    functions.logger.info("Starting OpenAI transcription");
-    // Transcribe audio
-    const response = await this.openai.audio.transcriptions.create({
-      file,
-      model: "whisper-1",
-      language: "en",
-    });
-
-    const transcription = response.text;
-    functions.logger.info("Transcription details:", {
-      hasResponse: !!response,
-      hasText: !!response.text,
-      transcriptionLength: transcription.length,
-      transcriptionPreview: transcription.substring(0, 100) + "...",
-      isEmpty: transcription.length === 0,
-      model: "whisper-1"
-    });
-
-    functions.logger.info("Transcription completed", {
-      transcriptionLength: transcription.length,
-      transcriptionPreview: transcription.substring(0, 100) + "..."
-    });
-
-    await fs.promises.unlink(audioPath);
-    functions.logger.info("Cleaned up temporary audio file");
-    
-    return transcription;
   }
 
   private async generateAnalysis(
