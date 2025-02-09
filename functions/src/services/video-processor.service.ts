@@ -1280,9 +1280,9 @@ export class VideoProcessorService {
     functions.logger.info("Starting steps extraction with text length:", text.length);
     
     // First try to match everything between STEPS: and the next section
-    const stepsRegex = /STEPS:[\s\S]*?(?=\n\s*[A-Z]+:|$)/i;
+    const stepsRegex = /STEPS:\s*([\s\S]*?)(?=\n\s*[A-Z]+:|$)/i;
     // If that fails, match everything after STEPS: to the end
-    const fallbackRegex = /STEPS:[\s\S]*$/i;
+    const fallbackRegex = /STEPS:\s*([\s\S]*$)/i;
     
     let match = text.match(stepsRegex) || text.match(fallbackRegex);
     
@@ -1304,6 +1304,7 @@ export class VideoProcessorService {
       return [];
     }
     
+    // Split by newline and process each line
     const lines = stepsContent
       .split('\n')
       .map(line => line.trim())
@@ -1311,13 +1312,14 @@ export class VideoProcessorService {
 
     functions.logger.info("Steps before processing:", {
       totalLines: lines.length,
-      lines: lines
+      lines: lines,
+      rawContent: stepsContent
     });
     
     const processedLines = lines
       .map(line => {
-        // Preserve the number but clean up the rest of the line
-        const numberMatch = line.match(/^(\d+)\.\s*(.+)$/);
+        // Match numbered steps with better regex
+        const numberMatch = line.match(/^(\d+)\.\s*(.+?)(?:\s*\([^)]*\))?\s*$/);
         if (!numberMatch) {
           functions.logger.warn("Line doesn't match expected format:", line);
           return null;
@@ -1331,7 +1333,9 @@ export class VideoProcessorService {
 
     functions.logger.info("Final processed steps:", {
       totalSteps: processedLines.length,
-      steps: processedLines
+      steps: processedLines,
+      firstStep: processedLines[0],
+      lastStep: processedLines[processedLines.length - 1]
     });
     
     return processedLines;
