@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { ChatCompletionContentPartImage, ChatCompletionContentPartText } from "openai/resources/chat/completions";
 import { PineconeService } from "../services/pinecone.service";
 import * as admin from "firebase-admin";
+import { VideoMetadata } from "../types";
 
 // Add type declaration for fluent-ffmpeg
 declare module "fluent-ffmpeg" {
@@ -142,78 +143,471 @@ export class VideoProcessorService {
       // Store vectors in Pinecone
       const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
       
-      functions.logger.info("Preparing vectors for Pinecone storage:", {
-        summary: {
-          length: analysis.summary.length,
-          content: analysis.summary.substring(0, 100) + "...",
-          hasContent: analysis.summary.length > 0
-        },
-        transcription: {
-          length: analysis.transcription.length,
-          preview: analysis.transcription.substring(0, 100) + "...",
-          hasContent: analysis.transcription.length > 0
-        },
-        ingredients: analysis.ingredients.length,
-        tools: analysis.tools.length,
-        techniques: analysis.techniques.length,
-        steps: analysis.steps.length
-      });
-      
-      console.log("Storing vectors in Pinecone", { videoId });
-      
-      await pineconeService.upsert([
-        {
-          id: `${videoId}_summary`,
-          values: await this.openai.embeddings.create({
-            model: "text-embedding-3-large",
-            input: [
-              analysis.summary,
-              analysis.ingredients.join(" "),
-              analysis.tools.join(" "),
-              analysis.techniques.join(" "),
-            ].join(" "),
-          }).then(embedding => embedding.data[0].embedding),
-          metadata: {
+      // Constants for Pinecone limits
+      const PINECONE_METADATA_SIZE_LIMIT = 40 * 1024; // 40KB per record
+      const PINECONE_METADATA_FIELD_LIMIT = 32 * 1024; // 32KB per field
+
+      // Validate and truncate metadata if needed
+      const validateMetadata = (text: string, maxLength: number = PINECONE_METADATA_FIELD_LIMIT): string => {
+        if (!text) return "";
+        return text.length > maxLength ? text.substring(0, maxLength) : text;
+      };
+
+      // Prepare metadata with strict validation
+      const summaryMetadata: VideoMetadata = {
             videoId,
             type: "summary",
-            summary: analysis.summary,
-            ingredients: analysis.ingredients,
-            tools: analysis.tools,
-            techniques: analysis.techniques,
-            steps: analysis.steps,
+        summary: validateMetadata(analysis.summary),
+        ingredients: analysis.ingredients.slice(0, 100),
+        tools: analysis.tools.slice(0, 50),
+        techniques: analysis.techniques.slice(0, 50),
+        steps: analysis.steps.slice(0, 100),
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
-            tags: videoData.tags || [],
+        tags: (videoData.tags || []).slice(0, 50),
             version: 1,
             contentLength: analysis.summary.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
-          },
+        searchableText: validateMetadata([
+          analysis.summary,
+          analysis.ingredients.join(" "),
+          analysis.tools.join(" "),
+          analysis.techniques.join(" ")
+        ].join(" ").toLowerCase())
+      };
+
+      // Add initial state validation
+      functions.logger.info("Initial summary metadata state:", {
+        rawAnalysis: {
+          summaryLength: analysis.summary.length,
+          summaryContent: analysis.summary.substring(0, 100),
+          hasContent: !!analysis.summary
         },
-        {
-          id: `${videoId}_transcription`,
-          values: await this.openai.embeddings.create({
-            model: "text-embedding-3-large",
-            input: analysis.transcription,
-          }).then(embedding => embedding.data[0].embedding),
+        validatedFields: {
+          summary: {
+            value: validateMetadata(analysis.summary),
+            length: validateMetadata(analysis.summary).length,
+            isString: typeof validateMetadata(analysis.summary) === 'string'
+          },
+          searchableText: {
+            value: validateMetadata([
+              analysis.summary,
+              analysis.ingredients.join(" "),
+              analysis.tools.join(" "),
+              analysis.techniques.join(" ")
+            ].join(" ").toLowerCase()).substring(0, 100),
+            length: validateMetadata([
+              analysis.summary,
+              analysis.ingredients.join(" "),
+              analysis.tools.join(" "),
+              analysis.techniques.join(" ")
+            ].join(" ").toLowerCase()).length,
+            isString: typeof validateMetadata([
+              analysis.summary,
+              analysis.ingredients.join(" "),
+              analysis.tools.join(" "),
+              analysis.techniques.join(" ")
+            ].join(" ").toLowerCase()) === 'string'
+          }
+        },
           metadata: {
+          hasFields: {
+            summary: 'summary' in summaryMetadata,
+            searchableText: 'searchableText' in summaryMetadata
+          },
+          fieldTypes: {
+            summary: typeof summaryMetadata.summary,
+            searchableText: typeof summaryMetadata.searchableText
+          },
+          lengths: {
+            summary: summaryMetadata.summary?.length,
+            searchableText: summaryMetadata.searchableText?.length
+          }
+        }
+      });
+
+      const transcriptionMetadata: VideoMetadata = {
             videoId,
             type: "transcription",
-            transcription: analysis.transcription,
+        transcription: validateMetadata(analysis.transcription),
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
-            tags: videoData.tags || [],
+        tags: (videoData.tags || []).slice(0, 50),
             version: 1,
             contentLength: analysis.transcription.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
-          },
+        searchableText: validateMetadata(analysis.transcription.toLowerCase())
+      };
+
+      // Add detailed validation logging for transcription metadata
+      functions.logger.info("Transcription metadata validation:", {
+        original: {
+          transcriptionLength: analysis.transcription.length,
+          transcriptionContent: analysis.transcription.substring(0, 100),
+          searchableTextLength: analysis.transcription.toLowerCase().length
         },
-      ]);
+        metadata: {
+          transcriptionLength: transcriptionMetadata.transcription?.length,
+          transcriptionContent: transcriptionMetadata.transcription?.substring(0, 100),
+          searchableTextLength: transcriptionMetadata.searchableText?.length,
+          allFields: Object.keys(transcriptionMetadata),
+          validation: {
+            hasTranscription: !!transcriptionMetadata.transcription,
+            hasSearchableText: !!transcriptionMetadata.searchableText,
+            transcriptionMatches: transcriptionMetadata.transcription === validateMetadata(analysis.transcription),
+            contentPreserved: transcriptionMetadata.transcription?.length > 0 && transcriptionMetadata.searchableText?.length > 0
+          }
+        }
+      });
+
+      // Validate total metadata size
+      const validateTotalMetadataSize = (metadata: VideoMetadata): VideoMetadata => {
+        const size = JSON.stringify(metadata).length;
+        
+        // Log initial state
+        functions.logger.info("Starting metadata size validation:", {
+          beforeValidation: {
+            totalSize: size,
+            type: metadata.type,
+            fields: Object.keys(metadata),
+            contentLengths: {
+              summary: metadata.type === 'summary' ? metadata.summary?.length : undefined,
+              transcription: metadata.type === 'transcription' ? metadata.transcription?.length : undefined,
+              searchableText: metadata.searchableText?.length
+            },
+            contentExists: {
+              summary: metadata.type === 'summary' ? 'summary' in metadata : undefined,
+              transcription: metadata.type === 'transcription' ? 'transcription' in metadata : undefined,
+              searchableText: 'searchableText' in metadata
+            }
+          }
+        });
+
+        // Always create a validated copy to ensure consistent handling
+        const validatedMetadata = JSON.parse(JSON.stringify(metadata)) as VideoMetadata;
+        
+        // Validate required fields exist
+        if (validatedMetadata.type === 'summary') {
+          if (!('summary' in validatedMetadata)) {
+            throw new Error('Summary field missing in metadata');
+          }
+          if (typeof validatedMetadata.summary !== 'string') {
+            throw new Error('Summary field is not a string');
+          }
+        } else {
+          if (!('transcription' in validatedMetadata)) {
+            throw new Error('Transcription field missing in metadata');
+          }
+          if (typeof validatedMetadata.transcription !== 'string') {
+            throw new Error('Transcription field is not a string');
+          }
+        }
+        
+        if (!('searchableText' in validatedMetadata)) {
+          throw new Error('SearchableText field missing in metadata');
+        }
+        if (typeof validatedMetadata.searchableText !== 'string') {
+          throw new Error('SearchableText field is not a string');
+        }
+
+        // Only truncate if size exceeds limit
+        if (size > PINECONE_METADATA_SIZE_LIMIT) {
+          functions.logger.warn(`Metadata size (${size} bytes) exceeds limit (${PINECONE_METADATA_SIZE_LIMIT} bytes). Truncating fields.`);
+          
+          if (validatedMetadata.type === 'summary') {
+            validatedMetadata.summary = validateMetadata(validatedMetadata.summary, PINECONE_METADATA_SIZE_LIMIT / 4);
+          } else {
+            validatedMetadata.transcription = validateMetadata(validatedMetadata.transcription, PINECONE_METADATA_SIZE_LIMIT / 2);
+          }
+          validatedMetadata.searchableText = validateMetadata(validatedMetadata.searchableText, PINECONE_METADATA_SIZE_LIMIT / 2);
+        }
+
+        // Verify content after validation
+        const finalSize = JSON.stringify(validatedMetadata).length;
+        functions.logger.info("After size validation:", {
+          afterValidation: {
+            totalSize: finalSize,
+            type: validatedMetadata.type,
+            fields: Object.keys(validatedMetadata),
+            contentLengths: {
+              summary: validatedMetadata.type === 'summary' ? validatedMetadata.summary.length : undefined,
+              transcription: validatedMetadata.type === 'transcription' ? validatedMetadata.transcription.length : undefined,
+              searchableText: validatedMetadata.searchableText.length
+            },
+            validation: {
+              sizeReduced: finalSize < size,
+              preservedFields: Object.keys(metadata).every(key => key in validatedMetadata),
+              contentPreserved: validatedMetadata.type === 'summary' ? 
+                validatedMetadata.summary.length > 0 : 
+                validatedMetadata.transcription.length > 0,
+              searchableTextPreserved: validatedMetadata.searchableText.length > 0
+            }
+          }
+        });
+
+        return validatedMetadata;
+      };
+
+      const validatedSummaryMetadata = validateTotalMetadataSize(summaryMetadata);
+      const validatedTranscriptionMetadata = validateTotalMetadataSize(transcriptionMetadata);
+
+      functions.logger.info("Validated metadata sizes:", {
+        summary: {
+          original: analysis.summary.length,
+          validated: validatedSummaryMetadata.summary?.length,
+          totalSize: JSON.stringify(validatedSummaryMetadata).length,
+          wasValidated: analysis.summary.length !== validatedSummaryMetadata.summary?.length
+        },
+        transcription: {
+          original: analysis.transcription.length,
+          validated: validatedTranscriptionMetadata.transcription?.length,
+          totalSize: JSON.stringify(validatedTranscriptionMetadata).length,
+          wasValidated: analysis.transcription.length !== validatedTranscriptionMetadata.transcription?.length
+        }
+      });
+
+      // Add detailed logging before Pinecone storage
+      functions.logger.info("Preparing data for Pinecone storage:", {
+        analysisDetails: {
+          summaryLength: analysis.summary.length,
+          summaryContent: analysis.summary.substring(0, 100) + "...",
+          transcriptionLength: analysis.transcription.length,
+          transcriptionContent: analysis.transcription.substring(0, 100) + "...",
+          hasValidSummary: analysis.summary.length > 0,
+          hasValidTranscription: analysis.transcription.length > 0
+        }
+      });
+
+      // Add logging for embedding creation
+      const summaryEmbeddingInput = [
+        analysis.summary,
+        analysis.ingredients.join(" "),
+        analysis.tools.join(" "),
+        analysis.techniques.join(" "),
+      ].join(" ");
+
+      functions.logger.info("Creating embeddings:", {
+        summaryEmbeddingLength: summaryEmbeddingInput.length,
+        summaryEmbeddingPreview: summaryEmbeddingInput.substring(0, 100) + "...",
+        transcriptionEmbeddingLength: analysis.transcription.length,
+        transcriptionEmbeddingPreview: analysis.transcription.substring(0, 100) + "..."
+      });
+
+      // Create embeddings with detailed logging
+      functions.logger.info("Starting OpenAI embedding creation for summary");
+      const summaryEmbedding = await this.openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: summaryEmbeddingInput,
+      });
+      
+      functions.logger.info("Raw OpenAI summary embedding response:", {
+        hasData: !!summaryEmbedding.data,
+        dataLength: summaryEmbedding.data?.length,
+        firstEmbedding: summaryEmbedding.data?.[0] ? {
+          hasEmbedding: !!summaryEmbedding.data[0].embedding,
+          embeddingLength: summaryEmbedding.data[0].embedding?.length,
+          embeddingType: typeof summaryEmbedding.data[0].embedding,
+          isArray: Array.isArray(summaryEmbedding.data[0].embedding),
+          firstFewValues: summaryEmbedding.data[0].embedding?.slice(0, 5),
+          hasNullOrUndefined: summaryEmbedding.data[0].embedding?.some(v => v === null || v === undefined),
+          hasNonFinite: summaryEmbedding.data[0].embedding?.some(v => !Number.isFinite(v))
+        } : null,
+        model: summaryEmbedding.model,
+        object: summaryEmbedding.object
+      });
+
+      functions.logger.info("Summary embedding created:", {
+        hasEmbedding: !!summaryEmbedding,
+        embeddingData: summaryEmbedding.data ? {
+          length: summaryEmbedding.data.length,
+          firstEmbeddingLength: summaryEmbedding.data[0]?.embedding?.length,
+          hasValidEmbedding: !!summaryEmbedding.data[0]?.embedding,
+          embeddingStats: summaryEmbedding.data[0]?.embedding ? {
+            isArray: Array.isArray(summaryEmbedding.data[0].embedding),
+            hasNulls: summaryEmbedding.data[0].embedding.some(val => val === null),
+            firstFewValues: summaryEmbedding.data[0].embedding.slice(0, 5),
+            valueStats: {
+              min: Math.min(...summaryEmbedding.data[0].embedding),
+              max: Math.max(...summaryEmbedding.data[0].embedding),
+              hasInfinity: summaryEmbedding.data[0].embedding.some(val => !Number.isFinite(val))
+            }
+          } : null
+        } : null
+      });
+
+      // Validate summary embedding
+      if (!summaryEmbedding.data[0]?.embedding || 
+          summaryEmbedding.data[0].embedding.some(val => val === null || !Number.isFinite(val))) {
+        throw new Error("Invalid summary embedding values from OpenAI");
+      }
+
+      functions.logger.info("Starting OpenAI embedding creation for transcription");
+      const transcriptionEmbedding = await this.openai.embeddings.create({
+        model: "text-embedding-3-large",
+        input: analysis.transcription,
+      });
+      
+      functions.logger.info("Transcription embedding created:", {
+        hasEmbedding: !!transcriptionEmbedding,
+        embeddingData: transcriptionEmbedding.data ? {
+          length: transcriptionEmbedding.data.length,
+          firstEmbeddingLength: transcriptionEmbedding.data[0]?.embedding?.length,
+          hasValidEmbedding: !!transcriptionEmbedding.data[0]?.embedding,
+          embeddingStats: transcriptionEmbedding.data[0]?.embedding ? {
+            isArray: Array.isArray(transcriptionEmbedding.data[0].embedding),
+            hasNulls: transcriptionEmbedding.data[0].embedding.some(val => val === null),
+            firstFewValues: transcriptionEmbedding.data[0].embedding.slice(0, 5),
+            valueStats: {
+              min: Math.min(...transcriptionEmbedding.data[0].embedding),
+              max: Math.max(...transcriptionEmbedding.data[0].embedding),
+              hasInfinity: transcriptionEmbedding.data[0].embedding.some(val => !Number.isFinite(val))
+            }
+          } : null
+        } : null
+      });
+
+      // Validate transcription embedding
+      if (!transcriptionEmbedding.data[0]?.embedding || 
+          transcriptionEmbedding.data[0].embedding.some(val => val === null || !Number.isFinite(val))) {
+        throw new Error("Invalid transcription embedding values from OpenAI");
+      }
+
+      // Prepare vectors with validation
+      const vectors = [
+        {
+          id: `${videoId}_summary`,
+          values: summaryEmbedding.data[0].embedding,
+          metadata: validatedSummaryMetadata,
+        },
+        {
+          id: `${videoId}_transcription`,
+          values: transcriptionEmbedding.data[0].embedding,
+          metadata: validatedTranscriptionMetadata,
+        },
+      ];
+
+      // Add pre-vector validation
+      functions.logger.info("Pre-vector metadata validation:", {
+        summary: {
+          metadata: validatedSummaryMetadata,
+          validation: {
+            type: validatedSummaryMetadata.type,
+            hasSummaryField: 'summary' in validatedSummaryMetadata,
+            summaryExists: !!validatedSummaryMetadata.summary,
+            summaryLength: validatedSummaryMetadata.summary?.length,
+            hasSearchableText: 'searchableText' in validatedSummaryMetadata,
+            searchableTextExists: !!validatedSummaryMetadata.searchableText,
+            searchableTextLength: validatedSummaryMetadata.searchableText?.length,
+            allFields: Object.keys(validatedSummaryMetadata),
+            contentPreview: {
+              summary: validatedSummaryMetadata.summary?.substring(0, 100),
+              searchableText: validatedSummaryMetadata.searchableText?.substring(0, 100)
+            }
+          }
+        },
+        transcription: {
+          metadata: validatedTranscriptionMetadata,
+          validation: {
+            type: validatedTranscriptionMetadata.type,
+            hasTranscriptionField: 'transcription' in validatedTranscriptionMetadata,
+            transcriptionExists: !!validatedTranscriptionMetadata.transcription,
+            transcriptionLength: validatedTranscriptionMetadata.transcription?.length,
+            hasSearchableText: 'searchableText' in validatedTranscriptionMetadata,
+            searchableTextExists: !!validatedTranscriptionMetadata.searchableText,
+            searchableTextLength: validatedTranscriptionMetadata.searchableText?.length,
+            allFields: Object.keys(validatedTranscriptionMetadata),
+            contentPreview: {
+              transcription: validatedTranscriptionMetadata.transcription?.substring(0, 100),
+              searchableText: validatedTranscriptionMetadata.searchableText?.substring(0, 100)
+            }
+          }
+        }
+      });
+
+      // Validate metadata before creating vectors
+      if (!validatedSummaryMetadata.summary || !validatedSummaryMetadata.searchableText) {
+        throw new Error("Summary metadata is missing required fields before vector creation");
+      }
+      if (!validatedTranscriptionMetadata.transcription || !validatedTranscriptionMetadata.searchableText) {
+        throw new Error("Transcription metadata is missing required fields before vector creation");
+      }
+
+      functions.logger.info("Prepared vectors for Pinecone:", {
+        vectorCount: vectors.length,
+        vectors: vectors.map(v => ({
+          id: v.id,
+          hasValues: !!v.values,
+          valuesLength: v.values?.length,
+          metadataKeys: Object.keys(v.metadata),
+          metadataSize: JSON.stringify(v.metadata).length,
+          metadataContentLengths: {
+            summary: v.metadata.type === 'summary' ? (v.metadata as any).summary?.length : undefined,
+            transcription: v.metadata.type === 'transcription' ? (v.metadata as any).transcription?.length : undefined,
+            searchableText: (v.metadata as any).searchableText?.length
+          }
+        }))
+      });
+
+      // Add validation before upsert
+      const validatedVectors = vectors.map(vector => {
+        functions.logger.info(`Validating vector ${vector.id}:`, {
+          hasValues: !!vector.values,
+          valuesLength: vector.values?.length,
+          metadata: {
+            type: vector.metadata.type,
+            contentLength: vector.metadata.contentLength,
+            hasValidContent: vector.metadata.type === 'summary' 
+              ? !!(vector.metadata as any).summary?.length 
+              : !!(vector.metadata as any).transcription?.length
+          }
+        });
+        return vector;
+      });
+
+      console.log("Storing vectors in Pinecone", { videoId });
+      
+      await pineconeService.upsert(validatedVectors);
+
+      // After vector creation
+      functions.logger.info("Vectors created:", {
+        summary: {
+          id: vectors[0].id,
+          hasEmbedding: !!vectors[0].values,
+          embeddingLength: vectors[0].values?.length,
+          metadata: {
+            type: vectors[0].metadata.type,
+            fields: Object.keys(vectors[0].metadata),
+            contentLengths: {
+              summary: vectors[0].metadata.type === 'summary' ? (vectors[0].metadata as any).summary?.length : undefined,
+              searchableText: (vectors[0].metadata as any).searchableText?.length
+            },
+            fullContent: vectors[0].metadata.type === 'summary' ? 
+              (vectors[0].metadata as any).summary?.substring(0, 100) + "..." : undefined
+          }
+        },
+        transcription: {
+          id: vectors[1].id,
+          hasEmbedding: !!vectors[1].values,
+          embeddingLength: vectors[1].values?.length,
+          metadata: {
+            type: vectors[1].metadata.type,
+            fields: Object.keys(vectors[1].metadata),
+            contentLengths: {
+              transcription: vectors[1].metadata.type === 'transcription' ? 
+                (vectors[1].metadata as any).transcription?.length : undefined,
+              searchableText: (vectors[1].metadata as any).searchableText?.length
+            },
+            fullContent: vectors[1].metadata.type === 'transcription' ? 
+              (vectors[1].metadata as any).transcription?.substring(0, 100) + "..." : undefined
+          }
+        }
+      });
 
       return analysis;
     } catch (error) {
@@ -622,7 +1016,8 @@ export class VideoProcessorService {
     functions.logger.info("Starting generateAnalysis with:", {
       framesCount: frameAnalyses.length,
       transcriptionLength: transcriptionText.length,
-      transcriptionPreview: transcriptionText.substring(0, 100) + "..."
+      transcriptionPreview: transcriptionText.substring(0, 100) + "...",
+      hasValidTranscription: transcriptionText.length > 0
     });
 
     const prompt = `
@@ -733,16 +1128,26 @@ export class VideoProcessorService {
       steps: analysis.steps,
     };
 
-    // Log the complete parsed analysis
-    functions.logger.info("Complete parsed video analysis:", {
+    // Add validation logging
+    functions.logger.info("Generated final analysis:", {
+      transcriptionSource: {
+        originalLength: transcriptionText.length,
+        finalLength: finalAnalysis.transcription.length,
+        isPreserved: transcriptionText === finalAnalysis.transcription
+      },
+      analysisComponents: {
       summaryLength: finalAnalysis.summary.length,
-      summaryContent: finalAnalysis.summary,
-      transcriptionLength: finalAnalysis.transcription.length,
-      transcriptionPreview: finalAnalysis.transcription.substring(0, 100) + "...",
       ingredientsCount: finalAnalysis.ingredients.length,
       toolsCount: finalAnalysis.tools.length,
       techniquesCount: finalAnalysis.techniques.length,
       stepsCount: finalAnalysis.steps.length
+      },
+      validation: {
+        hasTranscription: finalAnalysis.transcription.length > 0,
+        hasSummary: finalAnalysis.summary.length > 0,
+        transcriptionPreview: finalAnalysis.transcription.substring(0, 100) + "...",
+        summaryPreview: finalAnalysis.summary.substring(0, 100) + "..."
+      }
     });
 
     return finalAnalysis;
@@ -875,9 +1280,9 @@ export class VideoProcessorService {
     functions.logger.info("Starting steps extraction with text length:", text.length);
     
     // First try to match everything between STEPS: and the next section
-    const stepsRegex = /STEPS:\s*([\s\S]*?)(?=\n\s*[A-Z]+:|$)/i;
+    const stepsRegex = /STEPS:[\s\S]*?(?=\n\s*[A-Z]+:|$)/i;
     // If that fails, match everything after STEPS: to the end
-    const fallbackRegex = /STEPS:\s*([\s\S]*$)/i;
+    const fallbackRegex = /STEPS:[\s\S]*$/i;
     
     let match = text.match(stepsRegex) || text.match(fallbackRegex);
     

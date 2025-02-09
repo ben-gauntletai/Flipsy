@@ -54,17 +54,261 @@ export class PineconeService {
   }
 
   async upsert(vectors: VideoVector[]): Promise<void> {
+    // Initial validation of vectors
+    functions.logger.info("Validating vectors before Pinecone upsert:", {
+      vectorCount: vectors.length,
+      vectors: vectors.map(v => ({
+        id: v.id,
+        hasValues: !!v.values,
+        valuesLength: v.values?.length,
+        embeddingStats: v.values ? {
+          isArray: Array.isArray(v.values),
+          hasNulls: v.values.some(val => val === null),
+          firstFewValues: v.values.slice(0, 5),
+          valueStats: {
+            min: Math.min(...v.values),
+            max: Math.max(...v.values),
+            hasInfinity: v.values.some(val => !Number.isFinite(val))
+          }
+        } : null,
+        metadata: {
+          type: v.metadata.type,
+          fields: Object.keys(v.metadata),
+          contentFields: {
+            summary: v.metadata.type === 'summary' ? {
+              exists: Object.keys(v.metadata).includes('summary'),
+              length: (v.metadata as any).summary?.length,
+              content: (v.metadata as any).summary?.substring(0, 100) + "..."
+            } : undefined,
+            transcription: v.metadata.type === 'transcription' ? {
+              exists: Object.keys(v.metadata).includes('transcription'),
+              length: (v.metadata as any).transcription?.length,
+              content: (v.metadata as any).transcription?.substring(0, 100) + "..."
+            } : undefined,
+            searchableText: {
+              exists: Object.keys(v.metadata).includes('searchableText'),
+              length: (v.metadata as any).searchableText?.length
+            }
+          }
+        }
+      }))
+    });
+
     try {
       const index = this.pinecone.index(this.INDEX_NAME);
-      await index.upsert(vectors.map((vector) => ({
-        id: vector.id,
-        values: vector.values,
-        metadata: vector.metadata,
-      })));
-      functions.logger.info(`Successfully upserted ${vectors.length} vectors`);
+
+      // Create a deep copy of vectors to ensure we don't lose data
+      const pineconeVectors = vectors.map(vector => {
+        // Log the exact state of the original vector
+        functions.logger.info(`Original vector state for ${vector.id}:`, {
+          metadata: {
+            type: vector.metadata.type,
+            fields: Object.keys(vector.metadata),
+            propertyDescriptors: Object.getOwnPropertyDescriptor(vector.metadata, 'summary'),
+            fieldTypes: {
+              summary: typeof (vector.metadata as any).summary,
+              searchableText: typeof (vector.metadata as any).searchableText
+            },
+            fieldValues: {
+              summary: (vector.metadata as any).summary?.substring(0, 100),
+              searchableText: (vector.metadata as any).searchableText?.substring(0, 100)
+            },
+            fieldLengths: {
+              summary: (vector.metadata as any).summary?.length,
+              searchableText: (vector.metadata as any).searchableText?.length
+            }
+          }
+        });
+
+        // Create a structured copy to ensure we don't lose data
+        const vectorCopy = {
+          id: vector.id,
+          values: [...vector.values],
+          metadata: {
+            ...vector.metadata,
+            // Explicitly copy required fields for summary type
+            ...(vector.metadata.type === 'summary' && {
+              summary: (vector.metadata as any).summary,
+              searchableText: (vector.metadata as any).searchableText
+            }),
+            // Explicitly copy required fields for transcription type
+            ...(vector.metadata.type === 'transcription' && {
+              transcription: (vector.metadata as any).transcription,
+              searchableText: (vector.metadata as any).searchableText
+            })
+          }
+        };
+
+        // Log the state after copy
+        functions.logger.info(`Copied vector state for ${vector.id}:`, {
+          metadata: {
+            type: vectorCopy.metadata.type,
+            fields: Object.keys(vectorCopy.metadata),
+            propertyDescriptors: Object.getOwnPropertyDescriptor(vectorCopy.metadata, 'summary'),
+            fieldTypes: {
+              summary: typeof (vectorCopy.metadata as any).summary,
+              searchableText: typeof (vectorCopy.metadata as any).searchableText
+            },
+            fieldValues: {
+              summary: (vectorCopy.metadata as any).summary?.substring(0, 100),
+              searchableText: (vectorCopy.metadata as any).searchableText?.substring(0, 100)
+            },
+            fieldLengths: {
+              summary: (vectorCopy.metadata as any).summary?.length,
+              searchableText: (vectorCopy.metadata as any).searchableText?.length
+            }
+          }
+        });
+
+        // Validate the copy
+        if (vectorCopy.metadata.type === 'summary') {
+          const originalSummary = (vector.metadata as any).summary;
+          const copiedSummary = (vectorCopy.metadata as any).summary;
+          const originalSearchableText = (vector.metadata as any).searchableText;
+          const copiedSearchableText = (vectorCopy.metadata as any).searchableText;
+
+          functions.logger.info(`Validation comparison for ${vector.id}:`, {
+            summary: {
+              original: {
+                exists: 'summary' in vector.metadata,
+                type: typeof originalSummary,
+                length: originalSummary?.length,
+                value: originalSummary?.substring(0, 100)
+              },
+              copied: {
+                exists: 'summary' in vectorCopy.metadata,
+                type: typeof copiedSummary,
+                length: copiedSummary?.length,
+                value: copiedSummary?.substring(0, 100)
+              },
+              matches: originalSummary === copiedSummary
+            },
+            searchableText: {
+              original: {
+                exists: 'searchableText' in vector.metadata,
+                type: typeof originalSearchableText,
+                length: originalSearchableText?.length,
+                value: originalSearchableText?.substring(0, 100)
+              },
+              copied: {
+                exists: 'searchableText' in vectorCopy.metadata,
+                type: typeof copiedSearchableText,
+                length: copiedSearchableText?.length,
+                value: copiedSearchableText?.substring(0, 100)
+              },
+              matches: originalSearchableText === copiedSearchableText
+            }
+          });
+
+          if (!('summary' in vectorCopy.metadata) || !('searchableText' in vectorCopy.metadata)) {
+            throw new Error(`Fields missing after copy in ${vector.id}. Summary: ${'summary' in vectorCopy.metadata}, SearchableText: ${'searchableText' in vectorCopy.metadata}`);
+          }
+
+          if (typeof vectorCopy.metadata.summary !== 'string' || typeof vectorCopy.metadata.searchableText !== 'string') {
+            throw new Error(`Invalid field types after copy in ${vector.id}. Summary: ${typeof vectorCopy.metadata.summary}, SearchableText: ${typeof vectorCopy.metadata.searchableText}`);
+          }
+
+          if (originalSummary !== copiedSummary || originalSearchableText !== copiedSearchableText) {
+            throw new Error(`Content changed during copy for ${vector.id}`);
+          }
+        }
+        
+        return vectorCopy;
+      });
+
+      // Final validation before upsert
+      functions.logger.info("Final vector state before Pinecone upsert:", {
+        count: pineconeVectors.length,
+        vectors: pineconeVectors.map(v => ({
+          id: v.id,
+          valuesLength: v.values.length,
+          metadata: {
+            type: v.metadata.type,
+            allFields: Object.keys(v.metadata),
+            contentSizes: {
+              total: JSON.stringify(v.metadata).length,
+              summary: v.metadata.type === 'summary' ? (v.metadata as any).summary?.length : undefined,
+              transcription: v.metadata.type === 'transcription' ? (v.metadata as any).transcription?.length : undefined,
+              searchableText: (v.metadata as any).searchableText?.length
+            },
+            contentPreviews: {
+              summary: v.metadata.type === 'summary' ? (v.metadata as any).summary?.substring(0, 100) + "..." : undefined,
+              transcription: v.metadata.type === 'transcription' ? (v.metadata as any).transcription?.substring(0, 100) + "..." : undefined,
+              searchableText: (v.metadata as any).searchableText?.substring(0, 100) + "..."
+            }
+          }
+        }))
+      });
+
+      // Use the copied and validated vectors
+      functions.logger.info("Attempting Pinecone upsert with vectors:", {
+        vectorCount: pineconeVectors.length,
+        vectors: pineconeVectors.map(v => ({
+          id: v.id,
+          valuesType: typeof v.values,
+          isValuesArray: Array.isArray(v.values),
+          valuesLength: v.values?.length,
+          firstFewValues: Array.isArray(v.values) ? v.values.slice(0, 5) : null,
+          metadata: {
+            type: v.metadata.type,
+            fields: Object.keys(v.metadata),
+            contentSizes: {
+              total: JSON.stringify(v.metadata).length,
+              summary: v.metadata.type === 'summary' ? (v.metadata as any).summary?.length : undefined,
+              transcription: v.metadata.type === 'transcription' ? (v.metadata as any).transcription?.length : undefined,
+              searchableText: (v.metadata as any).searchableText?.length
+            }
+          }
+        }))
+      });
+
+      try {
+        await index.upsert(pineconeVectors);
+        functions.logger.info("Pinecone upsert API call completed successfully");
+      } catch (error) {
+        const errorDetails = this.formatError(error);
+        functions.logger.error("Pinecone upsert API call failed:", {
+          error: errorDetails,
+          request: {
+            vectorCount: pineconeVectors.length,
+            vectorIds: pineconeVectors.map(v => v.id),
+            vectorSizes: pineconeVectors.map(v => ({
+              id: v.id,
+              valuesLength: v.values?.length,
+              metadataSize: JSON.stringify(v.metadata).length
+            }))
+          }
+        });
+        throw error;
+      }
+      
+      functions.logger.info("Successfully upserted vectors to Pinecone", {
+        vectorCount: pineconeVectors.length,
+        vectorIds: pineconeVectors.map(v => v.id),
+        finalMetadataState: pineconeVectors.map(v => ({
+          id: v.id,
+          type: v.metadata.type,
+          contentLengths: {
+            summary: v.metadata.type === 'summary' ? (v.metadata as any).summary?.length : undefined,
+            transcription: v.metadata.type === 'transcription' ? (v.metadata as any).transcription?.length : undefined,
+            searchableText: (v.metadata as any).searchableText?.length
+          }
+        }))
+      });
     } catch (error) {
       const errorDetails = this.formatError(error);
-      functions.logger.error("Error upserting vectors:", errorDetails);
+      functions.logger.error("Error upserting vectors:", {
+        error: errorDetails,
+        vectorIds: vectors.map(v => v.id),
+        vectorCount: vectors.length,
+        lastKnownState: vectors.map(v => ({
+          id: v.id,
+          type: v.metadata.type,
+          hadContent: v.metadata.type === 'summary' ? 
+            !!((v.metadata as any).summary?.length) : 
+            !!((v.metadata as any).transcription?.length)
+        }))
+      });
       throw error;
     }
   }
