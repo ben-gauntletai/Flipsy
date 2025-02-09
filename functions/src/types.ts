@@ -17,6 +17,26 @@ export interface VideoMetadata extends RecordMetadata {
   tools?: string[];
   techniques?: string[];
   updatedAt?: string;
+  createdAt?: string;
+  duration?: number;
+  resolution?: string;
+  fileSize?: number;
+  fileType?: string;
+  thumbnailUrl?: string;
+  hasIngredients?: string;
+  hasTools?: string;
+  hasTechniques?: string;
+  searchableText?: string;
+  lastIndexed?: string;
+  processingStatus?: 'pending' | 'processing' | 'completed' | 'failed';
+  processingError?: string;
+  processingStartedAt?: string;
+  processingCompletedAt?: string;
+  schemaVersion?: number;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
+  shareCount?: number;
 }
 
 export interface VideoVector {

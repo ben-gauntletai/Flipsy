@@ -4,8 +4,8 @@ import { VideoMetadata, SearchResultData, VideoVector, SearchResult } from "../t
 
 export class PineconeService {
   private pinecone: Pinecone;
-  private readonly SIMILARITY_THRESHOLD = 0.7;
-  private readonly INDEX_NAME = "videos";
+  private readonly SIMILARITY_THRESHOLD = 0.3;
+  private readonly INDEX_NAME = "flipsy-videos";
 
   constructor(apiKey: string) {
     try {

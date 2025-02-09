@@ -5,6 +5,7 @@ import * as os from "os";
 import * as path from "path";
 import { Storage } from "@google-cloud/storage";
 import OpenAI from "openai";
+import { ChatCompletionContentPartImage, ChatCompletionContentPartText } from "openai/resources/chat/completions";
 
 // Add type declaration for fluent-ffmpeg
 declare module "fluent-ffmpeg" {
@@ -75,13 +76,19 @@ export class VideoProcessorService {
   async processVideo(videoUrl: string, videoId: string): Promise<VideoAnalysis> {
     const startTime = Date.now();
     let tempFilePath: string | null = null;
+    let framesDir: string | null = null;
     let frameFiles: string[] = [];
     
     try {
       functions.logger.info(`Starting video processing for ${videoId}`);
       
+      // Create temp directory for this process
+      framesDir = path.join(os.tmpdir(), videoId);
+      await fs.promises.mkdir(framesDir, { recursive: true });
+      functions.logger.info(`Created temporary directory: ${framesDir}`);
+      
       // Download video to temp directory
-      tempFilePath = path.join(os.tmpdir(), `video-${videoId}.mp4`);
+      tempFilePath = path.join(framesDir, `video.mp4`);
       await this.downloadVideo(videoUrl, tempFilePath);
 
       // Check file size
@@ -99,49 +106,42 @@ export class VideoProcessorService {
         throw new Error("Processing timeout exceeded");
       }
 
-      // Extract frames
-      const checkTimeout = () => {
-        const timeElapsed = Date.now() - startTime;
-        if (timeElapsed > this.PROCESSING_TIMEOUT_MS) {
-          throw new Error("Processing timeout exceeded");
-        }
-      };
-
-      checkTimeout();
-      functions.logger.info("Extracting frames...");
-      frameFiles = await this.extractFrames(tempFilePath, videoId);
+      // Extract frames - this will throw an error if any frame fails
+      functions.logger.info("Starting frame extraction...");
+      frameFiles = await this.extractFrames(tempFilePath, framesDir);
       
-      // Analyze frames
-      checkTimeout();
-      functions.logger.info("Analyzing frames...");
-      const frameAnalyses = await this.analyzeFrames(frameFiles);
+      // Double check we have exactly 12 frames
+      if (frameFiles.length !== 12) {
+        throw new Error(`Expected 12 frames but got ${frameFiles.length}`);
+      }
+      
+      functions.logger.info("All 12 frames extracted successfully. Starting analysis...");
+      
+      // Now that we have all frames, proceed with analysis
+      const [frameAnalyses, transcription] = await Promise.all([
+        this.analyzeFrames(frameFiles),
+        this.transcribeAudio(tempFilePath)
+      ]);
 
-      // Transcribe audio
-      checkTimeout();
-      functions.logger.info("Transcribing audio...");
-      const transcription = await this.transcribeAudio(tempFilePath);
-
+      functions.logger.info("Frame analysis and transcription complete. Generating final analysis...");
+      
       // Generate comprehensive analysis
-      checkTimeout();
-      functions.logger.info("Generating comprehensive analysis...");
       const analysis = await this.generateAnalysis(frameAnalyses, transcription);
-
-      // Clean up temporary files
-      await this.cleanup([...(tempFilePath ? [tempFilePath] : []), ...frameFiles]);
 
       return analysis;
     } catch (error) {
-      // Ensure cleanup happens even on error
-      if (tempFilePath || frameFiles.length > 0) {
-        try {
-          await this.cleanup([...(tempFilePath ? [tempFilePath] : []), ...frameFiles]);
-        } catch (cleanupError) {
-          functions.logger.warn("Error during cleanup:", cleanupError);
-        }
-      }
-      
-      functions.logger.error("Error processing video:", error);
+      functions.logger.error("Error in processVideo:", error);
       throw error;
+    } finally {
+      // Cleanup in finally block to ensure it runs
+      try {
+        if (framesDir) {
+          functions.logger.info(`Cleaning up directory: ${framesDir}`);
+          await fs.promises.rm(framesDir, { recursive: true, force: true });
+        }
+      } catch (cleanupError) {
+        functions.logger.warn("Error during cleanup:", cleanupError);
+      }
     }
   }
 
@@ -173,84 +173,313 @@ export class VideoProcessorService {
     }
   }
 
-  private async extractFrames(videoPath: string, videoId: string): Promise<string[]> {
-    const frameFiles: string[] = [];
-    const framesDir = path.join(os.tmpdir(), videoId);
-    await fs.promises.mkdir(framesDir, { recursive: true });
-
+  private async extractFrames(videoPath: string, framesDir: string): Promise<string[]> {
+    functions.logger.info(`Extracting frames from ${videoPath} to ${framesDir}`);
+    
     return new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .on("end", () => resolve(frameFiles))
-        .on("error", (err: Error) => reject(err))
-        .on("progress", (progress: { frames?: number }) => {
-          if (progress.frames) {
-            const frameFile = path.join(framesDir, `frame-${progress.frames}.jpg`);
-            frameFiles.push(frameFile);
-          }
-        })
-        .screenshots({
-          count: 12,
-          folder: framesDir,
-          filename: "frame-%i.jpg",
-          size: "1280x720",
+      const totalFrames = 12;
+      
+      // First, get video duration
+      ffmpeg.ffprobe(videoPath, (err, metadata) => {
+        if (err) {
+          functions.logger.error("Error probing video:", err);
+          reject(err);
+          return;
+        }
+
+        const duration = metadata.format.duration || 0;
+        if (!duration) {
+          reject(new Error("Could not determine video duration"));
+          return;
+        }
+
+        functions.logger.info(`Video duration: ${duration} seconds`);
+
+        // Calculate timestamps for even spacing
+        const interval = duration / (totalFrames + 1); // +1 to ensure last frame isn't at the very end
+        const timestamps = Array.from({ length: totalFrames }, (_, i) => {
+          const timestamp = interval * (i + 1); // This ensures we're not at 0 or duration
+          return Number(timestamp.toFixed(3)); // Fix to 3 decimal places for consistency
         });
+
+        functions.logger.info(`Frame timestamps: ${timestamps.join(", ")}`);
+        
+        // Create the frames directory if it doesn't exist
+        if (!fs.existsSync(framesDir)) {
+          fs.mkdirSync(framesDir, { recursive: true });
+        }
+
+        // Process each frame individually for better reliability
+        let processedFrames = 0;
+        const expectedFiles: string[] = [];
+
+        const processNextFrame = (index: number) => {
+          if (index >= totalFrames) {
+            functions.logger.info("All frames processed, starting verification");
+            verifyFrames();
+            return;
+          }
+
+          const timestamp = timestamps[index];
+          const outputPath = path.join(framesDir, `frame-${index + 1}.jpg`);
+          expectedFiles.push(outputPath);
+
+          functions.logger.info(`Processing frame ${index + 1} at timestamp ${timestamp}s`);
+
+          ffmpeg(videoPath)
+            .screenshots({
+              timestamps: [timestamp],
+              filename: `frame-${index + 1}.jpg`,
+              folder: framesDir,
+              size: "1280x720"
+            })
+            .on('end', () => {
+              processedFrames++;
+              functions.logger.info(`Frame ${index + 1} extracted successfully`);
+              processNextFrame(index + 1);
+            })
+            .on('error', (err: Error) => {
+              functions.logger.error(`Error extracting frame ${index + 1}:`, err);
+              reject(err);
+            });
+        };
+
+        const verifyFrames = async () => {
+          try {
+            functions.logger.info(`Starting frame verification. Expected ${totalFrames} frames.`);
+            
+            // Add a small delay to ensure filesystem has completed writing
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Verify each frame exists and has content
+            const fileChecks = await Promise.all(
+              expectedFiles.map(async (framePath, index) => {
+                try {
+                  const stats = await fs.promises.stat(framePath);
+                  if (stats.size === 0) {
+                    throw new Error(`Frame file is empty: ${framePath}`);
+                  }
+                  functions.logger.info(`Verified frame ${index + 1}: ${framePath} (${stats.size} bytes)`);
+                  return true;
+                } catch (error) {
+                  functions.logger.error(`Frame ${index + 1} verification failed:`, error);
+                  return false;
+                }
+              })
+            );
+
+            // Check if all frames were successfully verified
+            if (fileChecks.every(Boolean)) {
+              functions.logger.info(`Successfully verified all ${totalFrames} frames`);
+              resolve(expectedFiles);
+            } else {
+              const missingFrames = fileChecks
+                .map((check, index) => !check ? index + 1 : null)
+                .filter((index): index is number => index !== null);
+              reject(new Error(`Failed to verify frames: ${missingFrames.join(", ")}`));
+            }
+          } catch (error) {
+            functions.logger.error("Error in frame verification:", error);
+            reject(error);
+          }
+        };
+
+        // Start processing frames
+        processNextFrame(0);
+      });
     });
   }
 
   private async analyzeFrames(frameFiles: string[]): Promise<FrameAnalysis[]> {
-    const analyses: FrameAnalysis[] = [];
-
-    for (const [index, framePath] of frameFiles.entries()) {
-      const imageBase64 = await fs.promises.readFile(framePath, { encoding: "base64" });
+    try {
+      // Verify we have exactly 12 frames before starting analysis
+      if (frameFiles.length !== 12) {
+        throw new Error(`Cannot analyze frames: Expected 12 frames but got ${frameFiles.length}`);
+      }
       
+      functions.logger.info("Starting batch frame analysis");
+      
+      // Verify all frames exist and are readable before starting analysis
+      await Promise.all(
+        frameFiles.map(async (framePath) => {
+          try {
+            const stats = await fs.promises.stat(framePath);
+            if (stats.size === 0) {
+              throw new Error(`Frame file is empty: ${framePath}`);
+            }
+          } catch (error) {
+            functions.logger.error(`Frame verification failed for ${framePath}:`, error);
+            throw new Error(`Frame verification failed: ${framePath}`);
+          }
+        })
+      );
+      
+      functions.logger.info("All frames verified. Reading frame contents...");
+      
+      // Read all frames in parallel
+      const frameContents = await Promise.all(
+        frameFiles.map(async (framePath, index) => {
+          const imageBase64 = await fs.promises.readFile(framePath, { encoding: "base64" });
+          return {
+            index,
+            base64: imageBase64,
+          };
+        })
+      );
+      
+      functions.logger.info(`Successfully loaded ${frameContents.length} frames for analysis`);
+
+      // Create a single message with all frames
       const response = await this.openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: "gpt-4o-mini",
         messages: [
           {
             role: "user",
             content: [
               { 
                 type: "text", 
-                text: "Analyze this frame from a cooking video. " + 
-                      "Identify ingredients, cooking tools, and techniques visible in the frame. " + 
-                      "Provide a detailed description of what's happening.",
-              },
-              { 
-                type: "image_url", 
-                image_url: { 
-                  url: `data:image/jpeg;base64,${imageBase64}`,
+                text: "Analyze these frames from a cooking video in sequence. " +
+                      "For each frame, identify:\n" +
+                      "1. Ingredients visible\n" +
+                      "2. Cooking tools being used\n" +
+                      "3. Cooking techniques being demonstrated\n" +
+                      "4. A description of what's happening\n\n" +
+                      "Format your response as a JSON array with each frame analysis containing:\n" +
+                      "- description: string\n" +
+                      "- ingredients: string[]\n" +
+                      "- tools: string[]\n" +
+                      "- techniques: string[]\n\n" +
+                      "Ensure the response is valid JSON. Do not include any trailing commas in arrays or objects. " +
+                      "Each frame analysis must be complete and properly formatted.",
+              } as ChatCompletionContentPartText,
+              ...frameContents.map(({ base64 }) => ({
+                type: "image_url" as const,
+                image_url: {
+                  url: `data:image/jpeg;base64,${base64}`,
                 },
-              },
+              } as ChatCompletionContentPartImage)),
             ],
           },
         ],
-        max_tokens: 500,
+        max_tokens: 4096,
+        temperature: 0.7,
       });
 
-      const analysis = this.parseVisionResponse(response.choices[0].message.content || "", index);
-      analyses.push(analysis);
-    }
+      const content = response.choices[0].message.content || "[]";
+      
+      // Log the raw response for debugging
+      functions.logger.info("Raw GPT response:", content);
+      
+      let parsedAnalyses: Array<{
+        description: string;
+        ingredients: string[];
+        tools: string[];
+        techniques: string[];
+      }>;
 
-    return analyses;
+      try {
+        // Clean up the response string
+        const cleanedContent = content
+          .replace(/```json\n?/g, '')     // Remove ```json
+          .replace(/```\n?/g, '')         // Remove closing ```
+          .replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
+          .trim();
+        
+        functions.logger.info("Cleaned content for parsing:", cleanedContent);
+        
+        // Try to parse the JSON
+        parsedAnalyses = JSON.parse(cleanedContent);
+        
+        // Validate the response structure
+        if (!Array.isArray(parsedAnalyses)) {
+          throw new Error("Response is not an array");
+        }
+
+        functions.logger.info(`Received ${parsedAnalyses.length} frame analyses from OpenAI`);
+
+        // Handle cases where we get more or fewer than 12 analyses
+        if (parsedAnalyses.length > 12) {
+          functions.logger.warn(`Got ${parsedAnalyses.length} analyses, trimming to 12`);
+          parsedAnalyses = parsedAnalyses.slice(0, 12);
+        } else if (parsedAnalyses.length < 12) {
+          functions.logger.warn(`Got only ${parsedAnalyses.length} analyses, padding to 12`);
+          const padding = Array(12 - parsedAnalyses.length).fill({
+            description: "No analysis available",
+            ingredients: [],
+            tools: [],
+            techniques: []
+          });
+          parsedAnalyses = [...parsedAnalyses, ...padding];
+        }
+
+        // Validate each analysis object and provide defaults if needed
+        parsedAnalyses = parsedAnalyses.map((analysis, index) => {
+          if (!analysis || typeof analysis !== 'object') {
+            functions.logger.warn(`Analysis ${index} is not an object, creating default structure`);
+            return {
+              description: "Invalid analysis",
+              ingredients: [],
+              tools: [],
+              techniques: []
+            };
+          }
+          
+          return {
+            description: typeof analysis.description === 'string' ? analysis.description : "No description available",
+            ingredients: Array.isArray(analysis.ingredients) ? analysis.ingredients : [],
+            tools: Array.isArray(analysis.tools) ? analysis.tools : [],
+            techniques: Array.isArray(analysis.techniques) ? analysis.techniques : []
+          };
+        });
+
+      } catch (error) {
+        functions.logger.error("JSON parsing error:", error);
+        functions.logger.error("Failed content:", content);
+        throw new Error(`Failed to parse frame analysis response: ${error.message}`);
+      }
+
+      // Map the parsed analyses to our FrameAnalysis type
+      return parsedAnalyses.map((analysis, index) => ({
+        timestamp: index * 5,
+        description: analysis.description,
+        detectedIngredients: analysis.ingredients,
+        detectedTools: analysis.tools,
+        detectedTechniques: analysis.techniques,
+      }));
+
+    } catch (error) {
+      functions.logger.error("Error in batch frame analysis:", error);
+      throw error;
+    }
   }
 
   private async transcribeAudio(videoPath: string): Promise<string> {
     const audioPath = path.join(os.tmpdir(), "audio.mp3");
     
+    functions.logger.info("Starting audio extraction for transcription");
+    
     // Extract audio from video
     await new Promise((resolve, reject) => {
       ffmpeg(videoPath)
         .toFormat("mp3")
-        .on("end", resolve)
-        .on("error", reject)
+        .on("end", () => {
+          functions.logger.info("Audio extraction completed successfully");
+          resolve(null);
+        })
+        .on("error", (err) => {
+          functions.logger.error("Error extracting audio:", err);
+          reject(err);
+        })
         .save(audioPath);
     });
 
+    functions.logger.info("Reading audio file for transcription");
     // Create a File-like object for the audio file
     const audioFile = await fs.promises.readFile(audioPath);
     const audioBlob = new Blob([audioFile], { type: "audio/mp3" });
     const file = new File([audioBlob], "audio.mp3", { type: "audio/mp3" });
 
+    functions.logger.info("Starting OpenAI transcription");
     // Transcribe audio
     const response = await this.openai.audio.transcriptions.create({
       file,
@@ -258,67 +487,183 @@ export class VideoProcessorService {
       language: "en",
     });
 
+    const transcription = response.text;
+    functions.logger.info("Transcription completed", {
+      transcriptionLength: transcription.length,
+      transcriptionPreview: transcription.substring(0, 100) + "..."
+    });
+
     await fs.promises.unlink(audioPath);
-    return response.text;
+    functions.logger.info("Cleaned up temporary audio file");
+    
+    return transcription;
   }
 
   private async generateAnalysis(
     frameAnalyses: FrameAnalysis[],
     transcription: string
   ): Promise<VideoAnalysis> {
-    const prompt = `
-      Analyze this cooking video content and create a comprehensive summary.
-      Frame analyses: ${JSON.stringify(frameAnalyses)}
-      Audio transcription: ${transcription}
-      
-      Generate a structured analysis including:
-      1. Overall summary of the recipe
-      2. Complete list of ingredients spotted
-      3. All cooking tools used
-      4. All cooking techniques demonstrated
-      5. Step-by-step instructions based on the video content
-    `;
-
-    const response = await this.openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-      max_tokens: 1000,
+    functions.logger.info("Starting generateAnalysis with:", {
+      framesCount: frameAnalyses.length,
+      transcriptionLength: transcription.length,
+      transcriptionPreview: transcription.substring(0, 100) + "..."
     });
 
-    return this.parseAnalysisResponse(response.choices[0].message.content || "");
-  }
+    const prompt = `
+      Analyze this cooking video content and create a structured analysis.
+      You have frame-by-frame analyses and audio transcription.
 
-  private parseVisionResponse(content: string, frameIndex: number): FrameAnalysis {
-    // Extract information using regex or other parsing methods
-    const ingredients = content.match(/ingredients?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((i) => i.trim()) || [];
-    const tools = content.match(/tools?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((t) => t.trim()) || [];
-    const techniques = content.match(/techniques?:.*?([\w\s,]+)/i)?.[1]?.split(",").map((t) => t.trim()) || [];
+      Frame Analyses: ${JSON.stringify(frameAnalyses, null, 2)}
+      Audio Transcription: ${transcription}
+      
+      Provide your analysis in the following EXACT format, maintaining these exact headings:
+
+      SUMMARY:
+      Write a clear, concise summary of the recipe in a single paragraph.
+
+      INGREDIENTS:
+      List only the food/drink ingredients, one per line:
+      - ingredient 1
+      - ingredient 2
+      etc.
+
+      TOOLS:
+      List only the physical tools and equipment used, one per line:
+      - tool 1
+      - tool 2
+      etc.
+
+      TECHNIQUES:
+      List only the cooking techniques and methods used, one per line:
+      - technique 1
+      - technique 2
+      etc.
+
+      STEPS:
+      List the complete recipe steps in order, one per line:
+      1. First step
+      2. Second step
+      etc.
+
+      IMPORTANT:
+      - Do not include labels like "Tools:" or "Ingredients:" within the lists themselves
+      - Keep each item concise and avoid mixing categories
+      - For tools, only include physical equipment (e.g., "bowl", "whisk")
+      - For techniques, only include actions (e.g., "whisking", "blending")
+      - For ingredients, only include food/drink items
+      - Ensure steps are complete sentences
+    `;
+
+    functions.logger.info("Sending analysis prompt to OpenAI");
+
+    const response = await this.openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+      max_tokens: 2000,
+    });
+
+    const content = response.choices[0].message.content || "";
     
-    return {
-        timestamp: frameIndex * 5,
-        description: content,
-        detectedIngredients: ingredients,
-        detectedTools: tools,
-        detectedTechniques: techniques,
-    };
+    // Log the complete raw response
+    functions.logger.info("Complete raw analysis response from OpenAI:", {
+      fullResponse: content,
+      responseLength: content.length
+    });
+    
+    const analysis = this.parseAnalysisResponse(content);
+
+    // Log the complete parsed analysis
+    functions.logger.info("Complete parsed video analysis:", {
+      summary: analysis.summary,
+      ingredients: analysis.ingredients,
+      tools: analysis.tools,
+      techniques: analysis.techniques,
+      steps: analysis.steps,
+      ingredientsCount: analysis.ingredients.length,
+      toolsCount: analysis.tools.length,
+      techniquesCount: analysis.techniques.length,
+      stepsCount: analysis.steps.length
+    });
+
+    return analysis;
   }
 
   private parseAnalysisResponse(content: string): VideoAnalysis {
-    const sections = content.split(/\n\d+\./);
+    functions.logger.info("Starting to parse analysis response");
     
-    return {
-        frames: [],
-        transcription: "",
-        summary: sections[1]?.trim() || "",
-        ingredients: sections[2]?.split(",").map((i) => i.trim()) || [],
-        tools: sections[3]?.split(",").map((t) => t.trim()) || [],
-        techniques: sections[4]?.split(",").map((t) => t.trim()) || [],
-        steps: sections[5]?.split("\n").map((s) => s.trim()).filter(Boolean) || [],
+    // Helper function to extract section content
+    const extractSection = (section: string, text: string): string[] => {
+      const regex = new RegExp(`${section}:\\s*\\n([\\s\\S]*?)(?=\\n\\s*[A-Z]+:|$)`);
+      const match = text.match(regex);
+      
+      if (!match) {
+        functions.logger.warn(`No match found for section: ${section}`);
+        return [];
+      }
+      
+      const lines = match[1]
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line)  // Remove empty lines
+        .map(line => {
+          // Remove bullet points and numbers at the start
+          return line
+            .replace(/^[0-9]+\.\s*/, '')  // Remove numbered lists (e.g., "1. ")
+            .replace(/^[-•]\s*/, '');      // Remove bullet points
+        })
+        .filter(line => line); // Remove any lines that became empty
+      
+      functions.logger.info(`Extracted ${lines.length} items from ${section}:`, lines);
+      return lines;
     };
-  }
 
-  private async cleanup(files: string[]): Promise<void> {
-    await Promise.all(files.map((file) => fs.promises.unlink(file)));
+    // Extract summary differently since it's a paragraph
+    const summaryMatch = content.match(/SUMMARY:\s*\n([\s\S]*?)(?=\n\s*[A-Z]+:|$)/);
+    const summary = summaryMatch ? summaryMatch[1].trim() : '';
+
+    // Extract lists
+    const ingredients = extractSection('INGREDIENTS', content);
+    const tools = extractSection('TOOLS', content);
+    const techniques = extractSection('TECHNIQUES', content);
+    const steps = extractSection('STEPS', content);
+
+    // Log detailed extraction results
+    functions.logger.info("Detailed section extraction results:", {
+      summary: {
+        text: summary,
+        length: summary.length
+      },
+      ingredients: {
+        items: ingredients,
+        count: ingredients.length
+      },
+      tools: {
+        items: tools,
+        count: tools.length
+      },
+      techniques: {
+        items: techniques,
+        count: techniques.length
+      },
+      steps: {
+        items: steps,
+        count: steps.length
+      }
+    });
+
+    const analysis = {
+      frames: [],  // This is handled elsewhere
+      transcription: "", // This is handled elsewhere
+      summary,
+      ingredients,
+      tools,
+      techniques,
+      steps,
+    };
+
+    functions.logger.info("Final parsed analysis object:", analysis);
+
+    return analysis;
   }
 } 
