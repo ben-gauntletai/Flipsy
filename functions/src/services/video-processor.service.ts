@@ -6,6 +6,8 @@ import * as path from "path";
 import { Storage } from "@google-cloud/storage";
 import OpenAI from "openai";
 import { ChatCompletionContentPartImage, ChatCompletionContentPartText } from "openai/resources/chat/completions";
+import { PineconeService } from "../services/pinecone.service";
+import * as admin from "firebase-admin";
 
 // Add type declaration for fluent-ffmpeg
 declare module "fluent-ffmpeg" {
@@ -82,6 +84,15 @@ export class VideoProcessorService {
     try {
       functions.logger.info(`Starting video processing for ${videoId}`);
       
+      // Get video data from Firestore
+      const db = admin.firestore();
+      const videoDoc = await db.collection("videos").doc(videoId).get();
+      const videoData = videoDoc.data();
+
+      if (!videoData) {
+        throw new Error("Video data not found");
+      }
+      
       // Create temp directory for this process
       framesDir = path.join(os.tmpdir(), videoId);
       await fs.promises.mkdir(framesDir, { recursive: true });
@@ -128,6 +139,82 @@ export class VideoProcessorService {
       // Generate comprehensive analysis
       const analysis = await this.generateAnalysis(frameAnalyses, transcription);
 
+      // Store vectors in Pinecone
+      const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
+      
+      functions.logger.info("Preparing vectors for Pinecone storage:", {
+        summary: {
+          length: analysis.summary.length,
+          content: analysis.summary.substring(0, 100) + "...",
+          hasContent: analysis.summary.length > 0
+        },
+        transcription: {
+          length: analysis.transcription.length,
+          preview: analysis.transcription.substring(0, 100) + "...",
+          hasContent: analysis.transcription.length > 0
+        },
+        ingredients: analysis.ingredients.length,
+        tools: analysis.tools.length,
+        techniques: analysis.techniques.length,
+        steps: analysis.steps.length
+      });
+      
+      console.log("Storing vectors in Pinecone", { videoId });
+      
+      await pineconeService.upsert([
+        {
+          id: `${videoId}_summary`,
+          values: await this.openai.embeddings.create({
+            model: "text-embedding-3-large",
+            input: [
+              analysis.summary,
+              analysis.ingredients.join(" "),
+              analysis.tools.join(" "),
+              analysis.techniques.join(" "),
+            ].join(" "),
+          }).then(embedding => embedding.data[0].embedding),
+          metadata: {
+            videoId,
+            type: "summary",
+            summary: analysis.summary,
+            ingredients: analysis.ingredients,
+            tools: analysis.tools,
+            techniques: analysis.techniques,
+            steps: analysis.steps,
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: analysis.summary.length,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
+          },
+        },
+        {
+          id: `${videoId}_transcription`,
+          values: await this.openai.embeddings.create({
+            model: "text-embedding-3-large",
+            input: analysis.transcription,
+          }).then(embedding => embedding.data[0].embedding),
+          metadata: {
+            videoId,
+            type: "transcription",
+            transcription: analysis.transcription,
+            userId: videoData.userId,
+            status: videoData.status || "active",
+            privacy: videoData.privacy || "everyone",
+            tags: videoData.tags || [],
+            version: 1,
+            contentLength: analysis.transcription.length,
+            hasDescription: "true",
+            hasAiDescription: "true",
+            hasTags: String(videoData.tags?.length > 0),
+          },
+        },
+      ]);
+
       return analysis;
     } catch (error) {
       functions.logger.error("Error in processVideo:", error);
@@ -153,8 +240,18 @@ export class VideoProcessorService {
       
       functions.logger.info("Downloading video", { url, destPath });
       
-      // Extract the file path from the URL
-      const filePathMatch = url.match(/\/v0\/b\/[^/]+\/o\/(.+?)\?/);
+      // Log the URL format for debugging
+      functions.logger.info("URL format analysis:", {
+        url: url.replace(/(?<=\/)[^\/]+(?=\?)/, "REDACTED"), // Redact sensitive parts
+        hasV0: url.includes("/v0/"),
+        hasBucket: url.includes("/b/"),
+        hasObject: url.includes("/o/"),
+        hasQueryParams: url.includes("?"),
+        urlParts: url.split("/"),
+      });
+      
+      // Extract the file path from the URL using a more flexible regex
+      const filePathMatch = url.match(/\/o\/(.+?)\?/);
       if (!filePathMatch) {
         throw new Error("Invalid video URL format");
       }
@@ -365,6 +462,16 @@ export class VideoProcessorService {
         temperature: 0.7,
       });
 
+      functions.logger.info("OpenAI response details:", {
+        hasChoices: response.choices.length > 0,
+        firstChoice: response.choices[0] ? {
+          finishReason: response.choices[0].finish_reason,
+          hasContent: !!response.choices[0].message.content,
+          contentLength: response.choices[0].message.content?.length || 0,
+          contentPreview: response.choices[0].message.content?.substring(0, 100) || "NO CONTENT"
+        } : "NO CHOICES"
+      });
+
       const content = response.choices[0].message.content || "[]";
       
       // Log the raw response for debugging
@@ -488,6 +595,15 @@ export class VideoProcessorService {
     });
 
     const transcription = response.text;
+    functions.logger.info("Transcription details:", {
+      hasResponse: !!response,
+      hasText: !!response.text,
+      transcriptionLength: transcription.length,
+      transcriptionPreview: transcription.substring(0, 100) + "...",
+      isEmpty: transcription.length === 0,
+      model: "whisper-1"
+    });
+
     functions.logger.info("Transcription completed", {
       transcriptionLength: transcription.length,
       transcriptionPreview: transcription.substring(0, 100) + "..."
@@ -560,6 +676,8 @@ export class VideoProcessorService {
       - Each step must be on its own line and start with a number
     `;
 
+    functions.logger.info("Sending analysis request to OpenAI with prompt length:", prompt.length);
+
     const response = await this.openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -567,15 +685,42 @@ export class VideoProcessorService {
       max_tokens: 2000,
     });
 
+    functions.logger.info("OpenAI response details:", {
+      hasChoices: response.choices.length > 0,
+      firstChoice: response.choices[0] ? {
+        finishReason: response.choices[0].finish_reason,
+        hasContent: !!response.choices[0].message.content,
+        contentLength: response.choices[0].message.content?.length || 0,
+        contentPreview: response.choices[0].message.content?.substring(0, 100) || "NO CONTENT"
+      } : "NO CHOICES"
+    });
+
     const content = response.choices[0].message.content || "";
     
     // Log the complete raw response
     functions.logger.info("Complete raw analysis response from OpenAI:", {
       fullResponse: content,
-      responseLength: content.length
+      responseLength: content.length,
+      hasSummarySection: content.includes("SUMMARY:"),
+      summaryIndex: content.indexOf("SUMMARY:"),
+      nextSectionIndex: content.indexOf("INGREDIENTS:"),
+      summaryContent: content.substring(
+        content.indexOf("SUMMARY:") + 8,
+        content.indexOf("INGREDIENTS:")
+      ).trim()
     });
     
     const analysis = this.parseAnalysisResponse(content);
+
+    // Log the analysis object before creating final analysis
+    functions.logger.info("Analysis after parsing:", {
+      summaryLength: analysis.summary.length,
+      summaryContent: analysis.summary,
+      ingredientsCount: analysis.ingredients.length,
+      toolsCount: analysis.tools.length,
+      techniquesCount: analysis.techniques.length,
+      stepsCount: analysis.steps.length
+    });
 
     // Create the final analysis object with all components
     const finalAnalysis: VideoAnalysis = {
@@ -590,12 +735,10 @@ export class VideoProcessorService {
 
     // Log the complete parsed analysis
     functions.logger.info("Complete parsed video analysis:", {
-      summary: finalAnalysis.summary,
-      ingredients: finalAnalysis.ingredients,
-      tools: finalAnalysis.tools,
-      techniques: finalAnalysis.techniques,
-      steps: finalAnalysis.steps,
+      summaryLength: finalAnalysis.summary.length,
+      summaryContent: finalAnalysis.summary,
       transcriptionLength: finalAnalysis.transcription.length,
+      transcriptionPreview: finalAnalysis.transcription.substring(0, 100) + "...",
       ingredientsCount: finalAnalysis.ingredients.length,
       toolsCount: finalAnalysis.tools.length,
       techniquesCount: finalAnalysis.techniques.length,
@@ -611,92 +754,49 @@ export class VideoProcessorService {
     // Log the entire raw content first
     functions.logger.info("Raw content to parse:", {
       content: content,
-      contentLength: content.length
+      contentLength: content.length,
+      sections: {
+        summary: content.includes("SUMMARY:"),
+        ingredients: content.includes("INGREDIENTS:"),
+        tools: content.includes("TOOLS:"),
+        techniques: content.includes("TECHNIQUES:"),
+        steps: content.includes("STEPS:")
+      }
     });
 
-    const extractListSection = (section: string, text: string): string[] => {
-      const regex = new RegExp(`${section}:\\s*([\\s\\S]*?)(?=\\n\\s*(?:[A-Z]+:|$))`, "i");
-      const match = text.match(regex);
-      
-      // Log the regex match details
-      functions.logger.info(`${section} extraction details:`, {
-        hasMatch: !!match,
-        matchGroups: match ? match.length : 0,
-        rawMatch: match ? match[0] : null,
-        extractedContent: match ? match[1] : null
-      });
-      
-      if (!match) {
-        functions.logger.warn(`No match found for section: ${section}`);
-        return [];
-      }
-      
-      const lines = match[1]
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line);  // Remove empty lines
-
-      // Log the lines before processing
-      functions.logger.info(`${section} lines before processing:`, lines);
-      
-      const processedLines = lines
-        .map(line => line
-          .replace(/^[-*•]\s*/, '')  // Remove bullet points
-          .trim()
-        )
-        .filter(Boolean);  // Remove any lines that became empty
-
-      // Log the final processed lines
-      functions.logger.info(`${section} final processed lines:`, processedLines);
-      
-      return processedLines;
-    };
-
-    const extractSteps = (text: string): string[] => {
-      // First try to match everything between STEPS: and the next section
-      const stepsRegex = /STEPS:\s*([\s\S]*?)(?=\n\s*[A-Z]+:|$)/i;
-      // If that fails, match everything after STEPS: to the end
-      const fallbackRegex = /STEPS:\s*([\s\S]*$)/i;
-      
-      let match = text.match(stepsRegex) || text.match(fallbackRegex);
-      
-      functions.logger.info("Steps extraction details:", {
-        hasMatch: !!match,
-        matchGroups: match ? match.length : 0,
-        rawMatch: match ? match[0] : null,
-        extractedContent: match ? match[1] : null
-      });
-      
-      if (!match) {
-        functions.logger.warn("No steps section found");
-        return [];
-      }
-      
-      const lines = match[1]
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line && /^\d+\./.test(line));  // Only keep numbered lines
-
-      functions.logger.info("Steps before processing:", lines);
-      
-      const processedLines = lines
-        .map(line => {
-          // Preserve the number but clean up the rest of the line
-          const numberMatch = line.match(/^(\d+)\.\s*(.+)$/);
-          if (!numberMatch) return line.trim();
-          const [, number, content] = numberMatch;
-          return `${number}. ${content.trim()}`;
-        })
-        .filter(line => line.length > 5);  // Ensure we have actual content
-
-      functions.logger.info("Final processed steps:", processedLines);
-      
-      return processedLines;
-    };
-
-    // Extract each section with detailed logging
+    // Extract summary with detailed logging
     const summaryMatch = content.match(/SUMMARY:\s*([\s\S]*?)(?=\n\s*(?:INGREDIENTS:|$))/);
+    functions.logger.info("Summary extraction details:", {
+      hasMatch: !!summaryMatch,
+      matchGroups: summaryMatch ? summaryMatch.length : 0,
+      rawMatch: summaryMatch ? summaryMatch[0] : null,
+      extractedContent: summaryMatch ? summaryMatch[1] : null,
+      trimmedContent: summaryMatch ? summaryMatch[1].trim() : null,
+      contentIndexes: {
+        summaryStart: content.indexOf("SUMMARY:"),
+        ingredientsStart: content.indexOf("INGREDIENTS:"),
+        toolsStart: content.indexOf("TOOLS:"),
+        techniquesStart: content.indexOf("TECHNIQUES:"),
+        stepsStart: content.indexOf("STEPS:")
+      },
+      contentSections: {
+        hasSummaryHeader: content.includes("SUMMARY:"),
+        hasIngredientsHeader: content.includes("INGREDIENTS:"),
+        hasToolsHeader: content.includes("TOOLS:"),
+        hasTechniquesHeader: content.includes("TECHNIQUES:"),
+        hasStepsHeader: content.includes("STEPS:")
+      },
+      regexPattern: /SUMMARY:\s*([\s\S]*?)(?=\n\s*(?:INGREDIENTS:|$))/.toString()
+    });
+
     const summary = (summaryMatch?.[1] || "").trim();
+
+    functions.logger.info("Extracted summary:", {
+      summary,
+      length: summary.length,
+      isEmpty: summary.length === 0,
+      firstCharacters: summary.substring(0, 50)
+    });
 
     // Log raw section matches before extraction
     const rawMatches = {
@@ -709,74 +809,20 @@ export class VideoProcessorService {
 
     functions.logger.info("Raw content section matches:", rawMatches);
 
-    const ingredients = extractListSection("INGREDIENTS", content);
-    const tools = extractListSection("TOOLS", content);
-    const techniques = extractListSection("TECHNIQUES", content);
-    const steps = extractSteps(content);
+    const ingredients = this.extractListSection("INGREDIENTS", content);
+    const tools = this.extractListSection("TOOLS", content);
+    const techniques = this.extractListSection("TECHNIQUES", content);
+    const steps = this.extractSteps(content);
 
-    // Validate steps specifically
-    if (steps.length === 0) {
-      functions.logger.error("Steps extraction failed. Content analysis:", {
-        hasStepsSection: content.includes("STEPS:"),
-        stepsIndex: content.indexOf("STEPS:"),
-        contentAfterSteps: content.slice(content.indexOf("STEPS:")),
-        rawStepsMatch: rawMatches.steps
-      });
-    }
-
-    // Log detailed extraction results
-    functions.logger.info("Detailed section extraction results:", {
-      summary: {
-        text: summary,
-        length: summary.length
-      },
-      ingredients: {
-        items: ingredients,
-        count: ingredients.length,
-        raw: ingredients
-      },
-      tools: {
-        items: tools,
-        count: tools.length,
-        raw: tools
-      },
-      techniques: {
-        items: techniques,
-        count: techniques.length,
-        raw: techniques
-      },
-      steps: {
-        items: steps,
-        count: steps.length,
-        raw: steps,
-        // Add more details about steps
-        hasNumberedItems: steps.every(step => /^\d+\./.test(step)),
-        itemLengths: steps.map(step => step.length),
-        numbersPresent: steps.map(step => step.match(/^\d+/)?.[0] || 'none')
-      }
+    // Log the final extracted data
+    functions.logger.info("Final extracted data:", {
+      summaryLength: summary.length,
+      summaryContent: summary,
+      ingredientsCount: ingredients.length,
+      toolsCount: tools.length,
+      techniquesCount: techniques.length,
+      stepsCount: steps.length
     });
-
-    // Enhanced validation
-    const validationResults = {
-      hasSummary: !!summary,
-      hasIngredients: ingredients.length > 0,
-      hasTools: tools.length > 0,
-      hasTechniques: techniques.length > 0,
-      hasSteps: steps.length > 0,
-      stepsHaveContent: steps.every(step => step.length > 10), // Each step should be a complete sentence
-      stepsAreNumbered: steps.every(step => /^\d+\./.test(step)),
-      sectionsFound: {
-        summary: content.includes("SUMMARY:"),
-        ingredients: content.includes("INGREDIENTS:"),
-        tools: content.includes("TOOLS:"),
-        techniques: content.includes("TECHNIQUES:"),
-        steps: content.includes("STEPS:")
-      }
-    };
-
-    if (!validationResults.hasSteps || !validationResults.stepsHaveContent || !validationResults.stepsAreNumbered) {
-      functions.logger.warn("Steps validation failed:", validationResults);
-    }
 
     return {
       summary,
@@ -785,5 +831,104 @@ export class VideoProcessorService {
       techniques,
       steps,
     };
+  }
+
+  private extractListSection(section: string, text: string): string[] {
+    const regex = new RegExp(`${section}:\\s*([\\s\\S]*?)(?=\\n\\s*(?:[A-Z]+:|$))`, "i");
+    const match = text.match(regex);
+    
+    // Log the regex match details
+    functions.logger.info(`${section} extraction details:`, {
+      hasMatch: !!match,
+      matchGroups: match ? match.length : 0,
+      rawMatch: match ? match[0] : null,
+      extractedContent: match ? match[1] : null
+    });
+    
+    if (!match) {
+      functions.logger.warn(`No match found for section: ${section}`);
+      return [];
+    }
+    
+    const lines = match[1]
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line);  // Remove empty lines
+
+    // Log the lines before processing
+    functions.logger.info(`${section} lines before processing:`, lines);
+    
+    const processedLines = lines
+      .map(line => line
+        .replace(/^[-*•]\s*/, '')  // Remove bullet points
+        .trim()
+      )
+      .filter(Boolean);  // Remove any lines that became empty
+
+    // Log the final processed lines
+    functions.logger.info(`${section} final processed lines:`, processedLines);
+    
+    return processedLines;
+  }
+
+  private extractSteps(text: string): string[] {
+    functions.logger.info("Starting steps extraction with text length:", text.length);
+    
+    // First try to match everything between STEPS: and the next section
+    const stepsRegex = /STEPS:\s*([\s\S]*?)(?=\n\s*[A-Z]+:|$)/i;
+    // If that fails, match everything after STEPS: to the end
+    const fallbackRegex = /STEPS:\s*([\s\S]*$)/i;
+    
+    let match = text.match(stepsRegex) || text.match(fallbackRegex);
+    
+    functions.logger.info("Steps extraction match details:", {
+      hasMatch: !!match,
+      matchGroups: match ? match.length : 0,
+      rawMatch: match ? match[0] : null,
+      extractedContent: match ? match[1] : null
+    });
+    
+    if (!match || !match[1]) {
+      functions.logger.warn("No steps section found or invalid match structure");
+      return [];
+    }
+    
+    const stepsContent = match[1].trim();
+    if (!stepsContent) {
+      functions.logger.warn("Steps section is empty");
+      return [];
+    }
+    
+    const lines = stepsContent
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && /^\d+\./.test(line));  // Only keep numbered lines
+
+    functions.logger.info("Steps before processing:", {
+      totalLines: lines.length,
+      lines: lines
+    });
+    
+    const processedLines = lines
+      .map(line => {
+        // Preserve the number but clean up the rest of the line
+        const numberMatch = line.match(/^(\d+)\.\s*(.+)$/);
+        if (!numberMatch) {
+          functions.logger.warn("Line doesn't match expected format:", line);
+          return null;
+        }
+        const [, number, content] = numberMatch;
+        return content ? `${number}. ${content.trim()}` : null;
+      })
+      .filter((line): line is string => 
+        line !== null && line.length > 5  // Ensure we have actual content
+      );
+
+    functions.logger.info("Final processed steps:", {
+      totalSteps: processedLines.length,
+      steps: processedLines
+    });
+    
+    return processedLines;
   }
 } 

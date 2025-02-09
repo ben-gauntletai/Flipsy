@@ -13,9 +13,12 @@ export interface VideoMetadata extends RecordMetadata {
   hasTags: string;
   type?: string;
   videoId?: string;
+  summary?: string;
+  transcription?: string;
   ingredients?: string[];
   tools?: string[];
   techniques?: string[];
+  steps?: string[];
   updatedAt?: string;
   createdAt?: string;
   duration?: number;
