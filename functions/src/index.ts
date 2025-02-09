@@ -1933,6 +1933,7 @@ export const processVideo = onCall(
             tools: analysis.tools,
             techniques: analysis.techniques,
             steps: analysis.steps,
+            transcription: analysis.transcription,
             processedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           processingStatus: "completed",

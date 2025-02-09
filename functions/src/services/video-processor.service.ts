@@ -501,12 +501,12 @@ export class VideoProcessorService {
 
   private async generateAnalysis(
     frameAnalyses: FrameAnalysis[],
-    transcription: string
+    transcriptionText: string
   ): Promise<VideoAnalysis> {
     functions.logger.info("Starting generateAnalysis with:", {
       framesCount: frameAnalyses.length,
-      transcriptionLength: transcription.length,
-      transcriptionPreview: transcription.substring(0, 100) + "..."
+      transcriptionLength: transcriptionText.length,
+      transcriptionPreview: transcriptionText.substring(0, 100) + "..."
     });
 
     const prompt = `
@@ -514,7 +514,7 @@ export class VideoProcessorService {
       You have frame-by-frame analyses and audio transcription.
 
       Frame Analyses: ${JSON.stringify(frameAnalyses, null, 2)}
-      Audio Transcription: ${transcription}
+      Audio Transcription: ${transcriptionText}
       
       Provide your analysis in the following EXACT format, maintaining these exact headings:
 
@@ -554,8 +554,6 @@ export class VideoProcessorService {
       - Ensure steps are complete sentences
     `;
 
-    functions.logger.info("Sending analysis prompt to OpenAI");
-
     const response = await this.openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -573,60 +571,70 @@ export class VideoProcessorService {
     
     const analysis = this.parseAnalysisResponse(content);
 
-    // Log the complete parsed analysis
-    functions.logger.info("Complete parsed video analysis:", {
+    // Create the final analysis object with all components
+    const finalAnalysis: VideoAnalysis = {
+      frames: [],
+      transcription: transcriptionText,
       summary: analysis.summary,
       ingredients: analysis.ingredients,
       tools: analysis.tools,
       techniques: analysis.techniques,
       steps: analysis.steps,
-      ingredientsCount: analysis.ingredients.length,
-      toolsCount: analysis.tools.length,
-      techniquesCount: analysis.techniques.length,
-      stepsCount: analysis.steps.length
-    });
-
-    return analysis;
-  }
-
-  private parseAnalysisResponse(content: string): VideoAnalysis {
-    functions.logger.info("Starting to parse analysis response");
-    
-    // Helper function to extract section content
-    const extractSection = (section: string, text: string): string[] => {
-      const regex = new RegExp(`${section}:\\s*\\n([\\s\\S]*?)(?=\\n\\s*[A-Z]+:|$)`);
-      const match = text.match(regex);
-      
-      if (!match) {
-        functions.logger.warn(`No match found for section: ${section}`);
-        return [];
-      }
-      
-      const lines = match[1]
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => line)  // Remove empty lines
-        .map(line => {
-          // Remove bullet points and numbers at the start
-          return line
-            .replace(/^[0-9]+\.\s*/, '')  // Remove numbered lists (e.g., "1. ")
-            .replace(/^[-•]\s*/, '');      // Remove bullet points
-        })
-        .filter(line => line); // Remove any lines that became empty
-      
-      functions.logger.info(`Extracted ${lines.length} items from ${section}:`, lines);
-      return lines;
     };
 
-    // Extract summary differently since it's a paragraph
-    const summaryMatch = content.match(/SUMMARY:\s*\n([\s\S]*?)(?=\n\s*[A-Z]+:|$)/);
-    const summary = summaryMatch ? summaryMatch[1].trim() : '';
+    // Log the complete parsed analysis
+    functions.logger.info("Complete parsed video analysis:", {
+      summary: finalAnalysis.summary,
+      ingredients: finalAnalysis.ingredients,
+      tools: finalAnalysis.tools,
+      techniques: finalAnalysis.techniques,
+      steps: finalAnalysis.steps,
+      transcriptionLength: finalAnalysis.transcription.length,
+      ingredientsCount: finalAnalysis.ingredients.length,
+      toolsCount: finalAnalysis.tools.length,
+      techniquesCount: finalAnalysis.techniques.length,
+      stepsCount: finalAnalysis.steps.length
+    });
 
-    // Extract lists
-    const ingredients = extractSection('INGREDIENTS', content);
-    const tools = extractSection('TOOLS', content);
-    const techniques = extractSection('TECHNIQUES', content);
-    const steps = extractSection('STEPS', content);
+    return finalAnalysis;
+  }
+
+  private parseAnalysisResponse(content: string): Omit<VideoAnalysis, 'frames' | 'transcription'> {
+    functions.logger.info("Starting to parse analysis response");
+
+    const extractSection = (section: string, text: string): string[] => {
+      const regex = new RegExp(`${section}:\\s*([\\s\\S]*?)(?=\\n\\s*(?:[A-Z]+:|$))`, "i");
+      const match = text.match(regex);
+      if (!match) return [];
+      
+      return match[1]
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line)  // Remove empty lines
+        .map(line => line
+          .replace(/^[-*•]\s*/, '')  // Remove bullet points
+          .replace(/^[0-9]+\.\s*/, '')  // Remove numbered list markers
+          .trim()
+        )
+        .filter(Boolean);  // Remove any lines that became empty
+    };
+
+    // Extract each section with detailed logging
+    const summaryMatch = content.match(/SUMMARY:\s*([\s\S]*?)(?=\n\s*(?:INGREDIENTS:|$))/);
+    const summary = (summaryMatch?.[1] || "").trim();
+
+    functions.logger.info("Raw content sections:", {
+      summary: summaryMatch?.[0] || "no match",
+      ingredients: content.match(/INGREDIENTS:[\s\S]*?(?=\n\s*(?:TOOLS:|$))/)?.[0] || "no match",
+      tools: content.match(/TOOLS:[\s\S]*?(?=\n\s*(?:TECHNIQUES:|$))/)?.[0] || "no match",
+      techniques: content.match(/TECHNIQUES:[\s\S]*?(?=\n\s*(?:STEPS:|$))/)?.[0] || "no match",
+      steps: content.match(/STEPS:[\s\S]*?$/)?.[0] || "no match"
+    });
+
+    const ingredients = extractSection("INGREDIENTS", content);
+    const tools = extractSection("TOOLS", content);
+    const techniques = extractSection("TECHNIQUES", content);
+    const steps = extractSection("STEPS", content);
 
     // Log detailed extraction results
     functions.logger.info("Detailed section extraction results:", {
@@ -636,34 +644,43 @@ export class VideoProcessorService {
       },
       ingredients: {
         items: ingredients,
-        count: ingredients.length
+        count: ingredients.length,
+        raw: ingredients
       },
       tools: {
         items: tools,
-        count: tools.length
+        count: tools.length,
+        raw: tools
       },
       techniques: {
         items: techniques,
-        count: techniques.length
+        count: techniques.length,
+        raw: techniques
       },
       steps: {
         items: steps,
-        count: steps.length
+        count: steps.length,
+        raw: steps
       }
     });
 
-    const analysis = {
-      frames: [],  // This is handled elsewhere
-      transcription: "", // This is handled elsewhere
+    // Validate that we have at least some content
+    if (!summary || ingredients.length === 0 || tools.length === 0 || techniques.length === 0 || steps.length === 0) {
+      functions.logger.warn("Some sections are missing content:", {
+        hasSummary: !!summary,
+        ingredientsCount: ingredients.length,
+        toolsCount: tools.length,
+        techniquesCount: techniques.length,
+        stepsCount: steps.length
+      });
+    }
+
+    return {
       summary,
       ingredients,
       tools,
       techniques,
       steps,
     };
-
-    functions.logger.info("Final parsed analysis object:", analysis);
-
-    return analysis;
   }
 } 
