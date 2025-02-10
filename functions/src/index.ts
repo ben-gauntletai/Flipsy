@@ -1119,6 +1119,7 @@ export const analyzeVideo = onDocumentCreated(
           techniques: materializedAnalysis.techniques,
           steps: materializedAnalysis.steps,
           transcription: materializedAnalysis.transcription,
+          transcriptionSegments: analysis.transcriptionSegments,
           processedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         processingStatus: "completed",
@@ -1277,14 +1278,32 @@ export const analyzeExistingVideos = onCall(
           // Process video with new comprehensive analysis
           const analysis = await videoProcessor.processVideo(videoData.videoURL, videoId);
 
-          // Store analysis results
+          // Force early materialization of analysis values
+          const materializedAnalysis = {
+            summary: '' + analysis.summary,
+            transcription: '' + analysis.transcription,
+            ingredients: Array.isArray(analysis.ingredients) ? [...analysis.ingredients] : [],
+            tools: Array.isArray(analysis.tools) ? [...analysis.tools] : [],
+            techniques: Array.isArray(analysis.techniques) ? [...analysis.techniques] : [],
+            steps: Array.isArray(analysis.steps) ? [...analysis.steps] : [],
+            transcriptionSegments: Array.isArray(analysis.transcriptionSegments) ? 
+              analysis.transcriptionSegments.map(segment => ({
+                start: Number(segment.start),
+                end: Number(segment.end),
+                text: String(segment.text)
+              })) : []
+          };
+
+          // Store analysis results using materialized values
           await doc.ref.update({
             analysis: {
-              summary: analysis.summary,
-              ingredients: analysis.ingredients,
-              tools: analysis.tools,
-              techniques: analysis.techniques,
-              steps: analysis.steps,
+              summary: materializedAnalysis.summary,
+              ingredients: materializedAnalysis.ingredients,
+              tools: materializedAnalysis.tools,
+              techniques: materializedAnalysis.techniques,
+              steps: materializedAnalysis.steps,
+              transcription: materializedAnalysis.transcription,
+              transcriptionSegments: materializedAnalysis.transcriptionSegments,
               processedAt: admin.firestore.FieldValue.serverTimestamp(),
             },
           });
@@ -1294,24 +1313,24 @@ export const analyzeExistingVideos = onCall(
             apiKey: process.env.OPENAI_API_KEY,
           });
 
-          // Generate embeddings for different aspects of the video
+          // Generate embeddings using materialized values
           const [summaryEmbedding, transcriptionEmbedding] = await Promise.all([
             openai.embeddings.create({
               model: "text-embedding-3-large",
               input: [
-                analysis.summary,
-                analysis.ingredients.join(" "),
-                analysis.tools.join(" "),
-                analysis.techniques.join(" "),
+                materializedAnalysis.summary,
+                materializedAnalysis.ingredients.join(" "),
+                materializedAnalysis.tools.join(" "),
+                materializedAnalysis.techniques.join(" "),
               ].join(" "),
             }),
             openai.embeddings.create({
               model: "text-embedding-3-large",
-              input: analysis.transcription,
+              input: materializedAnalysis.transcription,
             }),
           ]);
 
-          // Store vectors in Pinecone
+          // Store vectors in Pinecone using materialized values
           const pineconeService = new PineconeService(process.env.PINECONE_API_KEY || "");
           await pineconeService.upsert([
             {
@@ -1320,24 +1339,24 @@ export const analyzeExistingVideos = onCall(
               metadata: {
                 videoId,
                 type: "summary",
-                summary: analysis.summary,
-                ingredients: analysis.ingredients,
-                tools: analysis.tools,
-                techniques: analysis.techniques,
+                summary: materializedAnalysis.summary,
+                ingredients: materializedAnalysis.ingredients,
+                tools: materializedAnalysis.tools,
+                techniques: materializedAnalysis.techniques,
                 userId: videoData.userId,
                 status: videoData.status || "active",
                 privacy: videoData.privacy || "everyone",
                 tags: videoData.tags || [],
                 version: 1,
-                contentLength: analysis.summary.length,
+                contentLength: materializedAnalysis.summary.length,
                 hasDescription: "true",
                 hasAiDescription: "true",
                 hasTags: String(videoData.tags?.length > 0),
                 searchableText: [
-                  analysis.summary,
-                  analysis.ingredients.join(" "),
-                  analysis.tools.join(" "),
-                  analysis.techniques.join(" ")
+                  materializedAnalysis.summary,
+                  materializedAnalysis.ingredients.join(" "),
+                  materializedAnalysis.tools.join(" "),
+                  materializedAnalysis.techniques.join(" ")
                 ].join(" ").toLowerCase()
               },
             },
@@ -1347,17 +1366,17 @@ export const analyzeExistingVideos = onCall(
               metadata: {
                 videoId,
                 type: "transcription",
-                transcription: analysis.transcription,
+                transcription: materializedAnalysis.transcription,
                 userId: videoData.userId,
                 status: videoData.status || "active",
                 privacy: videoData.privacy || "everyone",
                 tags: videoData.tags || [],
                 version: 1,
-                contentLength: analysis.transcription.length,
+                contentLength: materializedAnalysis.transcription.length,
                 hasDescription: "true",
                 hasAiDescription: "true",
                 hasTags: String(videoData.tags?.length > 0),
-                searchableText: analysis.transcription.toLowerCase()
+                searchableText: materializedAnalysis.transcription.toLowerCase()
               },
             },
           ]);
@@ -1743,7 +1762,6 @@ export const migrateHashtagsToLowercase = onCall(async () => {
         hashtagsChanged?: boolean;
       }
     > = {};
-
     for (const videoDoc of videosSnapshot.docs) {
       try {
         const videoData = videoDoc.data();
@@ -1966,7 +1984,13 @@ export const processVideo = onCall(
           ingredients: Array.isArray(analysis.ingredients) ? [ ...analysis.ingredients ] : [],
           tools: Array.isArray(analysis.tools) ? [ ...analysis.tools ] : [],
           techniques: Array.isArray(analysis.techniques) ? [ ...analysis.techniques ] : [],
-          steps: Array.isArray(analysis.steps) ? [ ...analysis.steps ] : []
+          steps: Array.isArray(analysis.steps) ? [ ...analysis.steps ] : [],
+          transcriptionSegments: Array.isArray(analysis.transcriptionSegments) ? 
+            analysis.transcriptionSegments.map(segment => ({
+              start: Number(segment.start),
+              end: Number(segment.end),
+              text: String(segment.text)
+            })) : []
         };
 
         // Use materializedAnalysis for Firestore update
@@ -1978,6 +2002,7 @@ export const processVideo = onCall(
             techniques: materializedAnalysis.techniques,
             steps: materializedAnalysis.steps,
             transcription: materializedAnalysis.transcription,
+            transcriptionSegments: materializedAnalysis.transcriptionSegments,
             processedAt: admin.firestore.FieldValue.serverTimestamp(),
           },
           processingStatus: "completed",
@@ -2198,3 +2223,4 @@ export const verifyEnvironment = onCall(
     };
   },
 );
+

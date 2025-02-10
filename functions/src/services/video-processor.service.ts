@@ -5,7 +5,7 @@ import * as os from "os";
 import * as path from "path";
 import { Storage } from "@google-cloud/storage";
 import OpenAI from "openai";
-import { ChatCompletionContentPartImage, ChatCompletionContentPartText } from "openai/resources/chat/completions";
+import { ChatCompletionContentPartImage, ChatCompletionContentPartText, ChatCompletionContentPart } from "openai/resources/chat/completions";
 import { PineconeService } from "../services/pinecone.service";
 import * as admin from "firebase-admin";
 import { VideoMetadata } from "../types";
@@ -33,6 +33,7 @@ interface FrameAnalysis {
 interface VideoAnalysis {
   frames: FrameAnalysis[];
   transcription: string;
+  transcriptionSegments: Array<{ start: number; end: number; text: string }>;
   summary: string;
   ingredients: string[];
   tools: string[];
@@ -150,7 +151,7 @@ export class VideoProcessorService {
       }
 
       // Start audio extraction and transcription immediately
-      const transcriptionPromise = new Promise<string>(async (resolve, reject) => {
+      const transcriptionPromise = new Promise<{ text: string; segments: Array<{ start: number; end: number; text: string }> }>(async (resolve, reject) => {
         try {
           // Extract audio
           await new Promise<void>((resolveExtraction, rejectExtraction) => {
@@ -309,17 +310,17 @@ export class VideoProcessorService {
       const transcriptionMetadata: VideoMetadata = {
             videoId,
             type: "transcription",
-            transcription: analysis.transcription,
+            transcription: transcription.text,
             userId: videoData.userId,
             status: videoData.status || "active",
             privacy: videoData.privacy || "everyone",
             tags: (videoData.tags || []).slice(0, 50),
             version: 1,
-            contentLength: analysis.transcription.length,
+            contentLength: transcription.text.length,
             hasDescription: "true",
             hasAiDescription: "true",
             hasTags: String(videoData.tags?.length > 0),
-            searchableText: analysis.transcription.toLowerCase()
+            searchableText: transcription.text.toLowerCase()
       };
 
       // Add initial state validation
@@ -375,9 +376,9 @@ export class VideoProcessorService {
       // Add detailed validation logging for transcription metadata
       functions.logger.info("Transcription metadata validation:", {
         original: {
-          transcriptionLength: analysis.transcription.length,
-          transcriptionContent: analysis.transcription.substring(0, 100),
-          searchableTextLength: analysis.transcription.toLowerCase().length
+          transcriptionLength: transcription.text.length,
+          transcriptionContent: transcription.text.substring(0, 100),
+          searchableTextLength: transcription.text.toLowerCase().length
         },
         metadata: {
           transcriptionLength: transcriptionMetadata.transcription?.length,
@@ -387,7 +388,7 @@ export class VideoProcessorService {
           validation: {
             hasTranscription: !!transcriptionMetadata.transcription,
             hasSearchableText: !!transcriptionMetadata.searchableText,
-            transcriptionMatches: transcriptionMetadata.transcription === validateMetadata(analysis.transcription),
+            transcriptionMatches: transcriptionMetadata.transcription === validateMetadata(transcription.text),
             contentPreserved: transcriptionMetadata.transcription?.length > 0 && transcriptionMetadata.searchableText?.length > 0
           }
         }
@@ -492,10 +493,10 @@ export class VideoProcessorService {
           wasValidated: analysis.summary.length !== validatedSummaryMetadata.summary?.length
         },
         transcription: {
-          original: analysis.transcription.length,
+          original: transcription.text.length,
           validated: validatedTranscriptionMetadata.transcription?.length,
           totalSize: JSON.stringify(validatedTranscriptionMetadata).length,
-          wasValidated: analysis.transcription.length !== validatedTranscriptionMetadata.transcription?.length
+          wasValidated: transcription.text.length !== validatedTranscriptionMetadata.transcription?.length
         }
       });
 
@@ -504,10 +505,10 @@ export class VideoProcessorService {
         analysisDetails: {
           summaryLength: analysis.summary.length,
           summaryContent: analysis.summary.substring(0, 100) + "...",
-          transcriptionLength: analysis.transcription.length,
-          transcriptionContent: analysis.transcription.substring(0, 100) + "...",
+          transcriptionLength: transcription.text.length,
+          transcriptionContent: transcription.text.substring(0, 100) + "...",
           hasValidSummary: analysis.summary.length > 0,
-          hasValidTranscription: analysis.transcription.length > 0
+          hasValidTranscription: transcription.text.length > 0
         }
       });
 
@@ -522,8 +523,8 @@ export class VideoProcessorService {
       functions.logger.info("Creating embeddings:", {
         summaryEmbeddingLength: summaryEmbeddingInput.length,
         summaryEmbeddingPreview: summaryEmbeddingInput.substring(0, 100) + "...",
-        transcriptionEmbeddingLength: analysis.transcription.length,
-        transcriptionEmbeddingPreview: analysis.transcription.substring(0, 100) + "..."
+        transcriptionEmbeddingLength: transcription.text.length,
+        transcriptionEmbeddingPreview: transcription.text.substring(0, 100) + "..."
       });
 
       // Create embeddings with detailed logging
@@ -535,7 +536,7 @@ export class VideoProcessorService {
         }),
         this.openai.embeddings.create({
           model: "text-embedding-3-large",
-          input: analysis.transcription,
+          input: transcription.text,
         })
       ]);
       
@@ -889,7 +890,7 @@ export class VideoProcessorService {
     });
   }
 
-  private async transcribeAudio(audioPath: string): Promise<string> {
+  private async transcribeAudio(audioPath: string): Promise<{ text: string; segments: Array<{ start: number; end: number; text: string }> }> {
     functions.logger.info("Starting audio transcription");
     
     try {
@@ -901,26 +902,38 @@ export class VideoProcessorService {
       // Create a File object from the stream
       const file = new File([await this.streamToBuffer(audioStream)], "audio.mp3", { type: "audio/mp3" });
 
-      // Transcribe audio
+      // Transcribe audio with timestamps
       const response = await this.openai.audio.transcriptions.create({
         file,
         model: "whisper-1",
         language: "en",
+        response_format: "verbose_json",
+        timestamp_granularities: ["segment"]
       });
 
-      const transcription = response.text;
+      const transcription = {
+        text: response.text,
+        segments: response.segments.map(segment => ({
+          start: segment.start,
+          end: segment.end,
+          text: segment.text
+        }))
+      };
+
       functions.logger.info("Transcription details:", {
         hasResponse: !!response,
         hasText: !!response.text,
-        transcriptionLength: transcription.length,
-        transcriptionPreview: transcription.substring(0, 100) + "...",
-        isEmpty: transcription.length === 0,
+        transcriptionLength: transcription.text.length,
+        transcriptionPreview: transcription.text.substring(0, 100) + "...",
+        segmentsCount: transcription.segments.length,
+        isEmpty: transcription.text.length === 0,
         model: "whisper-1"
       });
 
       functions.logger.info("Transcription completed", {
-        transcriptionLength: transcription.length,
-        transcriptionPreview: transcription.substring(0, 100) + "..."
+        transcriptionLength: transcription.text.length,
+        transcriptionPreview: transcription.text.substring(0, 100) + "...",
+        segments: transcription.segments.slice(0, 2) // Log first two segments as preview
       });
       
       return transcription;
@@ -942,116 +955,75 @@ export class VideoProcessorService {
 
   private async generateAnalysis(
     frameAnalyses: FrameAnalysis[],
-    transcriptionText: string
+    transcriptionData: { text: string; segments: Array<{ start: number; end: number; text: string }> }
   ): Promise<VideoAnalysis> {
     functions.logger.info("Starting generateAnalysis with:", {
-      framesCount: frameAnalyses.length,
-      transcriptionLength: transcriptionText.length,
-      transcriptionPreview: transcriptionText.substring(0, 100) + "...",
-      hasValidTranscription: transcriptionText.length > 0
+      frameAnalysesCount: frameAnalyses.length,
+      transcriptionLength: transcriptionData.text.length,
+      segmentsCount: transcriptionData.segments.length
     });
 
-    const prompt = `
-      Analyze this cooking video content and create a structured analysis.
-      You have frame-by-frame analyses and audio transcription.
+    // Create messages for GPT analysis
+    const messages: ChatCompletionContentPart[] = [
+      {
+        type: "text",
+        text: `You are a cooking video analyzer. Based on the video frames and transcription, create a comprehensive analysis of the cooking video.
+        
+        Transcription:
+        ${transcriptionData.text}
 
-      Frame Analyses: ${JSON.stringify(frameAnalyses, null, 2)}
-      Audio Transcription: ${transcriptionText}
-      
-      Provide your analysis in the following EXACT format, maintaining these exact headings and formatting:
+        Transcription Segments:
+        ${transcriptionData.segments.map(segment => 
+          `[${segment.start}s - ${segment.end}s]: ${segment.text}`
+        ).join('\n')}
+        
+        Frame Analyses:
+        ${frameAnalyses.map((frame, index) => 
+          `Frame ${index + 1} (at ${frame.timestamp}s):
+          Description: ${frame.description}
+          Ingredients: ${frame.detectedIngredients.join(', ')}
+          Tools: ${frame.detectedTools.join(', ')}
+          Techniques: ${frame.detectedTechniques.join(', ')}`
+        ).join('\n\n')}
+        
+        Please provide:
+        1. A concise summary of the recipe
+        2. A complete and exhaustive list of ingredients
+        3. A complete and exhaustive list of tools used
+        4. A complete and exhaustive list of cooking techniques demonstrated
+        5. Step-by-step instructions with timestamps when they start
+        (Put this at the end of the step, also make surethat the timestamps are 
+        informed by the transcription segments and frame timestamps)
+        
+        Format your response as a JSON object with the following keys:
+        {
+          "summary": "string",
+          "ingredients": ["string"],
+          "tools": ["string"],
+          "techniques": ["string"],
+          "steps": ["string"]
+        }`
+      }
+    ];
 
-      SUMMARY:
-      Write a clear, concise summary of the recipe in a single paragraph.
-
-      INGREDIENTS:
-      List only the food/drink ingredients, one per line:
-      - ingredient 1
-      - ingredient 2
-      etc.
-
-      TOOLS:
-      List only the physical tools and equipment used, one per line:
-      - tool 1
-      - tool 2
-      etc.
-
-      TECHNIQUES:
-      List only the cooking techniques and methods used, one per line:
-      - technique 1
-      - technique 2
-      etc.
-
-      STEPS:
-      List the complete recipe steps in order, one per line, numbered:
-      1. First step
-      2. Second step
-      3. Third step
-      etc.
-
-      IMPORTANT:
-      - Follow the EXACT formatting shown above for each section
-      - Each section MUST start with the heading (e.g., "STEPS:")
-      - Use bullet points (-) for ingredients, tools, and techniques
-      - Use numbers (1., 2., etc.) for steps
-      - Do not include labels like "Tools:" or "Ingredients:" within the lists themselves
-      - Keep each item concise and avoid mixing categories
-      - For tools, only include all physical cooking equipment (e.g., "bowl", "whisk", "knife", blender)
-      - For techniques, only include actions (e.g., "whisking", "blending", "cutting", "stirring")
-      - For ingredients, only include food/drink items
-      - Ensure steps are complete sentences
-      - Each step must be on its own line and start with a number
-    `;
-
-    functions.logger.info("Sending analysis request to OpenAI with prompt length:", prompt.length);
-
-    const response = await this.openai.chat.completions.create({
+    // Get analysis from GPT-4
+    const completion = await this.openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-      max_tokens: 2000,
+      messages: [{ role: "user", content: messages }],
+      response_format: { type: "json_object" }
     });
 
-    functions.logger.info("OpenAI response details:", {
-      hasChoices: response.choices.length > 0,
-      firstChoice: response.choices[0] ? {
-        finishReason: response.choices[0].finish_reason,
-        hasContent: !!response.choices[0].message.content,
-        contentLength: response.choices[0].message.content?.length || 0,
-        contentPreview: response.choices[0].message.content?.substring(0, 100) || "NO CONTENT"
-      } : "NO CHOICES"
-    });
+    // Parse the response
+    const analysis = JSON.parse(completion.choices[0].message.content || "{}");
 
-    const content = response.choices[0].message.content || "";
-    
-    // Log the complete raw response
-    functions.logger.info("Complete raw analysis response from OpenAI:", {
-      fullResponse: content,
-      responseLength: content.length,
-      hasSummarySection: content.includes("SUMMARY:"),
-      summaryIndex: content.indexOf("SUMMARY:"),
-      nextSectionIndex: content.indexOf("INGREDIENTS:"),
-      summaryContent: content.substring(
-        content.indexOf("SUMMARY:") + 8,
-        content.indexOf("INGREDIENTS:")
-      ).trim()
-    });
-    
-    const analysis = this.parseAnalysisResponse(content);
-
-    // Log the analysis object before creating final analysis
-    functions.logger.info("Analysis after parsing:", {
-      summaryLength: analysis.summary.length,
-      summaryContent: analysis.summary,
-      ingredientsCount: analysis.ingredients.length,
-      toolsCount: analysis.tools.length,
-      techniquesCount: analysis.techniques.length,
-      stepsCount: analysis.steps.length
-    });
+    // Add transcriptionSegments to the parsed analysis
+    analysis.transcriptionSegments = transcriptionData.segments;
 
     // Create the final analysis object with all components
     const finalAnalysis: VideoAnalysis = {
       frames: [],
-      transcription: transcriptionText,
+      transcription: transcriptionData.text,
+      transcriptionSegments: transcriptionData.segments,
       summary: analysis.summary,
       ingredients: analysis.ingredients,
       tools: analysis.tools,
@@ -1062,20 +1034,22 @@ export class VideoProcessorService {
     // Add validation logging
     functions.logger.info("Generated final analysis:", {
       transcriptionSource: {
-        originalLength: transcriptionText.length,
+        originalLength: transcriptionData.text.length,
         finalLength: finalAnalysis.transcription.length,
-        isPreserved: transcriptionText === finalAnalysis.transcription
+        segmentsCount: finalAnalysis.transcriptionSegments.length,
+        isPreserved: transcriptionData.text === finalAnalysis.transcription
       },
       analysisComponents: {
-      summaryLength: finalAnalysis.summary.length,
-      ingredientsCount: finalAnalysis.ingredients.length,
-      toolsCount: finalAnalysis.tools.length,
-      techniquesCount: finalAnalysis.techniques.length,
-      stepsCount: finalAnalysis.steps.length
+        summaryLength: finalAnalysis.summary.length,
+        ingredientsCount: finalAnalysis.ingredients.length,
+        toolsCount: finalAnalysis.tools.length,
+        techniquesCount: finalAnalysis.techniques.length,
+        stepsCount: finalAnalysis.steps.length
       },
       validation: {
         hasTranscription: finalAnalysis.transcription.length > 0,
         hasSummary: finalAnalysis.summary.length > 0,
+        hasSegments: finalAnalysis.transcriptionSegments.length > 0,
         transcriptionPreview: finalAnalysis.transcription.substring(0, 100) + "...",
         summaryPreview: finalAnalysis.summary.substring(0, 100) + "..."
       }
@@ -1166,6 +1140,7 @@ export class VideoProcessorService {
       tools,
       techniques,
       steps,
+      transcriptionSegments: []
     };
   }
 

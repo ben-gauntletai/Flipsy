@@ -63,3 +63,18 @@ export interface SearchResponse {
   query: string;
   results: SearchResultData[];
 }
+
+export interface VideoAnalysis {
+  frames: any[];
+  transcription: string;
+  transcriptionSegments: Array<{
+    start: number;
+    end: number;
+    text: string;
+  }>;
+  summary: string;
+  ingredients: string[];
+  tools: string[];
+  techniques: string[];
+  steps: string[];
+}

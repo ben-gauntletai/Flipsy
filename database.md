@@ -40,6 +40,20 @@ Main collection for storing video metadata.
     description: string;  // AI-generated description of the video content
     generatedAt: timestamp; // When the AI description was generated
   };
+  analysis: {
+    summary: string;
+    ingredients: string[];
+    tools: string[];
+    techniques: string[];
+    steps: string[];
+    transcription: string;
+    transcriptionSegments: {
+      start: number;
+      end: number;
+      text: string;
+    }[];
+    processedAt: timestamp;
+  };
 }
 ```
 
@@ -180,26 +194,3 @@ Collection of videos in this collection.
   // This is a copy of the video data for quick access
 }
 ```
-
-## Firebase Storage Configuration
-
-The application uses Firebase Storage for storing video and image content. The storage bucket configuration is managed through environment variables:
-
-- **Storage Bucket:** `flipsy-gauntlet.firebasestorage.app`
-- **Environment Variable:** `STORAGE_BUCKET`
-
-### Storage Structure
-
-```
-/
-├── videos/                 # Video content
-│   ├── {videoId}/         # Individual video folders
-│   │   ├── original.mp4   # Original uploaded video
-│   │   └── thumbnail.jpg  # Video thumbnail
-├── avatars/               # User avatar images
-│   └── {userId}.jpg      # User avatar image
-└── collections/           # Collection thumbnails
-    └── {collectionId}.jpg # Collection thumbnail
-```
-
-All file paths in the database (videoURL, thumbnailURL, avatarURL) are stored as complete URLs to the storage bucket.
