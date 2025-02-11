@@ -3,6 +3,71 @@ import 'package:flutter/gestures.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:async';
 
+class AudioStateManager {
+  static int? _currentlyPlayingIndex;
+  static bool _globalMute = false;
+  static bool _isTransitioning = false; // Add lock for state transitions
+
+  static int? get currentlyPlayingIndex => _currentlyPlayingIndex;
+  static bool get isGloballyMuted => _globalMute;
+
+  // Attempt to claim audio focus, returns true if successful
+  static bool requestAudioFocus(int index) {
+    if (_isTransitioning) return false;
+    _isTransitioning = true;
+
+    try {
+      // Only grant focus if no other video is playing or this video already has focus
+      if (_currentlyPlayingIndex == null || _currentlyPlayingIndex == index) {
+        _currentlyPlayingIndex = index;
+        return true;
+      }
+      return false;
+    } finally {
+      _isTransitioning = false;
+    }
+  }
+
+  static void releaseAudioFocus(int index) {
+    if (_isTransitioning) return;
+    _isTransitioning = true;
+
+    try {
+      // Only release if this video has focus
+      if (_currentlyPlayingIndex == index) {
+        _currentlyPlayingIndex = null;
+      }
+    } finally {
+      _isTransitioning = false;
+    }
+  }
+
+  static bool shouldPlayAudio(int index) {
+    return !_globalMute && _currentlyPlayingIndex == index;
+  }
+
+  static void setGlobalMute(bool mute) {
+    if (_isTransitioning) return;
+    _isTransitioning = true;
+
+    try {
+      _globalMute = mute;
+      if (mute) {
+        _currentlyPlayingIndex = null;
+      }
+    } finally {
+      _isTransitioning = false;
+    }
+  }
+
+  // Clean up when leaving the feed
+  static void reset() {
+    _currentlyPlayingIndex = null;
+    _globalMute = false;
+    _isTransitioning = false;
+  }
+}
+
 class VideoTimeline extends StatefulWidget {
   final VideoPlayerController controller;
   final List<String> steps;

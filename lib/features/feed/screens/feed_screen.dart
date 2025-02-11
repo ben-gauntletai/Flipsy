@@ -84,6 +84,14 @@ class VideoControllerManager {
       return;
     }
 
+    // First, mute all videos and release audio focus
+    _controllers.forEach((idx, controller) {
+      controller.setVolume(0);
+      if (AudioStateManager.currentlyPlayingIndex == idx) {
+        AudioStateManager.releaseAudioFocus(idx);
+      }
+    });
+
     // Preload videos in the window
     final startIdx = math.max(0, newIndex - keepPrevious);
     final endIdx = math.min(videos.length - 1, newIndex + preloadForward);
@@ -96,39 +104,58 @@ class VideoControllerManager {
       print(
           'VideoControllerManager: Initializing controller for current index $newIndex');
       await _initializeController(newIndex, videos[newIndex]);
+
+      // Update audio state for the new current video
+      final currentController = _controllers[newIndex];
+      if (currentController != null) {
+        // Always try to get audio focus for the new video
+        if (AudioStateManager.requestAudioFocus(newIndex)) {
+          print(
+              'VideoControllerManager: Granted audio focus to video $newIndex');
+          currentController.setVolume(1);
+        } else {
+          print('VideoControllerManager: No audio focus for video $newIndex');
+          currentController.setVolume(0);
+        }
+      }
+
+      // Update current index
+      _currentIndex = newIndex;
+
+      // Initialize controllers in the window
+      for (int i = startIdx; i <= endIdx; i++) {
+        if (i != newIndex && i >= 0 && i < videos.length) {
+          try {
+            await _initializeController(i, videos[i]);
+            // Ensure non-current videos are muted
+            final controller = _controllers[i];
+            if (controller != null) {
+              controller.setVolume(0);
+            }
+          } catch (e) {
+            print(
+                'VideoControllerManager: Failed to initialize controller for index $i: $e');
+          }
+        }
+      }
+
+      // Clean up controllers outside the window
+      final List<int> toDispose = [];
+      for (final index in _controllers.keys) {
+        if (!shouldBeLoaded(index)) {
+          toDispose.add(index);
+        }
+      }
+
+      // Dispose controllers sequentially to avoid race conditions
+      for (final index in toDispose) {
+        if (!_disposingControllers.contains(index)) {
+          await _disposeController(index);
+        }
+      }
     } catch (e) {
       print(
           'VideoControllerManager: Failed to initialize controller for current index: $e');
-    }
-
-    // Update current index
-    _currentIndex = newIndex;
-
-    // Initialize controllers in the window
-    for (int i = startIdx; i <= endIdx; i++) {
-      if (i != newIndex && i >= 0 && i < videos.length) {
-        try {
-          await _initializeController(i, videos[i]);
-        } catch (e) {
-          print(
-              'VideoControllerManager: Failed to initialize controller for index $i: $e');
-        }
-      }
-    }
-
-    // Clean up controllers outside the window
-    final List<int> toDispose = [];
-    for (final index in _controllers.keys) {
-      if (!shouldBeLoaded(index)) {
-        toDispose.add(index);
-      }
-    }
-
-    // Dispose controllers sequentially to avoid race conditions
-    for (final index in toDispose) {
-      if (!_disposingControllers.contains(index)) {
-        await _disposeController(index);
-      }
     }
   }
 
@@ -323,11 +350,10 @@ class VideoControllerManager {
     }
   }
 
-  void pauseAllExcept(int index) {
+  void muteAllExcept(int index) {
     _controllers.forEach((idx, controller) {
-      if (idx != index && controller.value.isPlaying) {
-        print('VideoControllerManager: Pausing video at index $idx');
-        controller.pause();
+      if (idx != index) {
+        controller.setVolume(0);
       }
     });
   }
@@ -446,7 +472,8 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
     if (!widget.isVisible) {
       // Pause all videos when feed is not visible
-      _controllerManager.pauseAllExcept(-1);
+      _controllerManager.muteAllExcept(-1);
+      AudioStateManager.reset(); // Reset audio state when feed is not visible
     } else if (widget.isVisible && _currentPage >= 0) {
       // Resume current video if feed becomes visible
       _controllerManager.getController(_currentPage).then((controller) {
@@ -454,6 +481,10 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           print('FeedScreen: Resuming video at index $_currentPage');
           controller.play();
           controller.setLooping(true);
+          // Try to restore audio focus
+          if (AudioStateManager.requestAudioFocus(_currentPage)) {
+            controller.setVolume(1);
+          }
         }
       });
     }
@@ -464,18 +495,33 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
     final page = _pageController.page?.round() ?? 0;
     if (page != _currentPage) {
-      setState(() => _currentPage = page);
-      _controllerManager.updateCurrentIndex(page, _videos);
+      print('FeedScreen: Page changed from $_currentPage to $page');
 
-      // Only play the video if the feed is visible
-      if (widget.isVisible) {
+      // Update state and controllers
+      setState(() => _currentPage = page);
+
+      // Handle video and audio transition
+      _controllerManager.updateCurrentIndex(page, _videos).then((_) {
+        if (!mounted || !widget.isVisible) return;
+
+        // Get the new controller and set up playback
         _controllerManager.getController(page).then((controller) {
-          if (controller != null) {
+          if (controller != null && mounted) {
+            // Start playing the video
             controller.play();
             controller.setLooping(true);
+
+            // Explicitly try to get audio focus for the new video
+            if (AudioStateManager.requestAudioFocus(page)) {
+              print('FeedScreen: Setting audio for new video at index $page');
+              controller.setVolume(1);
+            } else {
+              print('FeedScreen: New video at index $page will be muted');
+              controller.setVolume(0);
+            }
           }
         });
-      }
+      });
     }
 
     // Load more videos if we're near the end
@@ -491,7 +537,9 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      _controllerManager.pauseAllExcept(-1); // Pause all videos
+      _controllerManager.muteAllExcept(-1);
+      AudioStateManager
+          .reset(); // Reset audio state when app is paused/inactive
     } else if (state == AppLifecycleState.resumed && mounted) {
       // Only resume playback if the feed is visible
       if (widget.isVisible && _currentPage >= 0) {
@@ -501,6 +549,10 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 'FeedScreen: Resuming video at index $_currentPage after app resume');
             controller.play();
             controller.setLooping(true);
+            // Try to restore audio focus
+            if (AudioStateManager.requestAudioFocus(_currentPage)) {
+              controller.setVolume(1);
+            }
           }
         });
       }
@@ -968,6 +1020,16 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     // Initialize video controller
     _initializeController();
 
+    // Set initial mute state based on AudioStateManager
+    _isMuted = !AudioStateManager.shouldPlayAudio(widget.index);
+    if (!_isMuted && widget.isVisible && widget.index == widget.currentPage) {
+      if (AudioStateManager.requestAudioFocus(widget.index)) {
+        _isMuted = false;
+      } else {
+        _isMuted = true;
+      }
+    }
+
     // Initialize like status and count
     _localLikesCount = widget.video.likesCount;
     _initializeLikeStatus();
@@ -1213,6 +1275,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   @override
   void dispose() {
     print('VideoFeedItem: Disposing video ${widget.video.id}');
+    // Release audio focus if we have it
+    if (AudioStateManager.currentlyPlayingIndex == widget.index) {
+      AudioStateManager.releaseAudioFocus(widget.index);
+    }
     _commentCountSubscription?.cancel();
     _likeCountSubscription?.cancel();
     _doubleTapTimer?.cancel();
@@ -1307,10 +1373,32 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       _videoController!.play();
       _videoController!.setLooping(true);
       _isPlaying = true;
+
+      // Try to restore audio state if this video previously had focus
+      final shouldPlayAudio = AudioStateManager.shouldPlayAudio(widget.index);
+      print(
+          'VideoFeedItem: Checking audio state - shouldPlayAudio: $shouldPlayAudio');
+
+      if (shouldPlayAudio ||
+          AudioStateManager.requestAudioFocus(widget.index)) {
+        print('VideoFeedItem: Granted audio focus - index: ${widget.index}');
+        _videoController!.setVolume(1);
+        _isMuted = false;
+      } else {
+        print('VideoFeedItem: No audio focus - index: ${widget.index}');
+        _videoController!.setVolume(0);
+        _isMuted = true;
+      }
     } else if (!shouldPlay && _isPlaying) {
       print('VideoFeedItem: Pausing playback for ${widget.video.id}');
       _videoController!.pause();
       _isPlaying = false;
+
+      // Release audio focus if we had it
+      if (AudioStateManager.currentlyPlayingIndex == widget.index) {
+        print('VideoFeedItem: Releasing audio focus - index: ${widget.index}');
+        AudioStateManager.releaseAudioFocus(widget.index);
+      }
     }
   }
 
@@ -1330,11 +1418,39 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   void _toggleMute() {
     if (_videoController == null) return;
 
-    setState(() {
-      _isMuted = !_isMuted;
-      _showMuteIcon = true;
-      _videoController!.setVolume(_isMuted ? 0 : 1);
-    });
+    final newMuteState = !_isMuted;
+    print(
+        'VideoFeedItem: Toggling mute - newMuteState: $newMuteState, index: ${widget.index}');
+
+    if (!newMuteState) {
+      // Attempting to unmute - request audio focus
+      if (AudioStateManager.requestAudioFocus(widget.index)) {
+        print(
+            'VideoFeedItem: Unmuting - granted audio focus - index: ${widget.index}');
+        setState(() {
+          _isMuted = false;
+          _showMuteIcon = true;
+        });
+        _videoController!.setVolume(1);
+      } else {
+        print(
+            'VideoFeedItem: Could not get audio focus - staying muted - index: ${widget.index}');
+        // Stay muted if we couldn't get focus
+        setState(() {
+          _isMuted = true;
+          _showMuteIcon = true;
+        });
+      }
+    } else {
+      // Muting - release audio focus if we have it
+      print('VideoFeedItem: Muting video - index: ${widget.index}');
+      setState(() {
+        _isMuted = true;
+        _showMuteIcon = true;
+      });
+      _videoController!.setVolume(0);
+      AudioStateManager.releaseAudioFocus(widget.index);
+    }
 
     Future.delayed(const Duration(seconds: 1), () {
       if (mounted) {
