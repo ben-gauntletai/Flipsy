@@ -53,7 +53,7 @@ class MyApp extends StatelessWidget {
         child: MaterialApp(
           title: 'Flipsy',
           theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.red),
             useMaterial3: true,
           ),
           home: BlocBuilder<AuthBloc, AuthState>(

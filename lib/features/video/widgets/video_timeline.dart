@@ -583,8 +583,7 @@ class _VideoTimelineState extends State<VideoTimeline>
                                           (segmentEnd - segmentStart),
                                       height: _isHovering ? 18 : 16,
                                       decoration: BoxDecoration(
-                                        color: widget.color ??
-                                            Theme.of(context).primaryColor,
+                                        color: widget.color ?? Colors.black,
                                         borderRadius: BorderRadius.circular(9),
                                       ),
                                     ),

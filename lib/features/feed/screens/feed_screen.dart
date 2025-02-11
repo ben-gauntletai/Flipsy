@@ -1669,18 +1669,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // User Info Section with gradient background
+                // User Info Section
                 Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withOpacity(0.6),
-                      ],
-                    ),
-                  ),
                   padding: const EdgeInsets.only(
                     left: 8,
                     right: 100,
