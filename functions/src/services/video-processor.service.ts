@@ -1019,8 +1019,8 @@ export class VideoProcessorService {
         1. A concise summary of the recipe
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
-        4. A complete and exhaustive list of cooking techniques demonstrated
-        5. A complete and exhaustive list of Step-by-step instructions with timestamps [X.XXs] that are informed by the transcription segments and frame timestamps when they start (6 words max)
+        4. A complete and exhaustive list of cooking techniques demonstrated (make sure they aren't trivial)
+        5. A complete and exhaustive list of Step-by-step instructions with timestamps [X.XXs] that are informed by the transcription segments and frame timestamps when they start (6 words max but this only applies to this rule)
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
         
         Format your response as a JSON object with the following keys:
