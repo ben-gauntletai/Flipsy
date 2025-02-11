@@ -339,6 +339,7 @@ class VideoAnalysis {
   final List<String> techniques;
   final List<String> steps;
   final DateTime processedAt;
+  final List<TranscriptionSegment> transcriptionSegments;
 
   VideoAnalysis({
     required this.summary,
@@ -347,6 +348,7 @@ class VideoAnalysis {
     required this.techniques,
     required this.steps,
     required this.processedAt,
+    required this.transcriptionSegments,
   });
 
   factory VideoAnalysis.fromMap(Map<String, dynamic> map) {
@@ -357,6 +359,10 @@ class VideoAnalysis {
       techniques: List<String>.from(map['techniques'] ?? []),
       steps: List<String>.from(map['steps'] ?? []),
       processedAt: (map['processedAt'] as Timestamp).toDate(),
+      transcriptionSegments: (map['transcriptionSegments'] as List<dynamic>?)
+              ?.map((segment) => TranscriptionSegment.fromMap(segment))
+              .toList() ??
+          [],
     );
   }
 
@@ -368,6 +374,36 @@ class VideoAnalysis {
       'techniques': techniques,
       'steps': steps,
       'processedAt': processedAt,
+      'transcriptionSegments':
+          transcriptionSegments.map((s) => s.toMap()).toList(),
+    };
+  }
+}
+
+class TranscriptionSegment {
+  final double start;
+  final double end;
+  final String text;
+
+  TranscriptionSegment({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+
+  factory TranscriptionSegment.fromMap(Map<String, dynamic> map) {
+    return TranscriptionSegment(
+      start: (map['start'] as num).toDouble(),
+      end: (map['end'] as num).toDouble(),
+      text: map['text'] as String,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'start': start,
+      'end': end,
+      'text': text,
     };
   }
 }

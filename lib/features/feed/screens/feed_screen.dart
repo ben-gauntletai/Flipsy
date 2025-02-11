@@ -1701,6 +1701,74 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                             widget.video.analysis!.steps.isNotEmpty)
                           Stack(
                             children: [
+                              // Subtitles layer (below timeline)
+                              if (widget.video.analysis
+                                          ?.transcriptionSegments !=
+                                      null &&
+                                  widget.video.analysis!.transcriptionSegments
+                                      .isNotEmpty)
+                                SizedBox(
+                                  width: MediaQuery.of(context).size.width,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: 8,
+                                      left: 8,
+                                      right: 100,
+                                    ),
+                                    child: ValueListenableBuilder<
+                                        VideoPlayerValue>(
+                                      valueListenable: _videoController!,
+                                      builder: (context, value, child) {
+                                        final currentPosition =
+                                            value.position.inMilliseconds /
+                                                1000.0;
+
+                                        // Find the current subtitle
+                                        final currentSegment = widget.video
+                                            .analysis!.transcriptionSegments
+                                            .firstWhere(
+                                          (segment) =>
+                                              currentPosition >=
+                                                  segment.start &&
+                                              currentPosition <= segment.end,
+                                          orElse: () => TranscriptionSegment(
+                                            start: 0,
+                                            end: 0,
+                                            text: '',
+                                          ),
+                                        );
+
+                                        if (currentSegment.text.isEmpty) {
+                                          return const SizedBox();
+                                        }
+
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color:
+                                                Colors.black.withOpacity(0.5),
+                                            borderRadius:
+                                                BorderRadius.circular(4),
+                                          ),
+                                          child: Text(
+                                            currentSegment.text,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
                               // Full width timeline
                               SizedBox(
                                 width: MediaQuery.of(context).size.width,
