@@ -19,6 +19,7 @@ import '../../../features/navigation/screens/main_navigation_screen.dart';
 import '../../../services/video_cache_service.dart';
 import 'dart:io';
 import '../../../features/video/widgets/collection_selection_sheet.dart';
+import '../../../features/video/widgets/video_timeline.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class FeedScreen extends StatefulWidget {
@@ -1659,54 +1660,74 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             ),
           ),
 
-          // Bottom User Info
+          // Bottom Section with Timeline and User Info
           Positioned(
-            left: 8,
-            right: 100,
-            bottom: 20,
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                GestureDetector(
-                  onTap: () => _navigateToProfile(context),
-                  child: Text(
-                    '@$displayName',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
+                // User Info Section with gradient background
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.6),
+                      ],
                     ),
                   ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  widget.video.description ?? '',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
+                  padding: const EdgeInsets.only(
+                    left: 8,
+                    right: 100,
+                    bottom: 8,
+                    top: 32,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 10),
-                // Music Info
-                Row(
-                  children: [
-                    const Icon(
-                      FontAwesomeIcons.music,
-                      color: Colors.white,
-                      size: 12,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Original Sound - $displayName',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () => _navigateToProfile(context),
+                        child: Text(
+                          '@$displayName',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 6),
+                      Text(
+                        widget.video.description ?? '',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
                 ),
+                // Timeline (if available)
+                if (widget.video.analysis?.steps != null &&
+                    widget.video.analysis!.steps.isNotEmpty)
+                  VideoTimeline(
+                    controller: _videoController!,
+                    steps: widget.video.analysis!.steps,
+                    timestamps: widget.video.analysis!.steps.map((step) {
+                      final match =
+                          RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
+                      return match != null
+                          ? double.parse(match.group(1)!)
+                          : 0.0;
+                    }).toList(),
+                  ),
               ],
             ),
           ),

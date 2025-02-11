@@ -991,7 +991,7 @@ export class VideoProcessorService {
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated
-        5. Step-by-step instructions with timestamps when they start
+        5. Step-by-step instructions with timestamps when they start (6 words max)
         (Put this at the end of the step, also make surethat the timestamps are 
         informed by the transcription segments and frame timestamps)
         
