@@ -6,6 +6,10 @@ export class PineconeService {
   private pinecone: Pinecone;
   private readonly SIMILARITY_THRESHOLD = 0.3;
   private readonly INDEX_NAME = "flipsy-videos";
+  private readonly WEIGHTS = {
+    summary: 1.2,  // Give slightly higher weight to summary matches
+    transcription: 1.0
+  };
 
   constructor(apiKey: string) {
     try {
@@ -334,25 +338,71 @@ export class PineconeService {
     limit?: number;
   }): Promise<SearchResultData> {
     try {
-      const index = this.pinecone.index(this.INDEX_NAME);
-      const queryResponse = await index.query({
-        vector: queryVector,
-        topK: limit,
-        includeMetadata: true,
+      functions.logger.info("Starting hybrid search with parameters:", {
+        vectorLength: queryVector.length,
+        limit
       });
 
-      const filteredMatches = queryResponse.matches.filter(
-        (match) => (match.score || 0) >= this.SIMILARITY_THRESHOLD,
-      );
+      const index = this.pinecone.index(this.INDEX_NAME);
+      
+      // Search in both vector spaces
+      const [summaryResponse, transcriptionResponse] = await Promise.all([
+        index.query({
+          vector: queryVector,
+          topK: limit,
+          includeMetadata: true,
+          filter: { type: "summary" }
+        }),
+        index.query({
+          vector: queryVector,
+          topK: limit,
+          includeMetadata: true,
+          filter: { type: "transcription" }
+        })
+      ]);
 
-      const results: SearchResult[] = filteredMatches.map((match) => ({
-        id: match.id,
-        score: match.score || 0,
-        metadata: match.metadata as VideoMetadata,
-        type: "semantic",
-      }));
+      functions.logger.info("Received search responses:", {
+        summaryMatches: summaryResponse.matches.length,
+        transcriptionMatches: transcriptionResponse.matches.length
+      });
 
-      return { results };
+      // Combine and deduplicate results
+      const allMatches = [...summaryResponse.matches, ...transcriptionResponse.matches];
+      const videoIdSet = new Set<string>();
+      const dedupedResults: SearchResult[] = [];
+
+      // Sort by weighted score and deduplicate by videoId
+      allMatches
+        .sort((a, b) => {
+          const aMetadata = a.metadata as VideoMetadata;
+          const bMetadata = b.metadata as VideoMetadata;
+          const aScore = (a.score || 0) * this.WEIGHTS[aMetadata.type as keyof typeof this.WEIGHTS];
+          const bScore = (b.score || 0) * this.WEIGHTS[bMetadata.type as keyof typeof this.WEIGHTS];
+          return bScore - aScore;
+        })
+        .forEach(match => {
+          const metadata = match.metadata as VideoMetadata;
+          const weightedScore = (match.score || 0) * this.WEIGHTS[metadata.type as keyof typeof this.WEIGHTS];
+          
+          if (!videoIdSet.has(metadata.videoId) && weightedScore >= this.SIMILARITY_THRESHOLD) {
+            videoIdSet.add(metadata.videoId);
+            dedupedResults.push({
+              id: match.id,
+              score: weightedScore,
+              metadata: metadata,
+              type: "semantic"
+            });
+          }
+        });
+
+      functions.logger.info("Search results processed:", {
+        totalMatches: allMatches.length,
+        dedupedResults: dedupedResults.length,
+        finalResults: Math.min(dedupedResults.length, limit)
+      });
+
+      // Limit final results
+      return { results: dedupedResults.slice(0, limit) };
     } catch (error) {
       const errorDetails = this.formatError(error);
       functions.logger.error("Error performing hybrid search:", errorDetails);

@@ -632,7 +632,6 @@ class _VideoTimelineState extends State<VideoTimeline>
                                     (index) {
                                   final startTime = _fullTimestamps[index];
                                   final endTime = _fullTimestamps[index + 1];
-
                                   final segmentStart = startTime /
                                       widget
                                           .controller.value.duration.inSeconds;
@@ -640,18 +639,36 @@ class _VideoTimelineState extends State<VideoTimeline>
                                       widget
                                           .controller.value.duration.inSeconds;
 
-                                  return Positioned(
-                                    left: constraints.maxWidth * segmentStart,
-                                    top: 0,
-                                    child: Container(
-                                      width: constraints.maxWidth *
-                                          (segmentEnd - segmentStart),
-                                      height: _isHovering ? 18 : 16,
-                                      decoration: BoxDecoration(
-                                        color: widget.color ?? Colors.black,
-                                        borderRadius: BorderRadius.circular(9),
+                                  return Stack(
+                                    children: [
+                                      // Segment
+                                      Positioned(
+                                        left:
+                                            constraints.maxWidth * segmentStart,
+                                        top: 0,
+                                        child: Container(
+                                          width: constraints.maxWidth *
+                                              (segmentEnd - segmentStart),
+                                          height: _isHovering ? 18 : 16,
+                                          decoration: BoxDecoration(
+                                            color: widget.color ?? Colors.black,
+                                          ),
+                                        ),
                                       ),
-                                    ),
+                                      // White separator line (except for the last segment)
+                                      if (index < _fullTimestamps.length - 2)
+                                        Positioned(
+                                          left: constraints.maxWidth *
+                                                  segmentEnd -
+                                              1,
+                                          top: 0,
+                                          child: Container(
+                                            width: 2,
+                                            height: _isHovering ? 18 : 16,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                    ],
                                   );
                                 }),
                                 // Current position dot
