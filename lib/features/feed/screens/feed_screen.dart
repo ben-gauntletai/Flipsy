@@ -1745,7 +1745,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
           // Right Side Action Buttons (moved after timeline in the Stack)
           Positioned(
             right: 8,
-            bottom: 20,
+            bottom:
+                60, // Increased from 20 to 60 to move buttons up above timeline
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
