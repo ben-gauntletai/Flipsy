@@ -1957,12 +1957,16 @@ class VideoService {
         return [];
       }
 
-      final List<dynamic> results = result.data['results'] ?? [];
+      final List<dynamic> results =
+          (result.data['results'] as List<dynamic>?) ?? [];
       print('VideoService: Processing ${results.length} results');
 
       // Get the IDs from the search results
-      final videoIds =
-          results.map((result) => result['data']['id'].toString()).toList();
+      final videoIds = results.map((result) {
+        final metadata = Map<String, dynamic>.from(result['metadata'] as Map);
+        return metadata['videoId'].toString();
+      }).toList();
+
       print('VideoService: Found video IDs: $videoIds');
 
       // Fetch all videos in parallel
