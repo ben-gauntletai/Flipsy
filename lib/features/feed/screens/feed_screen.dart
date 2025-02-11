@@ -815,6 +815,7 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     return Scaffold(
       body: Stack(
         children: [
+          // Main Content
           if (_isLoading)
             const Center(
               child: CircularProgressIndicator(),
@@ -843,8 +844,9 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   Text(
                     _isFollowingFeed
-                        ? 'No videos from followed users'
+                        ? 'No videos from followed users yet\nFollow some creators to see their content!'
                         : 'No videos available',
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
@@ -869,50 +871,63 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
               },
             ),
 
-          // Top Navigation (Following/For You)
+          // Top Navigation (Following/For You) - Always visible
           SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      GestureDetector(
-                        onTap: () => _switchFeed(true),
-                        child: Text(
-                          'Following',
-                          style: TextStyle(
-                            color: _isFollowingFeed
-                                ? Colors.white
-                                : Colors.white60,
-                            fontSize: 15,
-                            fontWeight: _isFollowingFeed
-                                ? FontWeight.bold
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 20),
-                      GestureDetector(
-                        onTap: () => _switchFeed(false),
-                        child: Text(
-                          'For You',
-                          style: TextStyle(
-                            color: !_isFollowingFeed
-                                ? Colors.white
-                                : Colors.white60,
-                            fontSize: 15,
-                            fontWeight: !_isFollowingFeed
-                                ? FontWeight.bold
-                                : FontWeight.w500,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.7),
+                    Colors.transparent,
+                  ],
                 ),
-              ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        GestureDetector(
+                          onTap: () => _switchFeed(true),
+                          child: Text(
+                            'Following',
+                            style: TextStyle(
+                              color: _isFollowingFeed
+                                  ? Colors.white
+                                  : Colors.white60,
+                              fontSize: 15,
+                              fontWeight: _isFollowingFeed
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 20),
+                        GestureDetector(
+                          onTap: () => _switchFeed(false),
+                          child: Text(
+                            'For You',
+                            style: TextStyle(
+                              color: !_isFollowingFeed
+                                  ? Colors.white
+                                  : Colors.white60,
+                              fontSize: 15,
+                              fontWeight: !_isFollowingFeed
+                                  ? FontWeight.bold
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
 
