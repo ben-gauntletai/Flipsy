@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:video_player/video_player.dart';
+import 'dart:async';
 
 class VideoTimeline extends StatefulWidget {
   final VideoPlayerController controller;
@@ -31,6 +32,8 @@ class _VideoTimelineState extends State<VideoTimeline>
   bool _isShowingStep = false;
   bool _isHovering = false;
   double? _hoverPosition;
+  double? _previewPosition;
+  Timer? _seekTimer;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late Animation<double> _slideAnimation;
@@ -69,6 +72,7 @@ class _VideoTimelineState extends State<VideoTimeline>
 
   @override
   void dispose() {
+    _seekTimer?.cancel();
     print('VideoTimeline disposing');
     widget.controller.removeListener(_updatePosition);
     _positionNotifier.dispose();
@@ -192,6 +196,13 @@ class _VideoTimelineState extends State<VideoTimeline>
     final double localDx = box.globalToLocal(details.globalPosition).dx;
     final double progress =
         (localDx.clamp(0, constraints.maxWidth)) / constraints.maxWidth;
+
+    // Immediately update preview position and seek
+    setState(() {
+      _previewPosition = progress;
+    });
+
+    // Perform the seek immediately for clicks
     final Duration position = widget.controller.value.duration * progress;
     widget.controller.seekTo(position);
     _showStepText();
@@ -250,6 +261,197 @@ class _VideoTimelineState extends State<VideoTimeline>
     return widget.controller.value.duration * _hoverPosition!;
   }
 
+  // Replace the current position dot with this new method
+  Widget _buildPositionIndicator(double progress, BoxConstraints constraints) {
+    // Use preview position while dragging, otherwise use actual progress
+    final displayProgress =
+        _isDragging ? (_previewPosition ?? progress) : progress;
+
+    return Positioned(
+      left: (constraints.maxWidth * displayProgress) - 10,
+      top: -6,
+      child: Container(
+        width: _isHovering ? 24 : 20,
+        height: _isHovering ? 24 : 20,
+        decoration: BoxDecoration(
+          color: widget.color ?? Theme.of(context).primaryColor,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white,
+            width: 3,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 4,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Add a preview time indicator
+  Widget _buildTimePreview(BoxConstraints constraints) {
+    if (!_isDragging && !_isHovering) return const SizedBox();
+
+    final previewProgress =
+        _isDragging ? (_previewPosition ?? 0.0) : _hoverPosition ?? 0.0;
+    final previewDuration = widget.controller.value.duration * previewProgress;
+
+    return Positioned(
+      left: (constraints.maxWidth * previewProgress)
+          .clamp(40.0, constraints.maxWidth - 40),
+      bottom: 24,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black87,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          _formatDuration(previewDuration),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _getCurrentStepText(double currentTime) {
+    int currentStepIndex =
+        _fullTimestamps.indexWhere((timestamp) => timestamp > currentTime) - 1;
+    if (currentStepIndex < 0) currentStepIndex = 0;
+    if (currentStepIndex >= _fullSteps.length)
+      currentStepIndex = _fullSteps.length - 1;
+    return _fullSteps[currentStepIndex];
+  }
+
+  void _handleDragStart(DragStartDetails details, BoxConstraints constraints) {
+    if (!mounted) return;
+    setState(() {
+      _isDragging = true;
+      _isShowingStep = true;
+    });
+
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final double localDx = box.globalToLocal(details.globalPosition).dx;
+    final double progress =
+        (localDx.clamp(0, constraints.maxWidth)) / constraints.maxWidth;
+
+    setState(() {
+      _previewPosition = progress;
+    });
+
+    _fadeController.forward();
+  }
+
+  void _handleDragUpdate(
+      DragUpdateDetails details, BoxConstraints constraints) {
+    if (!mounted || !widget.controller.value.isInitialized) return;
+
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final double localDx = box.globalToLocal(details.globalPosition).dx;
+    final double progress =
+        (localDx.clamp(0, constraints.maxWidth)) / constraints.maxWidth;
+
+    // Calculate drag speed (pixels per millisecond)
+    final dragSpeed = details.primaryDelta?.abs() ?? 0;
+    final isFineScrubbing = dragSpeed < 2.0; // Threshold for fine scrubbing
+
+    // Update preview position and step text immediately
+    setState(() {
+      _previewPosition = progress;
+      _isShowingStep = true;
+    });
+
+    // Cancel any pending seek timer
+    _seekTimer?.cancel();
+
+    // Use different debounce times based on scrubbing mode
+    final debounceTime = isFineScrubbing
+        ? 16
+        : 33; // 16ms (60fps) for fine scrubbing, 33ms (~30fps) for normal
+
+    _seekTimer = Timer(Duration(milliseconds: debounceTime), () {
+      if (!mounted) return;
+      final Duration position = widget.controller.value.duration * progress;
+      widget.controller.seekTo(position);
+    });
+  }
+
+  void _handleDragEnd(DragEndDetails details) {
+    if (!mounted) return;
+
+    // Cancel any pending seek timer
+    _seekTimer?.cancel();
+
+    // Perform final seek immediately if needed
+    if (_previewPosition != null) {
+      final Duration position =
+          widget.controller.value.duration * _previewPosition!;
+      widget.controller.seekTo(position);
+    }
+
+    setState(() {
+      _isDragging = false;
+      _previewPosition = null;
+    });
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) {
+        _fadeController.reverse().then((_) {
+          if (mounted) {
+            setState(() => _isShowingStep = false);
+          }
+        });
+      }
+    });
+  }
+
+  // Add a method to handle hover position updates more frequently
+  void _handleHoverUpdate(PointerHoverEvent event, BoxConstraints constraints) {
+    if (!mounted) return;
+    final RenderBox box = context.findRenderObject() as RenderBox;
+    final double localDx = box.globalToLocal(event.position).dx;
+    final double progress = (localDx.clamp(0, box.size.width)) / box.size.width;
+    setState(() {
+      _hoverPosition = progress;
+      _isShowingStep = true;
+    });
+  }
+
+  Widget _buildStepText(double currentTime) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.8),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: Colors.white24,
+          width: 1,
+        ),
+      ),
+      child: Text(
+        _getCurrentStepText(currentTime),
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+        ),
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.controller.value.isInitialized) {
@@ -274,21 +476,34 @@ class _VideoTimelineState extends State<VideoTimeline>
             left: 0,
             right: 0,
             bottom: 0,
-            child: Container(
-              height: 18,
-              width: double.infinity,
-              child: MouseRegion(
-                onEnter: (_) => setState(() => _isHovering = true),
-                onExit: (_) {
-                  if (!mounted) return;
-                  setState(() {
-                    _isHovering = false;
-                    _hoverPosition = null;
-                  });
-                },
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Stack(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return MouseRegion(
+                  onEnter: (_) => setState(() => _isHovering = true),
+                  onExit: (_) {
+                    if (!mounted) return;
+                    setState(() {
+                      _isHovering = false;
+                      _hoverPosition = null;
+                      _isShowingStep = false;
+                    });
+                  },
+                  onHover: (event) {
+                    if (!mounted) return;
+                    final RenderBox box =
+                        context.findRenderObject() as RenderBox;
+                    final double localDx = box.globalToLocal(event.position).dx;
+                    final double progress =
+                        (localDx.clamp(0, box.size.width)) / box.size.width;
+                    setState(() {
+                      _hoverPosition = progress;
+                      _isShowingStep = true;
+                    });
+                  },
+                  child: Container(
+                    height: 18,
+                    width: double.infinity,
+                    child: Stack(
                       clipBehavior: Clip.none,
                       children: [
                         // Background
@@ -376,150 +591,80 @@ class _VideoTimelineState extends State<VideoTimeline>
                                   );
                                 }),
                                 // Current position dot
-                                Positioned(
-                                  left: (constraints.maxWidth * progress) - 10,
-                                  top: -6,
-                                  child: Container(
-                                    width: _isHovering ? 24 : 20,
-                                    height: _isHovering ? 24 : 20,
-                                    decoration: BoxDecoration(
-                                      color: widget.color ??
-                                          Theme.of(context).primaryColor,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: Colors.white,
-                                        width: 3,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black26,
-                                          blurRadius: 4,
-                                          spreadRadius: 1,
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
+                                _buildPositionIndicator(progress, constraints),
                                 // Gesture detector for timeline interactions
                                 GestureDetector(
                                   onTapDown: (details) => _handleTimelineClick(
                                       details, constraints),
-                                  onHorizontalDragStart: (details) {
-                                    if (!mounted) return;
-                                    _isDragging = true;
-                                    _handleTimelineClick(
-                                      TapDownDetails(
-                                        globalPosition: details.globalPosition,
-                                        kind: PointerDeviceKind.touch,
-                                      ),
-                                      constraints,
-                                    );
-                                  },
-                                  onHorizontalDragUpdate: (details) {
-                                    if (!mounted ||
-                                        !widget.controller.value.isInitialized)
-                                      return;
-                                    final RenderBox box =
-                                        context.findRenderObject() as RenderBox;
-                                    final double localDx = box
-                                        .globalToLocal(details.globalPosition)
-                                        .dx;
-                                    final double progress = (localDx.clamp(
-                                            0, constraints.maxWidth)) /
-                                        constraints.maxWidth;
-                                    final Duration position =
-                                        widget.controller.value.duration *
-                                            progress;
-                                    _positionNotifier.value = position;
-                                    widget.controller.seekTo(position);
-                                  },
-                                  onHorizontalDragEnd: (_) {
-                                    if (!mounted) return;
-                                    _isDragging = false;
-                                    Future.delayed(const Duration(seconds: 2),
-                                        _hideStepText);
-                                  },
+                                  onHorizontalDragStart: (details) =>
+                                      _handleDragStart(details, constraints),
+                                  onHorizontalDragUpdate: (details) =>
+                                      _handleDragUpdate(details, constraints),
+                                  onHorizontalDragEnd: _handleDragEnd,
                                   child: Container(
                                     width: double.infinity,
                                     height: 18,
                                     color: Colors.transparent,
                                   ),
                                 ),
+                                // Step text with fade and slide animation
+                                if (_isShowingStep ||
+                                    _isDragging ||
+                                    _isHovering)
+                                  Positioned(
+                                    left: 0,
+                                    right: 0,
+                                    bottom: 32,
+                                    child: AnimatedBuilder(
+                                      animation: _fadeController,
+                                      builder: (context, child) {
+                                        return Transform.translate(
+                                          offset:
+                                              Offset(0, _slideAnimation.value),
+                                          child: Opacity(
+                                            opacity: _fadeAnimation.value,
+                                            child: child,
+                                          ),
+                                        );
+                                      },
+                                      child: ValueListenableBuilder<Duration>(
+                                        valueListenable: _positionNotifier,
+                                        builder: (context, position, _) {
+                                          if (!mounted ||
+                                              !widget.controller.value
+                                                  .isInitialized) {
+                                            return const SizedBox();
+                                          }
+
+                                          final currentTime = _isDragging &&
+                                                  _previewPosition != null
+                                              ? _previewPosition! *
+                                                  widget.controller.value
+                                                      .duration.inSeconds
+                                              : _isHovering &&
+                                                      _hoverPosition != null
+                                                  ? _hoverPosition! *
+                                                      widget.controller.value
+                                                          .duration.inSeconds
+                                                  : position.inSeconds
+                                                      .toDouble();
+
+                                          return _buildStepText(currentTime);
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                // Time preview
+                                _buildTimePreview(constraints),
                               ],
                             );
                           },
                         ),
-                        // Step text with fade and slide animation - Adjusted position
-                        if (_isShowingStep || _isDragging)
-                          Positioned(
-                            left: 0,
-                            right: 0,
-                            bottom: 32,
-                            child: AnimatedBuilder(
-                              animation: _fadeController,
-                              builder: (context, child) {
-                                return Transform.translate(
-                                  offset: Offset(0, _slideAnimation.value),
-                                  child: Opacity(
-                                    opacity: _fadeAnimation.value,
-                                    child: child,
-                                  ),
-                                );
-                              },
-                              child: ValueListenableBuilder<Duration>(
-                                valueListenable: _positionNotifier,
-                                builder: (context, position, _) {
-                                  if (!mounted ||
-                                      !widget.controller.value.isInitialized) {
-                                    return const SizedBox();
-                                  }
-
-                                  final currentTime =
-                                      position.inSeconds.toDouble();
-                                  int currentStepIndex =
-                                      _fullTimestamps.indexWhere((timestamp) =>
-                                              timestamp > currentTime) -
-                                          1;
-                                  if (currentStepIndex < 0)
-                                    currentStepIndex = 0;
-                                  if (currentStepIndex >= _fullSteps.length)
-                                    currentStepIndex = _fullSteps.length - 1;
-
-                                  return Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 6, horizontal: 8),
-                                    margin: const EdgeInsets.symmetric(
-                                        horizontal: 16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.8),
-                                      borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(
-                                        color: Colors.white24,
-                                        width: 1,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      _fullSteps[currentStepIndex],
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
                       ],
-                    );
-                  },
-                ),
-              ),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
