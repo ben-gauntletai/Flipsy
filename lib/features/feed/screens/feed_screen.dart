@@ -1578,7 +1578,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
           _videoController!.play();
         }
       },
-      behavior: HitTestBehavior.opaque,
+      behavior: HitTestBehavior.deferToChild,
       child: Stack(
         children: [
           SizedBox.expand(
@@ -1635,7 +1635,114 @@ class _VideoFeedItemState extends State<VideoFeedItem>
               ),
             ),
 
-          // Right Side Action Buttons
+          // Bottom Section with Timeline and User Info
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.7),
+                    Colors.black,
+                  ],
+                ),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  // Left side with user info and timeline
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // User Info Section
+                        Container(
+                          padding: const EdgeInsets.only(
+                            left: 8,
+                            right: 100,
+                            bottom: 8,
+                            top: 32,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              GestureDetector(
+                                onTap: () => _navigateToProfile(context),
+                                child: Text(
+                                  '@$displayName',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                widget.video.description ?? '',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Timeline (if available)
+                        if (widget.video.analysis?.steps != null &&
+                            widget.video.analysis!.steps.isNotEmpty)
+                          Stack(
+                            children: [
+                              // Full width timeline
+                              SizedBox(
+                                width: MediaQuery.of(context).size.width,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(
+                                    bottom: 16,
+                                  ),
+                                  child: VideoTimeline(
+                                    controller: _videoController!,
+                                    steps: widget.video.analysis!.steps,
+                                    timestamps: widget.video.analysis!.steps
+                                        .map((step) {
+                                      final match = RegExp(r'\[(\d+\.?\d*)s\]$')
+                                          .firstMatch(step);
+                                      return match != null
+                                          ? double.parse(match.group(1)!)
+                                          : 0.0;
+                                    }).toList(),
+                                  ),
+                                ),
+                              ),
+                              // Invisible touch blocker for button area
+                              Positioned(
+                                right: 0,
+                                top: 0,
+                                bottom: 16,
+                                width: 100,
+                                child: Container(
+                                  color: Colors.transparent,
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Right Side Action Buttons (moved after timeline in the Stack)
           Positioned(
             right: 8,
             bottom: 20,
@@ -1652,7 +1759,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                     ),
                   ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
                 // Like Button with optimistic count
                 _buildActionButton(
@@ -1664,7 +1771,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   color: _localLikeState ? Colors.red : Colors.white,
                   onTap: _handleLikeAction,
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
                 // Comment Button
                 _buildActionButton(
@@ -1673,7 +1780,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   iconSize: 28,
                   onTap: () => _showComments(context),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
                 // Bookmark Button
                 _buildActionButton(
@@ -1685,82 +1792,80 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   color: _localBookmarkState ? Colors.yellow : Colors.white,
                   onTap: _handleBookmarkAction,
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
                 // More Button
                 GestureDetector(
-                  onTap: () {
-                    print('More button tapped');
-                    try {
-                      showModalBottomSheet(
-                        context: context,
-                        backgroundColor: Colors.white,
-                        barrierColor: Colors.black54,
-                        isDismissible: true,
-                        enableDrag: true,
-                        isScrollControlled: false,
-                        shape: const RoundedRectangleBorder(
-                          borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(20),
-                          ),
-                        ),
-                        builder: (BuildContext context) {
-                          print('Building bottom sheet content');
-                          return SafeArea(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 16.0),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  // Sheet indicator
-                                  Container(
-                                    width: 40,
-                                    height: 4,
-                                    margin: const EdgeInsets.only(bottom: 16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.grey[300],
-                                      borderRadius: BorderRadius.circular(2),
-                                    ),
-                                  ),
-                                  ListTile(
-                                    leading: const Icon(
-                                      Icons.collections_bookmark,
-                                      color: Colors.black87,
-                                    ),
-                                    title: const Text(
-                                      'Add to Collection',
-                                      style: TextStyle(
-                                        color: Colors.black87,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    onTap: () {
-                                      print('Add to Collection option tapped');
-                                      Navigator.pop(context);
-                                      _showCollectionSelectionSheet(context);
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      ).then((_) {
-                        print('Bottom sheet closed');
-                      }).catchError((error) {
-                        print('Error showing bottom sheet: $error');
-                      });
-                    } catch (e, stackTrace) {
-                      print('Exception while showing bottom sheet: $e');
-                      print('Stack trace: $stackTrace');
-                    }
-                  },
                   behavior: HitTestBehavior.opaque,
+                  onTapDown: (details) {
+                    print('More button tap down detected');
+                  },
+                  onTapUp: (details) {
+                    print('More button tap up detected');
+                    showModalBottomSheet(
+                      context: context,
+                      backgroundColor: Colors.white,
+                      barrierColor: Colors.black54,
+                      isDismissible: true,
+                      enableDrag: true,
+                      isScrollControlled: false,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(20),
+                        ),
+                      ),
+                      builder: (BuildContext context) {
+                        print('Building bottom sheet content');
+                        return SafeArea(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // Sheet indicator
+                                Container(
+                                  width: 40,
+                                  height: 4,
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                                ListTile(
+                                  leading: const Icon(
+                                    Icons.collections_bookmark,
+                                    color: Colors.black87,
+                                  ),
+                                  title: const Text(
+                                    'Add to Collection',
+                                    style: TextStyle(
+                                      color: Colors.black87,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  onTap: () {
+                                    print('Add to Collection option tapped');
+                                    Navigator.pop(context);
+                                    _showCollectionSelectionSheet(context);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ).then((_) {
+                      print('Bottom sheet closed');
+                    }).catchError((error) {
+                      print('Error showing bottom sheet: $error');
+                    });
+                  },
                   child: Container(
-                    width: 40,
-                    height: 40,
+                    width: 48, // Increased touch target
+                    height: 48, // Increased touch target
+                    padding: const EdgeInsets.all(4),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.3),
                       shape: BoxShape.circle,
@@ -1772,68 +1877,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                     ),
                   ),
                 ),
-              ],
-            ),
-          ),
-
-          // Bottom Section with Timeline and User Info
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // User Info Section
-                Container(
-                  padding: const EdgeInsets.only(
-                    left: 8,
-                    right: 100,
-                    bottom: 8,
-                    top: 32,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        onTap: () => _navigateToProfile(context),
-                        child: Text(
-                          '@$displayName',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.video.description ?? '',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                // Timeline (if available)
-                if (widget.video.analysis?.steps != null &&
-                    widget.video.analysis!.steps.isNotEmpty)
-                  VideoTimeline(
-                    controller: _videoController!,
-                    steps: widget.video.analysis!.steps,
-                    timestamps: widget.video.analysis!.steps.map((step) {
-                      final match =
-                          RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
-                      return match != null
-                          ? double.parse(match.group(1)!)
-                          : 0.0;
-                    }).toList(),
-                  ),
               ],
             ),
           ),

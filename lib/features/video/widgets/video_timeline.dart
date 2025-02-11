@@ -553,21 +553,12 @@ class _VideoTimelineState extends State<VideoTimeline>
                       _isShowingStep = false;
                     });
                   },
-                  onHover: (event) {
-                    if (!mounted) return;
-                    final RenderBox box =
-                        context.findRenderObject() as RenderBox;
-                    final double localDx = box.globalToLocal(event.position).dx;
-                    final double progress =
-                        (localDx.clamp(0, box.size.width)) / box.size.width;
-                    setState(() {
-                      _hoverPosition = progress;
-                      _isShowingStep = true;
-                    });
-                  },
+                  onHover: (event) => _handleHoverUpdate(event, constraints),
                   child: Container(
                     height: 18,
                     width: double.infinity,
+                    padding: EdgeInsets.zero,
+                    margin: EdgeInsets.zero,
                     child: Stack(
                       clipBehavior: Clip.none,
                       children: [
@@ -618,13 +609,10 @@ class _VideoTimelineState extends State<VideoTimeline>
                                 // Background track
                                 Container(
                                   width: double.infinity,
-                                  height: 4,
-                                  margin:
-                                      const EdgeInsets.symmetric(vertical: 7),
+                                  height: _isHovering ? 18 : 16,
                                   decoration: BoxDecoration(
                                     color: widget.backgroundColor ??
                                         Colors.white24,
-                                    borderRadius: BorderRadius.circular(2),
                                   ),
                                 ),
                                 // Segment bubbles making up the purple line
@@ -674,18 +662,17 @@ class _VideoTimelineState extends State<VideoTimeline>
                                 // Current position dot
                                 _buildPositionIndicator(progress, constraints),
                                 // Gesture detector for timeline interactions
-                                GestureDetector(
-                                  onTapDown: (details) => _handleTimelineClick(
-                                      details, constraints),
-                                  onHorizontalDragStart: (details) =>
-                                      _handleDragStart(details, constraints),
-                                  onHorizontalDragUpdate: (details) =>
-                                      _handleDragUpdate(details, constraints),
-                                  onHorizontalDragEnd: _handleDragEnd,
-                                  child: Container(
-                                    width: double.infinity,
-                                    height: 18,
-                                    color: Colors.transparent,
+                                Positioned.fill(
+                                  child: GestureDetector(
+                                    onTapDown: (details) =>
+                                        _handleTimelineClick(
+                                            details, constraints),
+                                    onHorizontalDragStart: (details) =>
+                                        _handleDragStart(details, constraints),
+                                    onHorizontalDragUpdate: (details) =>
+                                        _handleDragUpdate(details, constraints),
+                                    onHorizontalDragEnd: _handleDragEnd,
+                                    behavior: HitTestBehavior.opaque,
                                   ),
                                 ),
                                 // Step text with fade and slide animation
