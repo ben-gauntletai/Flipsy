@@ -63,6 +63,13 @@ export class VideoProcessorService {
     this.openai = new OpenAI({
       apiKey: openaiKey,
     });
+
+    // Add logging for OpenAI configuration
+    functions.logger.info("OpenAI Configuration:", {
+      hasApiKey: !!openaiKey,
+      apiKeyPrefix: openaiKey ? openaiKey.substring(0, 3) + "..." : "none",
+      baseURL: this.openai.baseURL, // Log the base URL being used
+    });
     
     this.storageBucket = storageBucket;
     
@@ -86,6 +93,28 @@ export class VideoProcessorService {
     try {
       functions.logger.info(`Starting video processing for ${videoId}`);
       
+      // Add OpenAI API check
+      try {
+        // Test the OpenAI connection
+        const testResponse = await this.openai.embeddings.create({
+          model: "text-embedding-ada-002",
+          input: "test",
+        });
+        functions.logger.info("OpenAI API test successful:", {
+          model: testResponse.model,
+          hasEmbedding: !!testResponse.data[0]?.embedding,
+          embeddingLength: testResponse.data[0]?.embedding?.length,
+        });
+      } catch (openaiError) {
+        functions.logger.error("OpenAI API test failed:", {
+          error: openaiError,
+          message: openaiError.message,
+          type: openaiError.type,
+          status: openaiError.status,
+        });
+        throw openaiError;
+      }
+
       // Get video data from Firestore
       const db = admin.firestore();
       const videoDoc = await db.collection("videos").doc(videoId).get();
@@ -991,9 +1020,8 @@ export class VideoProcessorService {
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated
-        5. Step-by-step instructions with timestamps when they start (6 words max)
-        (Put this at the end of the step, also make surethat the timestamps are 
-        informed by the transcription segments and frame timestamps)
+        5. Step-by-step instructions with timestamps [X.XXs] that are informed by the transcription segments and frame timestamps when they start (6 words max)
+        (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
         
         Format your response as a JSON object with the following keys:
         {
