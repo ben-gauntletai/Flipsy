@@ -249,7 +249,8 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
   }
 
   void _cancelUpload() {
-    // The upload will be canceled in the VideoService
+    // Cancel the upload in the VideoService
+    _videoService.cancelCurrentUpload();
     setState(() {
       _isUploading = false;
       _error = 'Upload canceled';

@@ -33,10 +33,17 @@ class VideoService {
   final Map<int, Completer<void>> _initializationCompleters = {};
   final Map<int, bool> _initializationStarted = {};
   final Set<int> _disposingControllers = {};
+  UploadTask? _currentUploadTask;
 
   VideoService._internal();
 
   String get _currentUserId => FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  // Add this method to cancel the current upload
+  void cancelCurrentUpload() {
+    _currentUploadTask?.cancel();
+    _currentUploadTask = null;
+  }
 
   // Generate and upload thumbnail
   Future<String> generateAndUploadThumbnail(
@@ -90,25 +97,39 @@ class VideoService {
       );
 
       // Upload with metadata
-      final uploadTask = storageRef.putFile(videoFile, metadata);
+      _currentUploadTask = storageRef.putFile(videoFile, metadata);
 
       // Monitor upload progress
-      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-        final progress = snapshot.bytesTransferred / snapshot.totalBytes;
-        onProgress?.call(progress);
-        print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
-      }, onError: (error) {
-        print('Error in upload stream: $error');
-      });
+      final subscription = _currentUploadTask!.snapshotEvents.listen(
+        (TaskSnapshot snapshot) {
+          final progress = snapshot.bytesTransferred / snapshot.totalBytes;
+          onProgress?.call(progress);
+          print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
+        },
+        onError: (error) {
+          print('Error in upload stream: $error');
+          _currentUploadTask = null;
+        },
+        cancelOnError: true,
+      );
 
-      // Wait for upload to complete and get download URL
-      final snapshot = await uploadTask;
-      final downloadUrl = await snapshot.ref.getDownloadURL();
+      try {
+        // Wait for upload to complete and get download URL
+        final snapshot = await _currentUploadTask!;
+        final downloadUrl = await snapshot.ref.getDownloadURL();
 
-      print('Video file uploaded successfully: $downloadUrl');
-      return downloadUrl;
+        print('Video file uploaded successfully: $downloadUrl');
+        _currentUploadTask = null;
+        return downloadUrl;
+      } finally {
+        subscription.cancel();
+      }
     } catch (e) {
       print('Error uploading video file: $e');
+      _currentUploadTask = null;
+      if (e is FirebaseException && e.code == 'canceled') {
+        throw Exception('Upload cancelled by user');
+      }
       throw Exception('Failed to upload video file: $e');
     }
   }
@@ -133,6 +154,19 @@ class VideoService {
         onProgress: onProgress,
       );
       print('VideoService: Video uploaded successfully: $videoURL');
+
+      // If we get here and _currentUploadTask is null, it means upload was cancelled
+      if (_currentUploadTask == null) {
+        print('VideoService: Upload was cancelled, cleaning up...');
+        // Delete the uploaded file since upload was cancelled
+        try {
+          final fileRef = _storage.refFromURL(videoURL);
+          await fileRef.delete();
+        } catch (e) {
+          print('VideoService: Error cleaning up cancelled upload: $e');
+        }
+        throw Exception('Upload cancelled by user');
+      }
 
       // Generate and upload thumbnail
       print('VideoService: Generating and uploading thumbnail');
