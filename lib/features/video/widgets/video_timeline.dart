@@ -102,6 +102,7 @@ class _VideoTimelineState extends State<VideoTimeline>
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
   late Animation<double> _slideAnimation;
+  Timer? _hideTextTimer;
 
   @override
   void initState() {
@@ -138,6 +139,7 @@ class _VideoTimelineState extends State<VideoTimeline>
   @override
   void dispose() {
     _seekTimer?.cancel();
+    _hideTextTimer?.cancel();
     print('VideoTimeline disposing');
     widget.controller.removeListener(_updatePosition);
     _positionNotifier.dispose();
@@ -151,14 +153,20 @@ class _VideoTimelineState extends State<VideoTimeline>
   }
 
   void _showStepText() {
+    _hideTextTimer?.cancel();
     setState(() => _isShowingStep = true);
     _fadeController.forward();
   }
 
   void _hideStepText() {
-    _fadeController.reverse().then((_) {
+    _hideTextTimer?.cancel();
+    _hideTextTimer = Timer(const Duration(seconds: 1), () {
       if (mounted) {
-        setState(() => _isShowingStep = false);
+        _fadeController.reverse().then((_) {
+          if (mounted) {
+            setState(() => _isShowingStep = false);
+          }
+        });
       }
     });
   }
@@ -319,6 +327,7 @@ class _VideoTimelineState extends State<VideoTimeline>
   void _updateHoverPosition(Offset? position, BoxConstraints constraints) {
     if (position == null) {
       setState(() => _hoverPosition = null);
+      _hideStepText();
       return;
     }
 
@@ -326,7 +335,11 @@ class _VideoTimelineState extends State<VideoTimeline>
     final double localDx = box.globalToLocal(position).dx;
     final double progress =
         (localDx.clamp(0, constraints.maxWidth)) / constraints.maxWidth;
-    setState(() => _hoverPosition = progress);
+    setState(() {
+      _hoverPosition = progress;
+      _isShowingStep = true;
+    });
+    _showStepText();
   }
 
   Duration _getHoverDuration(BoxConstraints constraints) {
@@ -439,7 +452,7 @@ class _VideoTimelineState extends State<VideoTimeline>
       _previewPosition = progress;
     });
 
-    _fadeController.forward();
+    _showStepText();
   }
 
   void _handleDragUpdate(
@@ -494,15 +507,7 @@ class _VideoTimelineState extends State<VideoTimeline>
       _previewPosition = null;
     });
 
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        _fadeController.reverse().then((_) {
-          if (mounted) {
-            setState(() => _isShowingStep = false);
-          }
-        });
-      }
-    });
+    _hideStepText();
   }
 
   // Add a method to handle hover position updates more frequently
