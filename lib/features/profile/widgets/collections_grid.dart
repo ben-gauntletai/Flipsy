@@ -4,14 +4,14 @@ import '../screens/collection_details_screen.dart';
 
 class CollectionsGrid extends StatelessWidget {
   final List<Collection> collections;
-  final VoidCallback onCreateCollection;
+  final VoidCallback? onCreateCollection;
   final bool isLoading;
   final Function(Collection) onCollectionSelected;
 
   const CollectionsGrid({
     super.key,
     required this.collections,
-    required this.onCreateCollection,
+    this.onCreateCollection,
     required this.isLoading,
     required this.onCollectionSelected,
   });
@@ -23,6 +23,23 @@ class CollectionsGrid extends StatelessWidget {
     }
 
     if (collections.isEmpty) {
+      if (onCreateCollection == null) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.collections_bookmark_outlined,
+                  size: 48, color: Colors.grey[400]),
+              const SizedBox(height: 16),
+              Text(
+                'No collections yet',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ],
+          ),
+        );
+      }
+
       return GridView.builder(
         padding: const EdgeInsets.all(1),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -31,7 +48,7 @@ class CollectionsGrid extends StatelessWidget {
           crossAxisSpacing: 1,
           mainAxisSpacing: 1,
         ),
-        itemCount: 1, // Only show the "New" button
+        itemCount: 1,
         itemBuilder: (context, index) => _buildNewCollectionCard(context),
       );
     }
@@ -44,12 +61,40 @@ class CollectionsGrid extends StatelessWidget {
         crossAxisSpacing: 1,
         mainAxisSpacing: 1,
       ),
-      itemCount: collections.length + 1,
+      itemCount: collections.length + (onCreateCollection != null ? 1 : 0),
       itemBuilder: (context, index) {
-        if (index == 0) {
-          return _buildNewCollectionCard(context);
+        if (index == 0 && onCreateCollection != null) {
+          return GestureDetector(
+            onTap: onCreateCollection,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.grey[100],
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_circle_outline,
+                      size: 32, color: Colors.grey[600]),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Create\nCollection',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
         }
-        return _buildCollectionCard(context, collections[index - 1]);
+
+        final collection =
+            collections[onCreateCollection != null ? index - 1 : index];
+        return _buildCollectionCard(context, collection);
       },
     );
   }

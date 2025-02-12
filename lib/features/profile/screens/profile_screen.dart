@@ -58,12 +58,29 @@ class _ProfileScreenState extends State<ProfileScreen>
   @override
   void initState() {
     super.initState();
+    _initTabController();
+    _startListeningToCollections();
+  }
+
+  void _initTabController() {
     _tabController = TabController(
-      length: 3,
+      length: widget.userId == null || widget.userId == _currentUserId ? 3 : 2,
       vsync: this,
       animationDuration: const Duration(milliseconds: 200),
     );
-    _startListeningToCollections();
+  }
+
+  @override
+  void didUpdateWidget(ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // If we're switching between profiles (own profile vs other user's profile)
+    if (oldWidget.userId != widget.userId) {
+      // Dispose old controller
+      _tabController.dispose();
+      // Create new controller with correct length
+      _initTabController();
+    }
   }
 
   @override
@@ -663,129 +680,26 @@ class _ProfileScreenState extends State<ProfileScreen>
                   // Tab Bar
                   TabBar(
                     controller: _tabController,
-                    tabs: _showingCollectionVideos
-                        ? [
-                            Tab(
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_back),
-                                    onPressed: _backToCollections,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      _selectedCollection?.name ?? '',
-                                      style: const TextStyle(fontSize: 16),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                    tabs: isCurrentUser
+                        ? const [
+                            Tab(text: 'Videos'),
+                            Tab(text: 'Bookmarked'),
+                            Tab(text: 'Collections'),
                           ]
                         : const [
                             Tab(text: 'Videos'),
-                            Tab(text: 'Bookmarked'),
                             Tab(text: 'Collections'),
                           ],
                     labelColor: Theme.of(context).primaryColor,
                     unselectedLabelColor: Colors.grey,
-                    indicatorColor: _showingCollectionVideos
-                        ? Colors.transparent
-                        : Theme.of(context).primaryColor,
+                    indicatorColor: Theme.of(context).primaryColor,
                   ),
                   // Tab Bar View
                   Expanded(
                     child: TabBarView(
                       controller: _tabController,
-                      children: _showingCollectionVideos
+                      children: isCurrentUser
                           ? [
-                              // Collection Videos Grid
-                              _isLoadingCollectionVideos
-                                  ? const Center(
-                                      child: CircularProgressIndicator())
-                                  : _collectionVideos.isEmpty
-                                      ? Center(
-                                          child: Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Icon(Icons.videocam_off,
-                                                  size: 48,
-                                                  color: Colors.grey[400]),
-                                              const SizedBox(height: 16),
-                                              Text(
-                                                'No videos in this collection',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .titleMedium,
-                                              ),
-                                            ],
-                                          ),
-                                        )
-                                      : GridView.builder(
-                                          padding: const EdgeInsets.all(1),
-                                          gridDelegate:
-                                              const SliverGridDelegateWithFixedCrossAxisCount(
-                                            crossAxisCount: 3,
-                                            childAspectRatio: 0.8,
-                                            crossAxisSpacing: 1,
-                                            mainAxisSpacing: 1,
-                                          ),
-                                          itemCount: _collectionVideos.length,
-                                          itemBuilder: (context, index) {
-                                            final video =
-                                                _collectionVideos[index];
-                                            return GestureDetector(
-                                              onTap: () {
-                                                MainNavigationScreen
-                                                    .jumpToVideo(
-                                                  context,
-                                                  video.id,
-                                                  showBackButton: true,
-                                                );
-                                              },
-                                              child: Stack(
-                                                fit: StackFit.expand,
-                                                children: [
-                                                  Image.network(
-                                                    video.thumbnailURL,
-                                                    fit: BoxFit.cover,
-                                                  ),
-                                                  Positioned(
-                                                    bottom: 8,
-                                                    left: 8,
-                                                    child: Row(
-                                                      children: [
-                                                        const Icon(
-                                                          FontAwesomeIcons
-                                                              .heart,
-                                                          color: Colors.white,
-                                                          size: 14,
-                                                        ),
-                                                        const SizedBox(
-                                                            width: 4),
-                                                        Text(
-                                                          video.likesCount
-                                                              .toString(),
-                                                          style:
-                                                              const TextStyle(
-                                                            color: Colors.white,
-                                                            fontSize: 12,
-                                                          ),
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                          },
-                                        ),
-                            ]
-                          : [
                               // Videos Tab
                               StreamBuilder<List<Video>>(
                                 stream:
@@ -1006,7 +920,126 @@ class _ProfileScreenState extends State<ProfileScreen>
                               CollectionsGrid(
                                 key: const ValueKey('collections_grid'),
                                 collections: _collections,
-                                onCreateCollection: _showCreateCollectionDialog,
+                                onCreateCollection: isCurrentUser
+                                    ? _showCreateCollectionDialog
+                                    : null,
+                                isLoading: _isLoadingCollections,
+                                onCollectionSelected: _handleCollectionSelected,
+                              ),
+                            ]
+                          : [
+                              // Videos Tab
+                              StreamBuilder<List<Video>>(
+                                stream:
+                                    videoService.getUserVideos(targetUserId),
+                                builder: (context, snapshot) {
+                                  if (snapshot.connectionState ==
+                                      ConnectionState.waiting) {
+                                    return const Center(
+                                        child: CircularProgressIndicator());
+                                  }
+
+                                  if (snapshot.hasError) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.error_outline,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text('Error loading videos',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  final videos = snapshot.data ?? [];
+
+                                  if (videos.isEmpty) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.videocam_off,
+                                              size: 48,
+                                              color: Colors.grey[400]),
+                                          const SizedBox(height: 16),
+                                          Text(
+                                            'No videos found',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium,
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  return GridView.builder(
+                                    padding: const EdgeInsets.all(1),
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: 3,
+                                      childAspectRatio: 0.8,
+                                      crossAxisSpacing: 1,
+                                      mainAxisSpacing: 1,
+                                    ),
+                                    itemCount: videos.length,
+                                    itemBuilder: (context, index) {
+                                      final video = videos[index];
+                                      return GestureDetector(
+                                        onTap: () {
+                                          MainNavigationScreen.jumpToVideo(
+                                            context,
+                                            video.id,
+                                            showBackButton: true,
+                                          );
+                                        },
+                                        child: Stack(
+                                          fit: StackFit.expand,
+                                          children: [
+                                            Image.network(
+                                              video.thumbnailURL,
+                                              fit: BoxFit.cover,
+                                            ),
+                                            Positioned(
+                                              bottom: 8,
+                                              left: 8,
+                                              child: Row(
+                                                children: [
+                                                  const Icon(
+                                                    FontAwesomeIcons.heart,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    video.likesCount.toString(),
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
+                              // Collections Tab (for other users)
+                              CollectionsGrid(
+                                key: const ValueKey('collections_grid'),
+                                collections: _collections,
                                 isLoading: _isLoadingCollections,
                                 onCollectionSelected: _handleCollectionSelected,
                               ),

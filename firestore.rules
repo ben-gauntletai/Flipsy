@@ -14,18 +14,21 @@ service cloud.firestore {
 
       // Bookmarked videos subcollection
       match /bookmarkedVideos/{videoId} {
-        allow read: if true;
-        allow write: if request.auth != null && request.auth.uid == userId;
+        // Only allow reading bookmarked videos if you own them
+        allow read: if request.auth != null && request.auth.uid == userId;
+        // Allow any authenticated user to bookmark videos
+        allow write: if request.auth != null;
       }
     }
 
     // Collections rules
     match /collections/{collectionId} {
-      // Allow listing/querying collections
-      allow list: if request.auth != null;
-      
-      // Allow reading individual collections
-      allow get: if request.auth != null;
+      // Allow reading individual collections based on privacy
+      allow get, list: if 
+        // Allow if collection is not private
+        !resource.data.isPrivate ||
+        // Or if user owns the collection
+        (request.auth != null && request.auth.uid == resource.data.userId);
       
       allow create: if 
         request.auth != null && 
@@ -37,20 +40,12 @@ service cloud.firestore {
 
       // Collection videos subcollection
       match /videos/{videoId} {
-        allow read: if request.auth != null;
+        // Allow reading videos if you can read the parent collection
+        allow read: if get(/databases/$(database)/documents/collections/$(collectionId)).data.isPrivate == false ||
+          (request.auth != null && get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid);
         
-        // Allow creating video entries if you own the collection
-        allow create: if 
-          request.auth != null && 
-          get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
-        
-        // Allow updating video entries if you own the collection
-        allow update: if 
-          request.auth != null && 
-          get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
-        
-        // Allow deleting video entries if you own the collection
-        allow delete: if 
+        // Allow creating/updating/deleting video entries if you own the collection
+        allow create, update, delete: if 
           request.auth != null && 
           get(/databases/$(database)/documents/collections/$(collectionId)).data.userId == request.auth.uid;
       }

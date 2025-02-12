@@ -1918,65 +1918,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   },
                   onTapUp: (details) {
                     print('More button tap up detected');
-                    showModalBottomSheet(
-                      context: context,
-                      backgroundColor: Colors.white,
-                      barrierColor: Colors.black54,
-                      isDismissible: true,
-                      enableDrag: true,
-                      isScrollControlled: false,
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(20),
-                        ),
-                      ),
-                      builder: (BuildContext context) {
-                        print('Building bottom sheet content');
-                        return SafeArea(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 16.0),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // Sheet indicator
-                                Container(
-                                  width: 40,
-                                  height: 4,
-                                  margin: const EdgeInsets.only(bottom: 16),
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[300],
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                                ListTile(
-                                  leading: const Icon(
-                                    Icons.collections_bookmark,
-                                    color: Colors.black87,
-                                  ),
-                                  title: const Text(
-                                    'Add to Collection',
-                                    style: TextStyle(
-                                      color: Colors.black87,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  onTap: () {
-                                    print('Add to Collection option tapped');
-                                    Navigator.pop(context);
-                                    _showCollectionSelectionSheet(context);
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ).then((_) {
-                      print('Bottom sheet closed');
-                    }).catchError((error) {
-                      print('Error showing bottom sheet: $error');
-                    });
+                    _showCollectionSelectionSheet(context);
                   },
                   child: Container(
                     width: 48, // Increased touch target
@@ -2045,7 +1987,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     );
   }
 
-  Future<void> _showCollectionSelectionSheet(BuildContext context) async {
+  void _showCollectionSelectionSheet(BuildContext context) async {
     try {
       final currentUserId = FirebaseAuth.instance.currentUser?.uid;
       if (currentUserId == null) {
@@ -2073,17 +2015,24 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             top: Radius.circular(20),
           ),
         ),
-        builder: (context) => CollectionSelectionSheet(
-          video: widget.video,
-          collections: collections,
-          onCreateCollection: () {
-            Navigator.pop(context); // Close the collection sheet
-            _showCreateCollectionDialog(context);
-          },
-        ),
+        builder: (BuildContext context) {
+          final bottomPadding = MediaQuery.of(context).viewInsets.bottom +
+              MediaQuery.of(context).padding.bottom;
+          return Padding(
+            padding: EdgeInsets.only(bottom: bottomPadding),
+            child: CollectionSelectionSheet(
+              video: widget.video,
+              collections: collections,
+              onCreateCollection: () {
+                Navigator.pop(context);
+                _showCreateCollectionDialog(context);
+              },
+            ),
+          );
+        },
       );
     } catch (e) {
-      print('Error showing collection sheet: $e');
+      print('Error showing collection selection sheet: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading collections: $e')),
@@ -2161,7 +2110,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
                 try {
                   final collection = await _videoService.createCollection(
-                    userId: widget.video.userId,
+                    userId: FirebaseAuth.instance.currentUser!.uid,
                     name: name,
                     isPrivate: isPrivate,
                   );

@@ -1528,20 +1528,19 @@ class VideoService {
     print('\nVideoService: Getting collections for user $userId');
     try {
       print('VideoService: Building query for collections');
-      final query = _firestore
+      Query query = _firestore
           .collection('collections')
           .where('userId', isEqualTo: userId)
           .orderBy('createdAt', descending: true);
 
+      // If not viewing own collections, filter out private ones
+      if (_currentUserId != userId) {
+        query = query.where('isPrivate', isEqualTo: false);
+      }
+
       print('VideoService: Executing query');
       final snapshot = await query.get();
       print('VideoService: Got ${snapshot.docs.length} collection documents');
-
-      for (var doc in snapshot.docs) {
-        print('VideoService: Collection document data:');
-        print('- ID: ${doc.id}');
-        print('- Data: ${doc.data()}');
-      }
 
       final collections = snapshot.docs.map((doc) {
         try {
@@ -1850,19 +1849,18 @@ class VideoService {
 
   Stream<List<Collection>> watchUserCollections(String userId) {
     print('\nVideoService: Starting to watch collections for user $userId');
-    print('VideoService: Current user: ${_currentUserId}');
 
-    if (userId.isEmpty) {
-      print('VideoService: Empty userId provided');
-      return Stream.value([]);
-    }
-
-    return _firestore
+    Query query = _firestore
         .collection('collections')
         .where('userId', isEqualTo: userId)
-        .orderBy('updatedAt', descending: true)
-        .snapshots()
-        .map((snapshot) {
+        .orderBy('updatedAt', descending: true);
+
+    // If not viewing own collections, filter out private ones
+    if (_currentUserId != userId) {
+      query = query.where('isPrivate', isEqualTo: false);
+    }
+
+    return query.snapshots().map((snapshot) {
       print('\nVideoService: Received collections snapshot');
       print('VideoService: Number of documents: ${snapshot.docs.length}');
 
