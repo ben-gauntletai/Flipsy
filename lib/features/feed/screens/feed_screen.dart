@@ -979,6 +979,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   Timer? _initializationRetryTimer;
   int _initializationAttempts = 0;
   static const int maxInitializationAttempts = 3;
+  bool _showSubtitles = true; // Add subtitle visibility state
 
   // Like animation controller
   late AnimationController _likeAnimationController;
@@ -1715,7 +1716,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                           ?.transcriptionSegments !=
                                       null &&
                                   widget.video.analysis!.transcriptionSegments
-                                      .isNotEmpty)
+                                      .isNotEmpty &&
+                                  _showSubtitles)
                                 SizedBox(
                                   width: MediaQuery.of(context).size.width,
                                   child: Padding(
@@ -1918,7 +1920,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   },
                   onTapUp: (details) {
                     print('More button tap up detected');
-                    _showCollectionSelectionSheet(context);
+                    _showMoreOptionsSheet(context);
                   },
                   child: Container(
                     width: 48, // Increased touch target
@@ -1984,6 +1986,56 @@ class _VideoFeedItemState extends State<VideoFeedItem>
         ),
       ),
       child: child,
+    );
+  }
+
+  void _showMoreOptionsSheet(BuildContext context) {
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    final bottomNavHeight = kBottomNavigationBarHeight;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: bottomPadding + bottomNavHeight),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                _showSubtitles ? Icons.subtitles : Icons.subtitles_off,
+                color: Colors.black87,
+              ),
+              title: Text(
+                _showSubtitles ? 'Turn Off Subtitles' : 'Turn On Subtitles',
+                style: const TextStyle(color: Colors.black87),
+              ),
+              onTap: () {
+                setState(() => _showSubtitles = !_showSubtitles);
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.playlist_add,
+                color: Colors.black87,
+              ),
+              title: const Text(
+                'Add to Collection',
+                style: TextStyle(color: Colors.black87),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _showCollectionSelectionSheet(context);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
