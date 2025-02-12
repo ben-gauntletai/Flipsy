@@ -516,32 +516,14 @@ class _ProfileScreenState extends State<ProfileScreen>
           },
         ),
         actions: [
-          if (isCurrentUser) ...[
+          if (isCurrentUser)
             IconButton(
-              icon: const Icon(Icons.analytics),
-              onPressed: _analyzeAllVideos,
-              tooltip: 'Analyze Videos',
-            ),
-            PopupMenuButton<String>(
-              onSelected: (value) async {
-                if (value == 'logout') {
-                  context.read<AuthBloc>().add(SignOutRequested());
-                }
+              icon: const Icon(Icons.logout),
+              onPressed: () {
+                context.read<AuthBloc>().add(SignOutRequested());
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'logout',
-                  child: Row(
-                    children: [
-                      Icon(Icons.logout),
-                      SizedBox(width: 8),
-                      Text('Logout'),
-                    ],
-                  ),
-                ),
-              ],
+              tooltip: 'Logout',
             ),
-          ],
         ],
       ),
       body: StreamBuilder<Map<String, dynamic>>(

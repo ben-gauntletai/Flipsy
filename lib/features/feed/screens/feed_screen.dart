@@ -874,16 +874,6 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           // Top Navigation (Following/For You) - Always visible
           SafeArea(
             child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.7),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -2072,6 +2062,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
             children: [
               TextField(
                 controller: nameController,
+                textCapitalization: TextCapitalization.sentences,
                 style: const TextStyle(color: Colors.black87),
                 decoration: const InputDecoration(
                   labelText: 'Name',

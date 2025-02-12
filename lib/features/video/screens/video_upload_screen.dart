@@ -363,6 +363,8 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                 const SizedBox(height: 6),
                                 TextField(
                                   controller: _descriptionController,
+                                  textCapitalization:
+                                      TextCapitalization.sentences,
                                   decoration: InputDecoration(
                                     hintText:
                                         'Share the story behind your recipe...',
@@ -920,61 +922,6 @@ class _VideoUploadScreenState extends State<VideoUploadScreen> {
                                             color: Colors.white,
                                             fontSize: 12,
                                             fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    // Cover selection button
-                                    Positioned(
-                                      bottom: 12,
-                                      left: 0,
-                                      right: 0,
-                                      child: Center(
-                                        child: Material(
-                                          color: Colors.transparent,
-                                          child: InkWell(
-                                            onTap: () {
-                                              // TODO: Implement cover selection
-                                            },
-                                            borderRadius:
-                                                BorderRadius.circular(24),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 16,
-                                                vertical: 10,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: Colors.black
-                                                    .withOpacity(0.5),
-                                                borderRadius:
-                                                    BorderRadius.circular(24),
-                                                border: Border.all(
-                                                  color: Colors.white
-                                                      .withOpacity(0.2),
-                                                ),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: const [
-                                                  Icon(
-                                                    Icons.image_outlined,
-                                                    color: Colors.white,
-                                                    size: 18,
-                                                  ),
-                                                  SizedBox(width: 8),
-                                                  Text(
-                                                    'Select cover',
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 13,
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
                                           ),
                                         ),
                                       ),
