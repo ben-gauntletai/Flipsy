@@ -110,14 +110,6 @@ class _VideoTimelineState extends State<VideoTimeline>
     _positionNotifier = ValueNotifier<Duration>(Duration.zero);
     widget.controller.addListener(_updatePosition);
 
-    // Add minimal debug logging for initial values
-    Future.delayed(Duration.zero, () {
-      if (mounted && widget.controller.value.isInitialized) {
-        print(
-            'VideoTimeline: duration=${widget.controller.value.duration.inSeconds}s, steps=${widget.steps.length}, timestamps=${widget.timestamps.length}');
-      }
-    });
-
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 200),
       vsync: this,
@@ -140,7 +132,6 @@ class _VideoTimelineState extends State<VideoTimeline>
   void dispose() {
     _seekTimer?.cancel();
     _hideTextTimer?.cancel();
-    print('VideoTimeline disposing');
     widget.controller.removeListener(_updatePosition);
     _positionNotifier.dispose();
     _fadeController.dispose();
@@ -282,48 +273,111 @@ class _VideoTimelineState extends State<VideoTimeline>
   List<double> get _fullTimestamps {
     if (!mounted || !widget.controller.value.isInitialized) return [0.0];
 
-    // Extract timestamps from steps if not provided directly
-    List<double> extractedTimestamps;
-    if (widget.timestamps.isEmpty) {
-      extractedTimestamps = widget.steps.map((step) {
-        final match = RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
-        return match != null ? double.parse(match.group(1)!) : 0.0;
-      }).toList();
-    } else {
-      extractedTimestamps = List<double>.from(widget.timestamps);
+    try {
+      // Extract timestamps from steps if not provided directly
+      List<double> extractedTimestamps;
+      if (widget.timestamps.isEmpty) {
+        extractedTimestamps = widget.steps.map((step) {
+          final match = RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
+          return match != null ? double.parse(match.group(1)!) : 0.0;
+        }).toList();
+      } else {
+        extractedTimestamps = List<double>.from(widget.timestamps);
+      }
+
+      // Filter out any invalid timestamps
+      extractedTimestamps = extractedTimestamps
+          .where((t) => t.isFinite && t >= 0) // Ensure non-negative and finite
+          .toList();
+
+      // Sort and remove duplicates
+      extractedTimestamps = extractedTimestamps.toSet().toList()..sort();
+
+      // Ensure we start from 0.0
+      if (extractedTimestamps.isEmpty || extractedTimestamps.first > 0) {
+        extractedTimestamps.insert(0, 0.0);
+      }
+
+      // Get video duration safely
+      final duration = widget.controller.value.isInitialized
+          ? widget.controller.value.duration.inSeconds.toDouble()
+          : 0.0;
+
+      // Ensure duration is valid
+      if (duration <= 0) {
+        return [0.0, 1.0]; // Safe default
+      }
+
+      // Only add duration if it's not already in the list and it's greater than the last timestamp
+      if (extractedTimestamps.isEmpty ||
+          (extractedTimestamps.last < duration &&
+              duration - extractedTimestamps.last > 0.1)) {
+        // Add 100ms threshold
+        extractedTimestamps.add(duration);
+      }
+
+      // Validate final list
+      if (extractedTimestamps.length < 2) {
+        return [0.0, duration];
+      }
+
+      // Ensure the list isn't too long (prevent buffer overflow)
+      if (extractedTimestamps.length > 16) {
+        // Keep first, last, and evenly spaced points in between
+        final step = (extractedTimestamps.length - 2) / 14;
+        final newTimestamps = [extractedTimestamps.first];
+        for (var i = 1; i < 15; i++) {
+          final index = (i * step).round();
+          newTimestamps.add(extractedTimestamps[index]);
+        }
+        newTimestamps.add(extractedTimestamps.last);
+        extractedTimestamps = newTimestamps;
+      }
+
+      return extractedTimestamps;
+    } catch (e, stackTrace) {
+      // Keep only essential error logging
+      debugPrint('Error in _fullTimestamps: $e');
+      // Return safe default in case of any error
+      return [0.0, widget.controller.value.duration.inSeconds.toDouble()];
     }
-
-    // Filter out any invalid timestamps, sort them, and remove duplicates
-    extractedTimestamps = extractedTimestamps
-        .where((t) => t.isFinite) // Allow 0.0 timestamps
-        .toSet()
-        .toList()
-      ..sort();
-
-    // Ensure we start from 0.0 if not already included
-    if (extractedTimestamps.isEmpty || extractedTimestamps.first > 0) {
-      extractedTimestamps.insert(0, 0.0);
-    }
-
-    final duration = widget.controller.value.duration.inSeconds.toDouble();
-
-    // Only add duration if it's not already in the list
-    if (extractedTimestamps.isEmpty || extractedTimestamps.last != duration) {
-      extractedTimestamps.add(duration);
-    }
-
-    return extractedTimestamps;
   }
 
   List<String> get _fullSteps {
-    // Strip timestamps from step text but preserve the step content
-    final cleanedSteps = widget.steps.map((step) {
-      return step
-          .replaceAll(RegExp(r'\s*\[\d+\.?\d*s\s*-\s*\d+\.?\d*s\]$'), '')
-          .trim();
-    }).toList();
+    try {
+      // Get timestamps first to ensure we have the correct count
+      final timestamps = _fullTimestamps;
+      if (timestamps.isEmpty) {
+        return ['Start', 'End'];
+      }
 
-    return [...cleanedSteps, 'End'];
+      // Strip timestamps from step text but preserve the step content
+      List<String> cleanedSteps = widget.steps.map((step) {
+        return step
+            .replaceAll(RegExp(r'\s*\[\d+\.?\d*s\s*-\s*\d+\.?\d*s\]$'), '')
+            .trim();
+      }).toList();
+
+      // Ensure we have enough steps
+      while (cleanedSteps.length < timestamps.length - 1) {
+        cleanedSteps.add('Step ${cleanedSteps.length + 1}');
+      }
+
+      // Truncate if we have too many steps
+      if (cleanedSteps.length > timestamps.length - 1) {
+        cleanedSteps = cleanedSteps.sublist(0, timestamps.length - 1);
+      }
+
+      // Add the end marker
+      final result = [...cleanedSteps, 'End'];
+
+      return result;
+    } catch (e) {
+      // Keep only essential error logging
+      debugPrint('Error in _fullSteps: $e');
+      // Return safe default in case of any error
+      return ['Start', 'End'];
+    }
   }
 
   void _updateHoverPosition(Offset? position, BoxConstraints constraints) {
@@ -472,7 +526,7 @@ class _VideoTimelineState extends State<VideoTimeline>
 
     // Update preview position and step text immediately
     setState(() {
-      _previewPosition = progress;
+      _previewPosition = progress.clamp(0.0, 1.0);
       _isShowingStep = true;
     });
 
@@ -486,8 +540,19 @@ class _VideoTimelineState extends State<VideoTimeline>
 
     _seekTimer = Timer(Duration(milliseconds: debounceTime), () {
       if (!mounted) return;
-      final Duration position = widget.controller.value.duration * progress;
-      widget.controller.seekTo(position);
+
+      // Add safety check for video duration
+      if (widget.controller.value.duration.inMilliseconds == 0) return;
+
+      final Duration position =
+          widget.controller.value.duration * progress.clamp(0.0, 1.0);
+
+      // Add safety check for position
+      if (position > widget.controller.value.duration) {
+        widget.controller.seekTo(widget.controller.value.duration);
+      } else {
+        widget.controller.seekTo(position);
+      }
     });
   }
 
@@ -499,9 +564,24 @@ class _VideoTimelineState extends State<VideoTimeline>
 
     // Perform final seek immediately if needed
     if (_previewPosition != null) {
+      // Add safety check for video duration
+      if (widget.controller.value.duration.inMilliseconds == 0) {
+        setState(() {
+          _isDragging = false;
+          _previewPosition = null;
+        });
+        return;
+      }
+
       final Duration position =
-          widget.controller.value.duration * _previewPosition!;
-      widget.controller.seekTo(position);
+          widget.controller.value.duration * _previewPosition!.clamp(0.0, 1.0);
+
+      // Add safety check for position
+      if (position > widget.controller.value.duration) {
+        widget.controller.seekTo(widget.controller.value.duration);
+      } else {
+        widget.controller.seekTo(position);
+      }
     }
 
     setState(() {
@@ -654,12 +734,28 @@ class _VideoTimelineState extends State<VideoTimeline>
                                     (index) {
                                   final startTime = _fullTimestamps[index];
                                   final endTime = _fullTimestamps[index + 1];
-                                  final segmentStart = startTime /
-                                      widget
-                                          .controller.value.duration.inSeconds;
-                                  final segmentEnd = endTime /
-                                      widget
-                                          .controller.value.duration.inSeconds;
+
+                                  // Add safety checks for duration
+                                  if (!widget.controller.value.isInitialized ||
+                                      widget.controller.value.duration
+                                              .inSeconds ==
+                                          0) {
+                                    return const SizedBox();
+                                  }
+
+                                  final segmentStart = (startTime /
+                                          widget.controller.value.duration
+                                              .inSeconds)
+                                      .clamp(0.0, 1.0);
+                                  final segmentEnd = (endTime /
+                                          widget.controller.value.duration
+                                              .inSeconds)
+                                      .clamp(0.0, 1.0);
+
+                                  // Skip invalid segments
+                                  if (segmentStart >= segmentEnd) {
+                                    return const SizedBox();
+                                  }
 
                                   return Stack(
                                     children: [
