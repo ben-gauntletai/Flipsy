@@ -81,14 +81,13 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         }).toList();
         print('Extracted timestamps: $timestamps');
 
-        // Add intro and ending steps with timestamps
+        // Add ending step with timestamp
         final allSteps = [
-          'Introduction',
           ...steps
               .map((step) => step.replaceAll(RegExp(r'\[\d+\.?\d*s\]$'), '')),
           'Conclusion'
         ];
-        final allTimestamps = [0.0, ...timestamps, videoDuration];
+        final allTimestamps = [...timestamps, videoDuration];
 
         print('Final steps (${allSteps.length}): $allSteps');
         print('Final timestamps (${allTimestamps.length}): $allTimestamps');

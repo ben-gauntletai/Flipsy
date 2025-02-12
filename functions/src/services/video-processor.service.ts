@@ -1020,7 +1020,11 @@ export class VideoProcessorService {
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated (make sure they aren't trivial)
-        5. A complete and exhaustive list of Step-by-step instructions with timestamps [X.XXs] that are informed by the transcription segments and frame timestamps when they start (6 words max but this only applies to this rule)
+        5. A list of Step-by-step instructions with timestamps [X.XXs]
+        that are informed by the transcription segments and frame timestamps 
+        when they start (6 words max but this only applies to this rule).
+        If possible, if there are multiple things happening in a step, make sure that we're including the new stuff if we already labeled it in the previous step.
+        Each segment should be a step unless it doesn't make sure to do it. So ideally we would have the same number of steps as the number of transcription segments.
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
         
         Format your response as a JSON object with the following keys:

@@ -173,10 +173,8 @@ class _VideoTimelineState extends State<VideoTimeline>
   Color _getMarkerColor(int index, Color primaryColor) {
     final totalSteps = _fullTimestamps.length;
 
-    // Different colors for intro, steps, and conclusion
-    if (index == 0) {
-      return Colors.green.withOpacity(0.9); // Intro marker
-    } else if (index == totalSteps - 1) {
+    // Different colors for conclusion only
+    if (index == totalSteps - 1) {
       return Colors.red.withOpacity(0.9); // Conclusion marker
     } else {
       return primaryColor
@@ -284,15 +282,29 @@ class _VideoTimelineState extends State<VideoTimeline>
         return match != null ? double.parse(match.group(1)!) : 0.0;
       }).toList();
     } else {
-      extractedTimestamps = widget.timestamps;
+      extractedTimestamps = List<double>.from(widget.timestamps);
     }
 
-    // Filter out any invalid timestamps and sort them
-    extractedTimestamps =
-        extractedTimestamps.where((t) => t > 0 && t.isFinite).toList()..sort();
+    // Filter out any invalid timestamps, sort them, and remove duplicates
+    extractedTimestamps = extractedTimestamps
+        .where((t) => t.isFinite) // Allow 0.0 timestamps
+        .toSet()
+        .toList()
+      ..sort();
+
+    // Ensure we start from 0.0 if not already included
+    if (extractedTimestamps.isEmpty || extractedTimestamps.first > 0) {
+      extractedTimestamps.insert(0, 0.0);
+    }
 
     final duration = widget.controller.value.duration.inSeconds.toDouble();
-    return [0.0, ...extractedTimestamps, duration];
+
+    // Only add duration if it's not already in the list
+    if (extractedTimestamps.isEmpty || extractedTimestamps.last != duration) {
+      extractedTimestamps.add(duration);
+    }
+
+    return extractedTimestamps;
   }
 
   List<String> get _fullSteps {
@@ -301,7 +313,7 @@ class _VideoTimelineState extends State<VideoTimeline>
       return step.replaceAll(RegExp(r'\s*\[\d+\.?\d*s\]$'), '').trim();
     }).toList();
 
-    return ['Intro', ...cleanedSteps, 'End'];
+    return [...cleanedSteps, 'End'];
   }
 
   void _updateHoverPosition(Offset? position, BoxConstraints constraints) {
@@ -388,12 +400,27 @@ class _VideoTimelineState extends State<VideoTimeline>
   }
 
   String _getCurrentStepText(double currentTime) {
+    // Find the index of the first timestamp that is greater than the current time
     int currentStepIndex =
-        _fullTimestamps.indexWhere((timestamp) => timestamp > currentTime) - 1;
-    if (currentStepIndex < 0) currentStepIndex = 0;
-    if (currentStepIndex >= _fullSteps.length)
-      currentStepIndex = _fullSteps.length - 1;
-    return _fullSteps[currentStepIndex];
+        _fullTimestamps.indexWhere((timestamp) => timestamp >= currentTime);
+
+    // If we're at the end of the video or no matching timestamp found
+    if (currentStepIndex == -1) {
+      return _fullSteps.last; // Return the last step (End)
+    }
+
+    // If we're exactly at a timestamp, use that step
+    if (currentStepIndex < _fullSteps.length) {
+      return _fullSteps[currentStepIndex];
+    }
+
+    // If we're between timestamps, use the previous step
+    if (currentStepIndex > 0) {
+      return _fullSteps[currentStepIndex - 1];
+    }
+
+    // Fallback to first step
+    return _fullSteps.first;
   }
 
   void _handleDragStart(DragStartDetails details, BoxConstraints constraints) {
@@ -643,11 +670,13 @@ class _VideoTimelineState extends State<VideoTimeline>
                                           ),
                                         ),
                                       ),
-                                      // White separator line (except for the last segment)
+                                      // White separator line (for all segments except the last)
                                       if (index < _fullTimestamps.length - 2)
                                         Positioned(
                                           left: constraints.maxWidth *
-                                                  segmentEnd -
+                                                  endTime /
+                                                  widget.controller.value
+                                                      .duration.inSeconds -
                                               1,
                                           top: 0,
                                           child: Container(
