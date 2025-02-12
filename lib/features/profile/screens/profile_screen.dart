@@ -80,6 +80,8 @@ class _ProfileScreenState extends State<ProfileScreen>
       _tabController.dispose();
       // Create new controller with correct length
       _initTabController();
+      // Restart collections subscription for new user
+      _startListeningToCollections();
     }
   }
 
@@ -99,6 +101,9 @@ class _ProfileScreenState extends State<ProfileScreen>
       print('ProfileScreen: No userId available for loading collections');
       return;
     }
+
+    // Cancel existing subscription if any
+    _collectionsSubscription?.cancel();
 
     print('ProfileScreen: Setting up collection stream for user $userId');
     _collectionsSubscription =
@@ -121,10 +126,8 @@ class _ProfileScreenState extends State<ProfileScreen>
           });
         }
       },
-      onError: (error, stackTrace) {
-        print('\nProfileScreen: Error watching collections:');
-        print('Error: $error');
-        print('Stack trace: $stackTrace');
+      onError: (error) {
+        print('ProfileScreen: Error watching collections: $error');
         if (!_isDisposed && mounted) {
           setState(() {
             _isLoadingCollections = false;
@@ -317,10 +320,23 @@ class _ProfileScreenState extends State<ProfileScreen>
             children: [
               TextField(
                 controller: nameController,
+                textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
                   labelText: 'Name',
                   hintText: 'Enter collection name',
                 ),
+                onChanged: (value) {
+                  // Ensure first letter is capitalized
+                  if (value.isNotEmpty && value[0].toLowerCase() == value[0]) {
+                    final newValue =
+                        value[0].toUpperCase() + value.substring(1);
+                    nameController.value = TextEditingValue(
+                      text: newValue,
+                      selection:
+                          TextSelection.collapsed(offset: newValue.length),
+                    );
+                  }
+                },
               ),
               const SizedBox(height: 16),
               SwitchListTile(
@@ -342,12 +358,17 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
             TextButton(
               onPressed: () async {
-                final name = nameController.text.trim();
+                var name = nameController.text.trim();
                 if (name.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Please enter a name')),
                   );
                   return;
+                }
+
+                // Ensure first letter is capitalized before saving
+                if (name[0].toLowerCase() == name[0]) {
+                  name = name[0].toUpperCase() + name.substring(1);
                 }
 
                 try {
