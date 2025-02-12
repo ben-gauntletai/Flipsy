@@ -298,6 +298,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           if (state is Authenticated) {
             setState(() => _isLoading = false);
             _showSuccessMessage();
+            Navigator.pop(context);
           } else if (state is AuthError) {
             setState(() {
               _isLoading = false;
