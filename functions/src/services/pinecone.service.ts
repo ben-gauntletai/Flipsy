@@ -4,12 +4,8 @@ import { VideoMetadata, SearchResultData, VideoVector, SearchResult } from "../t
 
 export class PineconeService {
   private pinecone: Pinecone;
-  private readonly SIMILARITY_THRESHOLD = 0.3;
+  private readonly SIMILARITY_THRESHOLD = 0.25;
   private readonly INDEX_NAME = "flipsy-videos";
-  private readonly WEIGHTS = {
-    summary: 1.2,  // Give slightly higher weight to summary matches
-    transcription: 1.0
-  };
 
   constructor(apiKey: string) {
     try {
@@ -371,24 +367,18 @@ export class PineconeService {
       const videoIdSet = new Set<string>();
       const dedupedResults: SearchResult[] = [];
 
-      // Sort by weighted score and deduplicate by videoId
+      // Sort by score and deduplicate by videoId
       allMatches
-        .sort((a, b) => {
-          const aMetadata = a.metadata as VideoMetadata;
-          const bMetadata = b.metadata as VideoMetadata;
-          const aScore = (a.score || 0) * this.WEIGHTS[aMetadata.type as keyof typeof this.WEIGHTS];
-          const bScore = (b.score || 0) * this.WEIGHTS[bMetadata.type as keyof typeof this.WEIGHTS];
-          return bScore - aScore;
-        })
+        .sort((a, b) => (b.score || 0) - (a.score || 0))
         .forEach(match => {
           const metadata = match.metadata as VideoMetadata;
-          const weightedScore = (match.score || 0) * this.WEIGHTS[metadata.type as keyof typeof this.WEIGHTS];
+          const score = match.score || 0;
           
-          if (!videoIdSet.has(metadata.videoId) && weightedScore >= this.SIMILARITY_THRESHOLD) {
+          if (!videoIdSet.has(metadata.videoId) && score >= this.SIMILARITY_THRESHOLD) {
             videoIdSet.add(metadata.videoId);
             dedupedResults.push({
               id: match.id,
-              score: weightedScore,
+              score: score,
               metadata: metadata,
               type: "semantic"
             });
