@@ -318,7 +318,9 @@ class _VideoTimelineState extends State<VideoTimeline>
   List<String> get _fullSteps {
     // Strip timestamps from step text but preserve the step content
     final cleanedSteps = widget.steps.map((step) {
-      return step.replaceAll(RegExp(r'\s*\[\d+\.?\d*s\]$'), '').trim();
+      return step
+          .replaceAll(RegExp(r'\s*\[\d+\.?\d*s\s*-\s*\d+\.?\d*s\]$'), '')
+          .trim();
     }).toList();
 
     return [...cleanedSteps, 'End'];
