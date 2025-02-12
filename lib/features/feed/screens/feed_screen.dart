@@ -1718,7 +1718,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                     padding: const EdgeInsets.only(
                                       bottom: 8,
                                       left: 8,
-                                      right: 100,
+                                      right:
+                                          120, // Increased right padding to avoid More button
                                     ),
                                     child: ValueListenableBuilder<
                                         VideoPlayerValue>(
@@ -1747,22 +1748,69 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                           return const SizedBox();
                                         }
 
-                                        return Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 4,
-                                          ),
-                                          child: Text(
-                                            currentSegment.text,
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                            textAlign: TextAlign.center,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
+                                        return LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            // Start with default text size
+                                            double fontSize = 14;
+                                            final textSpan = TextSpan(
+                                              text: currentSegment.text,
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: fontSize,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            );
+                                            TextPainter textPainter =
+                                                TextPainter(
+                                              text: textSpan,
+                                              textDirection: TextDirection.ltr,
+                                              maxLines: 2,
+                                            );
+                                            textPainter.layout(
+                                                maxWidth: constraints.maxWidth);
+
+                                            // If text doesn't fit, reduce font size until it does
+                                            while (
+                                                textPainter.didExceedMaxLines &&
+                                                    fontSize > 8) {
+                                              fontSize -= 0.5;
+                                              final newTextSpan = TextSpan(
+                                                text: currentSegment.text,
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: fontSize,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              );
+                                              textPainter = TextPainter(
+                                                text: newTextSpan,
+                                                textDirection:
+                                                    TextDirection.ltr,
+                                                maxLines: 2,
+                                              );
+                                              textPainter.layout(
+                                                  maxWidth:
+                                                      constraints.maxWidth);
+                                            }
+
+                                            return Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 4,
+                                              ),
+                                              child: Text(
+                                                currentSegment.text,
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: fontSize,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                                maxLines: 2,
+                                              ),
+                                            );
+                                          },
                                         );
                                       },
                                     ),
