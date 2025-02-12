@@ -887,9 +887,11 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                           child: Text(
                             'Following',
                             style: TextStyle(
-                              color: _isFollowingFeed
-                                  ? Colors.white
-                                  : Colors.white60,
+                              color: _videos.isEmpty
+                                  ? Colors.black
+                                  : (_isFollowingFeed
+                                      ? Colors.white
+                                      : Colors.white60),
                               fontSize: 15,
                               fontWeight: _isFollowingFeed
                                   ? FontWeight.bold
@@ -903,9 +905,11 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                           child: Text(
                             'For You',
                             style: TextStyle(
-                              color: !_isFollowingFeed
-                                  ? Colors.white
-                                  : Colors.white60,
+                              color: _videos.isEmpty
+                                  ? Colors.black
+                                  : (!_isFollowingFeed
+                                      ? Colors.white
+                                      : Colors.white60),
                               fontSize: 15,
                               fontWeight: !_isFollowingFeed
                                   ? FontWeight.bold
@@ -1826,14 +1830,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                   child: VideoTimeline(
                                     controller: _videoController!,
                                     steps: widget.video.analysis!.steps,
-                                    timestamps: widget.video.analysis!.steps
-                                        .map((step) {
-                                      final match = RegExp(r'\[(\d+\.?\d*)s\]$')
-                                          .firstMatch(step);
-                                      return match != null
-                                          ? double.parse(match.group(1)!)
-                                          : 0.0;
-                                    }).toList(),
+                                    timestamps: widget
+                                        .video.analysis!.transcriptionSegments
+                                        .map((segment) => segment.start)
+                                        .toList(),
                                   ),
                                 ),
                               ),

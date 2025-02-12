@@ -1016,14 +1016,19 @@ export class VideoProcessorService {
         ).join('\n\n')}
         
         Please provide:
-        1. A concise summary of the recipe
+        1. A concise summary of the recipe that includes:
+           - The estimated cost (\${videoData.budget || 0})
+           - Calorie count (\${videoData.calories || 0} calories)
+           - Preparation time (\${videoData.prepTimeMinutes || 0} minutes)
+           - Spiciness level (\${videoData.spiciness || 0}/5)
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated (make sure they aren't trivial)
         5. A list of Step-by-step instructions with timestamps [X.XXs]
-        that are informed by the transcription segments and frame timestamps 
+        Each step should correspond to a segment. If the first segment starts at 0s and end at 2s, then only the transcription from 0s to 2s should be used to inform the step.
         when they start (6 words max but this only applies to this rule).
         If possible, if there are multiple things happening in a step, make sure that we're including the new stuff if we already labeled it in the previous step.
+        Don't ever use the context from segments that are ahead. Just use the context from the current and only use the previous to inform the current step.
         Each segment should be a step unless it doesn't make sure to do it. So ideally we would have the same number of steps as the number of transcription segments.
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
         
