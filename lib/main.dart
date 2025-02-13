@@ -8,6 +8,7 @@ import 'package:flipsy/firebase_options.dart';
 import 'package:flipsy/features/navigation/screens/main_navigation_screen.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'services/config_service.dart';
+import 'package:firebase_app_check/firebase_app_check.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +28,13 @@ void main() async {
       rethrow;
     }
   }
+
+  // Initialize AppCheck
+  await FirebaseAppCheck.instance.activate(
+    webProvider: ReCaptchaV3Provider('your-recaptcha-v3-site-key'),
+    androidProvider: AndroidProvider.debug,
+    appleProvider: AppleProvider.debug,
+  );
 
   runApp(const MyApp());
 }

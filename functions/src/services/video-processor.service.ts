@@ -1015,7 +1015,7 @@ export class VideoProcessorService {
           Techniques: ${frame.detectedTechniques.join(', ')}`
         ).join('\n\n')}
         
-        Please provide:
+        Please provide and use proper capitalization:
         1. A concise summary of the recipe that includes:
            - The estimated cost (\${videoData.budget || 0})
            - Calorie count (\${videoData.calories || 0} calories)
@@ -1031,7 +1031,7 @@ export class VideoProcessorService {
         Don't ever use the context from segments that are ahead. Just use the context from the current and only use the previous to inform the current step.
         Each segment should be a step unless it doesn't make sure to do it. So ideally we would have the same number of steps as the number of transcription segments.
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
-        If the first and last segments are just introductory or concluding, just say "Introduction" or "Conclusion".
+        If the first and last segments are just introductory or concluding, just say "Intro" or "Conclusion".
         
         Format your response as a JSON object with the following keys:
         {

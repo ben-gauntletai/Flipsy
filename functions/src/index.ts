@@ -2232,7 +2232,7 @@ export const generateIngredientSubstitutions = onCall(
   },
   async (request) => {
     try {
-      const { ingredient, recipeContext } = request.data;
+      const { ingredient, recipeContext, previousSubstitutions } = request.data;
 
       if (!ingredient || typeof ingredient !== 'string') {
         throw new Error('Invalid ingredient provided');
@@ -2243,11 +2243,10 @@ export const generateIngredientSubstitutions = onCall(
       });
 
       const systemPrompt = `You are a culinary expert who provides ingredient substitutions. 
-      For each ingredient, provide 3 practical substitutions that will work well in the specific recipe context provided.
-      Each substitution should include a brief explanation of how it affects the recipe and why it works in this specific context.
-      Consider the cooking method, flavor profile, and other ingredients in the recipe when suggesting substitutions.`;
+      Consider the cooking method, flavor profile, and other ingredients in the recipe when suggesting a substitution.
+      The substitution must be different from any previously suggested substitutions.`;
 
-      const userPrompt = `Please suggest substitutions for ${ingredient} in the following recipe context:
+      const userPrompt = `Please suggest a substitution for ${ingredient} in the following recipe context:
       
       Recipe Description: ${recipeContext.description || 'Not provided'}
       
@@ -2257,9 +2256,10 @@ export const generateIngredientSubstitutions = onCall(
       Recipe Steps:
       ${recipeContext.steps.join('\n')}
       
-      Please provide 3 substitutions that would work well specifically in this recipe context.
-      For each substitution, explain how it affects the recipe and why it's a good choice given the other ingredients and cooking method.
-      Please format each substitution as a clear, concise bullet point.`;
+      Previous substitutions that should NOT be suggested again:
+      ${previousSubstitutions ? previousSubstitutions.join('\n') : 'None'}
+      
+      Please just state the substitution, no other text. Only state a single substitution that has not been suggested before.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",

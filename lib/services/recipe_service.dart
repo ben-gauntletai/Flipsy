@@ -4,13 +4,16 @@ class RecipeService {
   final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   Future<List<String>> generateSubstitutions(
-      String ingredient, Map<String, dynamic> recipeContext) async {
+      String ingredient,
+      Map<String, dynamic> recipeContext,
+      Set<String> previousSubstitutions) async {
     try {
       final result = await _functions
           .httpsCallable('generateIngredientSubstitutions')
           .call({
         'ingredient': ingredient,
         'recipeContext': recipeContext,
+        'previousSubstitutions': previousSubstitutions.toList(),
       });
 
       if (result.data == null) {

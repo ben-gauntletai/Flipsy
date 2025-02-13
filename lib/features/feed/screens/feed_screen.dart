@@ -1662,16 +1662,58 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                       physics: const NeverScrollableScrollPhysics(),
                       itemCount: analysis.ingredients.length,
                       itemBuilder: (context, index) {
-                        final ingredient = analysis.ingredients[index];
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.check_circle_outline),
-                          title: Text(ingredient),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.swap_horiz),
-                            onPressed: () =>
-                                _showSubstitutionsDialog(context, ingredient),
-                          ),
+                        final originalIngredient = analysis.ingredients[index];
+                        // Track previous substitutions for this ingredient
+                        final previousSubstitutions = <String>{};
+
+                        return StatefulBuilder(
+                          builder: (context, setState) {
+                            final currentIngredient =
+                                analysis.ingredients[index];
+                            if (currentIngredient != originalIngredient) {
+                              previousSubstitutions.add(currentIngredient);
+                            }
+
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.check_circle_outline),
+                              title: Text(currentIngredient),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (currentIngredient != originalIngredient)
+                                    IconButton(
+                                      icon: const Icon(Icons.restore),
+                                      onPressed: () {
+                                        setState(() {
+                                          // Restore original ingredient
+                                          analysis.ingredients[index] =
+                                              originalIngredient;
+                                          previousSubstitutions.clear();
+                                        });
+                                      },
+                                    ),
+                                  IconButton(
+                                    icon: const Icon(Icons.swap_horiz),
+                                    onPressed: () => _showSubstitutionsDialog(
+                                      context,
+                                      originalIngredient,
+                                      previousSubstitutions,
+                                      (substitution) {
+                                        setState(() {
+                                          // Update the ingredient with its substitution
+                                          analysis.ingredients[index] =
+                                              substitution;
+                                          previousSubstitutions
+                                              .add(substitution);
+                                        });
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         );
                       },
                     ),
@@ -1767,7 +1809,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   }
 
   Future<void> _showSubstitutionsDialog(
-      BuildContext context, String ingredient) async {
+      BuildContext context,
+      String ingredient,
+      Set<String> previousSubstitutions,
+      Function(String) onSubstitutionSelected) async {
     final recipeService = RecipeService();
     final analysis = widget.video.analysis;
     if (analysis == null) return;
@@ -1789,32 +1834,87 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     );
 
     try {
-      final substitutions =
-          await recipeService.generateSubstitutions(ingredient, recipeContext);
+      final substitutions = await recipeService.generateSubstitutions(
+        ingredient,
+        recipeContext,
+        previousSubstitutions,
+      );
       if (!mounted) return;
 
       Navigator.pop(context); // Dismiss loading dialog
 
+      // Show confirmation dialog
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Substitutions for $ingredient'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: substitutions
-                .map((sub) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      child: Text('• $sub'),
-                    ))
-                .toList(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+        barrierDismissible: false,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text('Replace $ingredient?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Would you like to replace "$ingredient" with:'),
+                const SizedBox(height: 12),
+                Text(
+                  substitutions.first,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
             ),
-          ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  // Add current substitution to previousSubstitutions
+                  previousSubstitutions.add(substitutions.first);
+
+                  setState(() {
+                    // Show loading indicator in the dialog
+                    substitutions.first = 'Loading...';
+                  });
+
+                  try {
+                    final newSubstitutions =
+                        await recipeService.generateSubstitutions(
+                      ingredient,
+                      recipeContext,
+                      previousSubstitutions,
+                    );
+                    if (!mounted) return;
+
+                    setState(() {
+                      // Update the substitution text
+                      substitutions.first = newSubstitutions.first;
+                    });
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Failed to generate substitutions. Please try again.'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    Navigator.pop(context);
+                  }
+                },
+                child: const Text('Try Another'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  onSubstitutionSelected(substitutions.first);
+                },
+                child: const Text('Replace'),
+              ),
+            ],
+          ),
         ),
       );
     } catch (e) {
@@ -1935,7 +2035,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                 ),
                 child: Icon(
                   Icons.favorite,
-                  color: _localLikeState ? Colors.red : Colors.white,
+                  color: _isLiked ? Colors.red : Colors.white,
                   size: 100,
                 ),
               ),
@@ -2177,12 +2277,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
                 // Like Button with optimistic count
                 _buildActionButton(
-                  icon: _localLikeState
+                  icon: _isLiked
                       ? FontAwesomeIcons.solidHeart
                       : FontAwesomeIcons.heart,
                   label: _localLikesCount.toString(),
                   iconSize: 28,
-                  color: _localLikeState ? Colors.red : Colors.white,
+                  color: _isLiked ? Colors.red : Colors.white,
                   onTap: _handleLikeAction,
                 ),
                 const SizedBox(height: 16),
