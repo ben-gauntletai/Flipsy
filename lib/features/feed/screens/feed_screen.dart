@@ -1005,6 +1005,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   Timer? _initializationRetryTimer;
   int _initializationAttempts = 0;
   static const int maxInitializationAttempts = 3;
+  bool _showSubtitles = true; // Add subtitle visibility state
 
   // Like animation controller
   late AnimationController _likeAnimationController;
@@ -1774,6 +1775,117 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                             widget.video.analysis!.steps.isNotEmpty)
                           Stack(
                             children: [
+                              // Subtitles layer (below timeline)
+                              if (widget.video.analysis
+                                          ?.transcriptionSegments !=
+                                      null &&
+                                  widget.video.analysis!.transcriptionSegments
+                                      .isNotEmpty &&
+                                  _showSubtitles)
+                                SizedBox(
+                                  width: MediaQuery.of(context).size.width,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(
+                                      bottom: 8,
+                                      left: 8,
+                                      right:
+                                          120, // Increased right padding to avoid More button
+                                    ),
+                                    child: ValueListenableBuilder<
+                                        VideoPlayerValue>(
+                                      valueListenable: _videoController!,
+                                      builder: (context, value, child) {
+                                        final currentPosition =
+                                            value.position.inMilliseconds /
+                                                1000.0;
+
+                                        // Find the current subtitle
+                                        final currentSegment = widget.video
+                                            .analysis!.transcriptionSegments
+                                            .firstWhere(
+                                          (segment) =>
+                                              currentPosition >=
+                                                  segment.start &&
+                                              currentPosition <= segment.end,
+                                          orElse: () => TranscriptionSegment(
+                                            start: 0,
+                                            end: 0,
+                                            text: '',
+                                          ),
+                                        );
+
+                                        if (currentSegment.text.isEmpty) {
+                                          return const SizedBox();
+                                        }
+
+                                        return LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            // Start with default text size
+                                            double fontSize = 14;
+                                            final textSpan = TextSpan(
+                                              text: currentSegment.text,
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: fontSize,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            );
+                                            TextPainter textPainter =
+                                                TextPainter(
+                                              text: textSpan,
+                                              textDirection: TextDirection.ltr,
+                                              maxLines: 2,
+                                            );
+                                            textPainter.layout(
+                                                maxWidth: constraints.maxWidth);
+
+                                            // If text doesn't fit, reduce font size until it does
+                                            while (
+                                                textPainter.didExceedMaxLines &&
+                                                    fontSize > 8) {
+                                              fontSize -= 0.5;
+                                              final newTextSpan = TextSpan(
+                                                text: currentSegment.text,
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: fontSize,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              );
+                                              textPainter = TextPainter(
+                                                text: newTextSpan,
+                                                textDirection:
+                                                    TextDirection.ltr,
+                                                maxLines: 2,
+                                              );
+                                              textPainter.layout(
+                                                  maxWidth:
+                                                      constraints.maxWidth);
+                                            }
+
+                                            return Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 4,
+                                              ),
+                                              child: Text(
+                                                currentSegment.text,
+                                                style: TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: fontSize,
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                                maxLines: 2,
+                                              ),
+                                            );
+                                          },
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
                               // Full width timeline
                               SizedBox(
                                 width: MediaQuery.of(context).size.width,
