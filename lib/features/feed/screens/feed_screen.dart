@@ -357,6 +357,22 @@ class VideoControllerManager {
       }
     });
   }
+
+  Future<void> pauseAllVideos() async {
+    for (final controller in _controllers.values) {
+      if (controller.value.isPlaying) {
+        await controller.pause();
+      }
+    }
+  }
+
+  Future<void> resetVideo(int index) async {
+    final controller = _controllers[index];
+    if (controller != null && controller.value.isInitialized) {
+      await controller.seekTo(Duration.zero);
+      print('VideoControllerManager: Reset video at index $index to beginning');
+    }
+  }
 }
 
 class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
@@ -471,7 +487,12 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     print('FeedScreen: Widget updated, isVisible: ${widget.isVisible}');
 
     if (!widget.isVisible) {
-      // Pause all videos when feed is not visible
+      // Reset current video to beginning when feed becomes invisible
+      if (_currentPage >= 0 && _currentPage < _videos.length) {
+        _controllerManager.resetVideo(_currentPage);
+      }
+      // Pause and mute all videos when feed is not visible
+      _controllerManager.pauseAllVideos();
       _controllerManager.muteAllExcept(-1);
       AudioStateManager.reset(); // Reset audio state when feed is not visible
     } else if (widget.isVisible && _currentPage >= 0) {
@@ -496,6 +517,11 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     final page = _pageController.page?.round() ?? 0;
     if (page != _currentPage) {
       print('FeedScreen: Page changed from $_currentPage to $page');
+
+      // Reset the previous video to beginning
+      if (_currentPage >= 0 && _currentPage < _videos.length) {
+        _controllerManager.resetVideo(_currentPage);
+      }
 
       // Update state and controllers
       setState(() => _currentPage = page);
@@ -537,9 +563,9 @@ class FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
+      _controllerManager.pauseAllVideos();
       _controllerManager.muteAllExcept(-1);
-      AudioStateManager
-          .reset(); // Reset audio state when app is paused/inactive
+      AudioStateManager.reset();
     } else if (state == AppLifecycleState.resumed && mounted) {
       // Only resume playback if the feed is visible
       if (widget.isVisible && _currentPage >= 0) {
@@ -979,7 +1005,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   Timer? _initializationRetryTimer;
   int _initializationAttempts = 0;
   static const int maxInitializationAttempts = 3;
-  bool _showSubtitles = true; // Add subtitle visibility state
 
   // Like animation controller
   late AnimationController _likeAnimationController;
@@ -1284,11 +1309,21 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   @override
   void dispose() {
-    print('VideoFeedItem: Disposing video ${widget.video.id}');
+    // Ensure video is stopped and cleanup is complete
+    if (_videoController != null) {
+      if (_videoController!.value.isPlaying) {
+        _videoController!.pause();
+      }
+      _videoController!.setVolume(0);
+      _isPlaying = false;
+      _isMuted = true;
+    }
+
     // Release audio focus if we have it
     if (AudioStateManager.currentlyPlayingIndex == widget.index) {
       AudioStateManager.releaseAudioFocus(widget.index);
     }
+
     _commentCountSubscription?.cancel();
     _likeCountSubscription?.cancel();
     _doubleTapTimer?.cancel();
@@ -1298,6 +1333,24 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     _bookmarkStatusSubscription?.cancel();
     _bookmarkCountSubscription?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(VideoFeedItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // If the video becomes invisible or is no longer the current page
+    if ((!widget.isVisible || widget.index != widget.currentPage) &&
+        oldWidget.isVisible &&
+        oldWidget.index == oldWidget.currentPage) {
+      if (_videoController != null && _videoController!.value.isInitialized) {
+        print('VideoFeedItem: Resetting video to beginning');
+        _videoController!.seekTo(Duration.zero);
+      }
+    }
+
+    // Check and update playback state
+    _checkAndUpdatePlaybackState();
   }
 
   Future<void> _initializeController() async {
@@ -1409,6 +1462,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
         print('VideoFeedItem: Releasing audio focus - index: ${widget.index}');
         AudioStateManager.releaseAudioFocus(widget.index);
       }
+
+      // Ensure video is stopped and muted
+      _videoController!.setVolume(0);
+      _isMuted = true;
     }
   }
 
@@ -1473,10 +1530,13 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
   // Profile Picture Navigation
   void _navigateToProfile(BuildContext context) {
-    // Pause video before navigating
-    if (_videoController != null && _isPlaying) {
-      _videoController!.pause();
-      _isPlaying = false;
+    // Reset and pause video before navigating
+    if (_videoController != null) {
+      _videoController!.seekTo(Duration.zero);
+      if (_isPlaying) {
+        _videoController!.pause();
+        _isPlaying = false;
+      }
     }
 
     MainNavigationScreen.showUserProfile(context, widget.video.userId);
@@ -1516,10 +1576,13 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   }
 
   void _showComments(BuildContext context) {
-    // Pause video while comments are shown
-    if (_videoController != null && _isPlaying) {
-      _videoController!.pause();
-      _isPlaying = false;
+    // Reset and pause video while comments are shown
+    if (_videoController != null) {
+      _videoController!.seekTo(Duration.zero);
+      if (_isPlaying) {
+        _videoController!.pause();
+        _isPlaying = false;
+      }
     }
 
     CommentBottomSheet.show(
@@ -1527,7 +1590,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       widget.video.id,
       widget.video.allowComments,
     ).then((_) {
-      // Resume video when comments are closed
+      // Resume video when comments are closed if still visible
       if (widget.isVisible && mounted && _videoController != null) {
         _videoController!.play();
         _isPlaying = true;
@@ -1711,117 +1774,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                             widget.video.analysis!.steps.isNotEmpty)
                           Stack(
                             children: [
-                              // Subtitles layer (below timeline)
-                              if (widget.video.analysis
-                                          ?.transcriptionSegments !=
-                                      null &&
-                                  widget.video.analysis!.transcriptionSegments
-                                      .isNotEmpty &&
-                                  _showSubtitles)
-                                SizedBox(
-                                  width: MediaQuery.of(context).size.width,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: 8,
-                                      left: 8,
-                                      right:
-                                          120, // Increased right padding to avoid More button
-                                    ),
-                                    child: ValueListenableBuilder<
-                                        VideoPlayerValue>(
-                                      valueListenable: _videoController!,
-                                      builder: (context, value, child) {
-                                        final currentPosition =
-                                            value.position.inMilliseconds /
-                                                1000.0;
-
-                                        // Find the current subtitle
-                                        final currentSegment = widget.video
-                                            .analysis!.transcriptionSegments
-                                            .firstWhere(
-                                          (segment) =>
-                                              currentPosition >=
-                                                  segment.start &&
-                                              currentPosition <= segment.end,
-                                          orElse: () => TranscriptionSegment(
-                                            start: 0,
-                                            end: 0,
-                                            text: '',
-                                          ),
-                                        );
-
-                                        if (currentSegment.text.isEmpty) {
-                                          return const SizedBox();
-                                        }
-
-                                        return LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            // Start with default text size
-                                            double fontSize = 14;
-                                            final textSpan = TextSpan(
-                                              text: currentSegment.text,
-                                              style: TextStyle(
-                                                color: Colors.white,
-                                                fontSize: fontSize,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            );
-                                            TextPainter textPainter =
-                                                TextPainter(
-                                              text: textSpan,
-                                              textDirection: TextDirection.ltr,
-                                              maxLines: 2,
-                                            );
-                                            textPainter.layout(
-                                                maxWidth: constraints.maxWidth);
-
-                                            // If text doesn't fit, reduce font size until it does
-                                            while (
-                                                textPainter.didExceedMaxLines &&
-                                                    fontSize > 8) {
-                                              fontSize -= 0.5;
-                                              final newTextSpan = TextSpan(
-                                                text: currentSegment.text,
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: fontSize,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                              );
-                                              textPainter = TextPainter(
-                                                text: newTextSpan,
-                                                textDirection:
-                                                    TextDirection.ltr,
-                                                maxLines: 2,
-                                              );
-                                              textPainter.layout(
-                                                  maxWidth:
-                                                      constraints.maxWidth);
-                                            }
-
-                                            return Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 4,
-                                              ),
-                                              child: Text(
-                                                currentSegment.text,
-                                                style: TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: fontSize,
-                                                  fontWeight: FontWeight.w500,
-                                                ),
-                                                textAlign: TextAlign.center,
-                                                maxLines: 2,
-                                              ),
-                                            );
-                                          },
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ),
                               // Full width timeline
                               SizedBox(
                                 width: MediaQuery.of(context).size.width,
@@ -2005,20 +1957,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              leading: Icon(
-                _showSubtitles ? Icons.subtitles : Icons.subtitles_off,
-                color: Colors.black87,
-              ),
-              title: Text(
-                _showSubtitles ? 'Turn Off Subtitles' : 'Turn On Subtitles',
-                style: const TextStyle(color: Colors.black87),
-              ),
-              onTap: () {
-                setState(() => _showSubtitles = !_showSubtitles);
-                Navigator.pop(context);
-              },
-            ),
             ListTile(
               leading: const Icon(
                 Icons.playlist_add,

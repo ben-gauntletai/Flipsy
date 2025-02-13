@@ -132,6 +132,10 @@ class _VideoTimelineState extends State<VideoTimeline>
   void dispose() {
     _seekTimer?.cancel();
     _hideTextTimer?.cancel();
+    // Ensure video is paused when timeline is disposed
+    if (widget.controller.value.isPlaying) {
+      widget.controller.pause();
+    }
     widget.controller.removeListener(_updatePosition);
     _positionNotifier.dispose();
     _fadeController.dispose();
