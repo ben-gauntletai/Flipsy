@@ -2224,3 +2224,71 @@ export const verifyEnvironment = onCall(
   },
 );
 
+export const generateIngredientSubstitutions = onCall(
+  {
+    timeoutSeconds: 30,
+    memory: "256MiB",
+    secrets: ["OPENAI_API_KEY"],
+  },
+  async (request) => {
+    try {
+      const { ingredient, recipeContext } = request.data;
+
+      if (!ingredient || typeof ingredient !== 'string') {
+        throw new Error('Invalid ingredient provided');
+      }
+
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const systemPrompt = `You are a culinary expert who provides ingredient substitutions. 
+      For each ingredient, provide 3 practical substitutions that will work well in the specific recipe context provided.
+      Each substitution should include a brief explanation of how it affects the recipe and why it works in this specific context.
+      Consider the cooking method, flavor profile, and other ingredients in the recipe when suggesting substitutions.`;
+
+      const userPrompt = `Please suggest substitutions for ${ingredient} in the following recipe context:
+      
+      Recipe Description: ${recipeContext.description || 'Not provided'}
+      
+      All Ingredients:
+      ${recipeContext.allIngredients.join('\n')}
+      
+      Recipe Steps:
+      ${recipeContext.steps.join('\n')}
+      
+      Please provide 3 substitutions that would work well specifically in this recipe context.
+      For each substitution, explain how it affects the recipe and why it's a good choice given the other ingredients and cooking method.
+      Please format each substitution as a clear, concise bullet point.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: userPrompt,
+          }
+        ],
+        temperature: 0.7,
+        max_tokens: 500,
+      });
+
+      const substitutions = response.choices[0].message.content
+        .split('\n')
+        .filter(line => line.trim().length > 0)
+        .map(line => line.replace(/^\d+\.\s*/, '').trim());
+
+      return {
+        substitutions
+      };
+    } catch (error) {
+      console.error('Error generating substitutions:', error);
+      throw new Error('Failed to generate substitutions');
+    }
+  }
+);
+

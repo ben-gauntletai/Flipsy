@@ -21,6 +21,7 @@ import 'dart:io';
 import '../../../features/video/widgets/collection_selection_sheet.dart';
 import '../../../features/video/widgets/video_timeline.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../../services/recipe_service.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1599,6 +1600,237 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     });
   }
 
+  void _showRecipePanel(BuildContext context) {
+    // Reset and pause video while recipe panel is shown
+    if (_videoController != null) {
+      _videoController!.seekTo(Duration.zero);
+      if (_isPlaying) {
+        _videoController!.pause();
+        _isPlaying = false;
+      }
+    }
+
+    final analysis = widget.video.analysis;
+    if (analysis == null) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.9,
+        minChildSize: 0.5,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (context, scrollController) => Padding(
+          padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom +
+                  MediaQuery.of(context).padding.bottom),
+          child: SingleChildScrollView(
+            controller: scrollController,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Recipe Title
+                  Text(
+                    'Recipe Details',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Ingredients Section
+                  if (analysis.ingredients.isNotEmpty) ...[
+                    const Text(
+                      'Ingredients',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: analysis.ingredients.length,
+                      itemBuilder: (context, index) {
+                        final ingredient = analysis.ingredients[index];
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(Icons.check_circle_outline),
+                          title: Text(ingredient),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.swap_horiz),
+                            onPressed: () =>
+                                _showSubstitutionsDialog(context, ingredient),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  // Steps Section
+                  if (analysis.steps.isNotEmpty) ...[
+                    const Text(
+                      'Steps',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: analysis.steps.length,
+                      itemBuilder: (context, index) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                margin: const EdgeInsets.only(right: 12),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).primaryColor,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  analysis.steps[index],
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+
+                  // Tools Section
+                  if (analysis.tools.isNotEmpty) ...[
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Tools Needed',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: analysis.tools
+                          .map((tool) => Chip(
+                                label: Text(tool),
+                                backgroundColor: Colors.grey[200],
+                              ))
+                          .toList(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ).then((_) {
+      // Resume video when recipe panel is closed if still visible
+      if (widget.isVisible && mounted && _videoController != null) {
+        _videoController!.play();
+        _isPlaying = true;
+      }
+    });
+  }
+
+  Future<void> _showSubstitutionsDialog(
+      BuildContext context, String ingredient) async {
+    final recipeService = RecipeService();
+    final analysis = widget.video.analysis;
+    if (analysis == null) return;
+
+    // Build recipe context
+    final recipeContext = {
+      'description': widget.video.description,
+      'allIngredients': analysis.ingredients,
+      'steps': analysis.steps,
+      'targetIngredient': ingredient,
+    };
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      final substitutions =
+          await recipeService.generateSubstitutions(ingredient, recipeContext);
+      if (!mounted) return;
+
+      Navigator.pop(context); // Dismiss loading dialog
+
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Substitutions for $ingredient'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: substitutions
+                .map((sub) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text('• $sub'),
+                    ))
+                .toList(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      Navigator.pop(context); // Dismiss loading dialog
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to generate substitutions. Please try again.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -1973,6 +2205,28 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   iconSize: 28,
                   color: _localBookmarkState ? Colors.yellow : Colors.white,
                   onTap: _handleBookmarkAction,
+                ),
+                const SizedBox(height: 16),
+
+                // Recipe Button
+                _buildActionButton(
+                  icon: FontAwesomeIcons.utensils,
+                  label: '',
+                  iconSize: 28,
+                  color: Colors.white,
+                  onTap: () {
+                    if (widget.video.analysis == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                              'Recipe details are not available yet. Please try again later.'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                      return;
+                    }
+                    _showRecipePanel(context);
+                  },
                 ),
                 const SizedBox(height: 10),
 
