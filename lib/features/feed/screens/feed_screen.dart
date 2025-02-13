@@ -1006,7 +1006,12 @@ class _VideoFeedItemState extends State<VideoFeedItem>
   Timer? _initializationRetryTimer;
   int _initializationAttempts = 0;
   static const int maxInitializationAttempts = 3;
-  bool _showSubtitles = true; // Add subtitle visibility state
+  bool _showSubtitles = true;
+
+  // Add state variables for recipe substitutions
+  Map<String, dynamic> _recipeContext = {};
+  Map<String, Set<String>> _substitutionHistoryMap = {};
+  Map<String, String> _currentSubstitutions = {};
 
   // Like animation controller
   late AnimationController _likeAnimationController;
@@ -1090,6 +1095,64 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     // Initialize bookmark status and count
     _initializeBookmarkStatus();
     _initializeBookmarkCount();
+
+    // Initialize recipe data
+    _initializeRecipeData();
+  }
+
+  Future<void> _initializeRecipeData() async {
+    if (widget.video.analysis == null) return;
+
+    // Initialize recipe context
+    _recipeContext = {
+      'description': widget.video.description ?? '',
+      'allIngredients': widget.video.analysis!.ingredients,
+      'steps': widget.video.analysis!.steps,
+    };
+
+    try {
+      // Load saved substitutions
+      final recipeService = RecipeService();
+      final savedSubstitutions =
+          await recipeService.loadSubstitutions(widget.video.id);
+
+      // Initialize substitution maps
+      for (final ingredient in widget.video.analysis!.ingredients) {
+        // Initialize empty history set for each ingredient
+        _substitutionHistoryMap[ingredient] = {};
+
+        if (savedSubstitutions.containsKey(ingredient)) {
+          final substitutionData = savedSubstitutions[ingredient]!;
+
+          // Load history
+          if (substitutionData['history'] != null) {
+            _substitutionHistoryMap[ingredient]!
+                .addAll(List<String>.from(substitutionData['history']));
+          }
+
+          // Load selected substitution
+          final selected = substitutionData['selected'];
+          if (selected != null && selected != ingredient) {
+            _currentSubstitutions[ingredient] = selected;
+          }
+        }
+      }
+
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      print('Error initializing recipe data: $e');
+      // Handle error appropriately
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading recipe data: $e'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
   }
 
   void _initializeLikeStatus() {
@@ -1600,7 +1663,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
     });
   }
 
-  void _showRecipePanel(BuildContext context) {
+  void _showRecipePanel(BuildContext context) async {
     // Reset and pause video while recipe panel is shown
     if (_videoController != null) {
       _videoController!.seekTo(Duration.zero);
@@ -1621,179 +1684,324 @@ class _VideoFeedItemState extends State<VideoFeedItem>
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.5,
-        maxChildSize: 0.9,
-        expand: false,
-        builder: (context, scrollController) => Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(context).viewInsets.bottom +
-                  MediaQuery.of(context).padding.bottom),
-          child: SingleChildScrollView(
-            controller: scrollController,
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Recipe Title
-                  Text(
-                    'Recipe Details',
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Ingredients Section
-                  if (analysis.ingredients.isNotEmpty) ...[
-                    const Text(
-                      'Ingredients',
-                      style: TextStyle(
-                        fontSize: 20,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => DraggableScrollableSheet(
+          initialChildSize: 0.9,
+          minChildSize: 0.5,
+          maxChildSize: 0.9,
+          expand: false,
+          builder: (context, scrollController) => Padding(
+            padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom +
+                    MediaQuery.of(context).padding.bottom),
+            child: SingleChildScrollView(
+              controller: scrollController,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Recipe Title
+                    Text(
+                      'Recipe Details',
+                      style: const TextStyle(
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: analysis.ingredients.length,
-                      itemBuilder: (context, index) {
-                        final originalIngredient = analysis.ingredients[index];
-                        // Track previous substitutions for this ingredient
-                        final previousSubstitutions = <String>{};
-
-                        return StatefulBuilder(
-                          builder: (context, setState) {
-                            final currentIngredient =
-                                analysis.ingredients[index];
-                            if (currentIngredient != originalIngredient) {
-                              previousSubstitutions.add(currentIngredient);
-                            }
-
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: const Icon(Icons.check_circle_outline),
-                              title: Text(currentIngredient),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (currentIngredient != originalIngredient)
-                                    IconButton(
-                                      icon: const Icon(Icons.restore),
-                                      onPressed: () {
-                                        setState(() {
-                                          // Restore original ingredient
-                                          analysis.ingredients[index] =
-                                              originalIngredient;
-                                          previousSubstitutions.clear();
-                                        });
-                                      },
-                                    ),
-                                  IconButton(
-                                    icon: const Icon(Icons.swap_horiz),
-                                    onPressed: () => _showSubstitutionsDialog(
-                                      context,
-                                      originalIngredient,
-                                      previousSubstitutions,
-                                      (substitution) {
-                                        setState(() {
-                                          // Update the ingredient with its substitution
-                                          analysis.ingredients[index] =
-                                              substitution;
-                                          previousSubstitutions
-                                              .add(substitution);
-                                        });
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        );
-                      },
                     ),
                     const SizedBox(height: 20),
-                  ],
 
-                  // Steps Section
-                  if (analysis.steps.isNotEmpty) ...[
-                    const Text(
-                      'Steps',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                    // Ingredients Section
+                    if (analysis.ingredients.isNotEmpty) ...[
+                      const Text(
+                        'Ingredients',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: analysis.steps.length,
-                      itemBuilder: (context, index) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 16),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 24,
-                                height: 24,
-                                margin: const EdgeInsets.only(right: 12),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).primaryColor,
-                                  shape: BoxShape.circle,
+                      const SizedBox(height: 10),
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: analysis.ingredients.length,
+                        itemBuilder: (context, index) {
+                          final originalIngredient =
+                              analysis.ingredients[index];
+                          final currentSubstitution =
+                              _currentSubstitutions[originalIngredient];
+                          final history =
+                              _substitutionHistoryMap[originalIngredient] ?? {};
+
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: const Icon(Icons.check_circle_outline),
+                            title: Row(
+                              children: [
+                                Expanded(
+                                  child: PopupMenuButton<String>(
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(currentSubstitution ??
+                                              originalIngredient),
+                                        ),
+                                        const Icon(Icons.arrow_drop_down),
+                                      ],
+                                    ),
+                                    itemBuilder: (context) {
+                                      final List<PopupMenuEntry<String>> items =
+                                          [
+                                        // Original ingredient
+                                        PopupMenuItem<String>(
+                                          value: originalIngredient,
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(originalIngredient),
+                                              ),
+                                              if (currentSubstitution == null)
+                                                const Icon(Icons.check,
+                                                    size: 20),
+                                            ],
+                                          ),
+                                        ),
+                                        if (history.isNotEmpty) ...[
+                                          const PopupMenuDivider(),
+                                          ...history.map(
+                                              (sub) => PopupMenuItem<String>(
+                                                    value: sub,
+                                                    child: Row(
+                                                      children: [
+                                                        Expanded(
+                                                          child: Text(sub),
+                                                        ),
+                                                        if (currentSubstitution ==
+                                                            sub)
+                                                          const Icon(
+                                                              Icons.check,
+                                                              size: 20),
+                                                      ],
+                                                    ),
+                                                  )),
+                                        ],
+                                        const PopupMenuDivider(),
+                                        PopupMenuItem<String>(
+                                          value: 'generate_new',
+                                          child: Row(
+                                            children: const [
+                                              Icon(Icons.add,
+                                                  color: Colors.blue),
+                                              SizedBox(width: 8),
+                                              Text(
+                                                'Generate New Substitution',
+                                                style: TextStyle(
+                                                    color: Colors.blue),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ];
+                                      return items;
+                                    },
+                                    onSelected: (value) async {
+                                      if (value == 'generate_new') {
+                                        // Show loading indicator within the menu
+                                        showDialog(
+                                          context: context,
+                                          barrierDismissible: false,
+                                          builder: (context) => const Center(
+                                            child: CircularProgressIndicator(),
+                                          ),
+                                        );
+
+                                        try {
+                                          final recipeService = RecipeService();
+                                          final newSubstitutions =
+                                              await recipeService
+                                                  .generateSubstitutions(
+                                            originalIngredient,
+                                            _recipeContext,
+                                            _substitutionHistoryMap[
+                                                    originalIngredient] ??
+                                                {},
+                                          );
+
+                                          if (!mounted) return;
+                                          Navigator.pop(
+                                              context); // Dismiss loading dialog
+
+                                          if (newSubstitutions.isNotEmpty) {
+                                            final newSubstitution =
+                                                newSubstitutions.first;
+
+                                            // Add to history without selecting
+                                            setSheetState(() {
+                                              _substitutionHistoryMap[
+                                                      originalIngredient]!
+                                                  .add(newSubstitution);
+                                            });
+
+                                            // Save to Firestore without selecting
+                                            try {
+                                              await recipeService
+                                                  .saveSubstitution(
+                                                widget.video.id,
+                                                originalIngredient,
+                                                newSubstitution,
+                                                false, // Don't make it selected
+                                              );
+                                            } catch (e) {
+                                              print(
+                                                  'Error saving substitution: $e');
+                                              if (mounted) {
+                                                ScaffoldMessenger.of(context)
+                                                    .showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                        'Error saving substitution'),
+                                                    duration:
+                                                        Duration(seconds: 2),
+                                                  ),
+                                                );
+                                              }
+                                            }
+                                          }
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          Navigator.pop(
+                                              context); // Dismiss loading dialog
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Failed to generate substitution. Please try again.',
+                                              ),
+                                              duration: Duration(seconds: 2),
+                                            ),
+                                          );
+                                        }
+                                      } else {
+                                        // Handle selection of existing substitution
+                                        try {
+                                          final recipeService = RecipeService();
+                                          await recipeService
+                                              .setSelectedSubstitution(
+                                            widget.video.id,
+                                            originalIngredient,
+                                            value,
+                                          );
+
+                                          setSheetState(() {
+                                            if (value == originalIngredient) {
+                                              _currentSubstitutions
+                                                  .remove(originalIngredient);
+                                            } else {
+                                              _currentSubstitutions[
+                                                  originalIngredient] = value;
+                                            }
+                                          });
+                                        } catch (e) {
+                                          print(
+                                              'Error selecting substitution: $e');
+                                          if (mounted) {
+                                            ScaffoldMessenger.of(context)
+                                                .showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                    'Error selecting substitution'),
+                                                duration: Duration(seconds: 2),
+                                              ),
+                                            );
+                                          }
+                                        }
+                                      }
+                                    },
+                                  ),
                                 ),
-                                child: Center(
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+
+                    // Steps Section
+                    if (analysis.steps.isNotEmpty) ...[
+                      const Text(
+                        'Steps',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: analysis.steps.length,
+                        itemBuilder: (context, index) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 16),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  margin: const EdgeInsets.only(right: 12),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).primaryColor,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Expanded(
                                   child: Text(
-                                    '${index + 1}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                    analysis.steps[index],
+                                    style: const TextStyle(fontSize: 16),
                                   ),
                                 ),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  analysis.steps[index],
-                                  style: const TextStyle(fontSize: 16),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-
-                  // Tools Section
-                  if (analysis.tools.isNotEmpty) ...[
-                    const SizedBox(height: 20),
-                    const Text(
-                      'Tools Needed',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
+                              ],
+                            ),
+                          );
+                        },
                       ),
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: analysis.tools
-                          .map((tool) => Chip(
-                                label: Text(tool),
-                                backgroundColor: Colors.grey[200],
-                              ))
-                          .toList(),
-                    ),
+                    ],
+
+                    // Tools Section
+                    if (analysis.tools.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Tools Needed',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: analysis.tools
+                            .map((tool) => Chip(
+                                  label: Text(tool),
+                                  backgroundColor: Colors.grey[200],
+                                ))
+                            .toList(),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -1806,129 +2014,6 @@ class _VideoFeedItemState extends State<VideoFeedItem>
         _isPlaying = true;
       }
     });
-  }
-
-  Future<void> _showSubstitutionsDialog(
-      BuildContext context,
-      String ingredient,
-      Set<String> previousSubstitutions,
-      Function(String) onSubstitutionSelected) async {
-    final recipeService = RecipeService();
-    final analysis = widget.video.analysis;
-    if (analysis == null) return;
-
-    // Build recipe context
-    final recipeContext = {
-      'description': widget.video.description,
-      'allIngredients': analysis.ingredients,
-      'steps': analysis.steps,
-      'targetIngredient': ingredient,
-    };
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
-
-    try {
-      final substitutions = await recipeService.generateSubstitutions(
-        ingredient,
-        recipeContext,
-        previousSubstitutions,
-      );
-      if (!mounted) return;
-
-      Navigator.pop(context); // Dismiss loading dialog
-
-      // Show confirmation dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: Text('Replace $ingredient?'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Would you like to replace "$ingredient" with:'),
-                const SizedBox(height: 12),
-                Text(
-                  substitutions.first,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  // Add current substitution to previousSubstitutions
-                  previousSubstitutions.add(substitutions.first);
-
-                  setState(() {
-                    // Show loading indicator in the dialog
-                    substitutions.first = 'Loading...';
-                  });
-
-                  try {
-                    final newSubstitutions =
-                        await recipeService.generateSubstitutions(
-                      ingredient,
-                      recipeContext,
-                      previousSubstitutions,
-                    );
-                    if (!mounted) return;
-
-                    setState(() {
-                      // Update the substitution text
-                      substitutions.first = newSubstitutions.first;
-                    });
-                  } catch (e) {
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                            'Failed to generate substitutions. Please try again.'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    Navigator.pop(context);
-                  }
-                },
-                child: const Text('Try Another'),
-              ),
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  onSubstitutionSelected(substitutions.first);
-                },
-                child: const Text('Replace'),
-              ),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-
-      Navigator.pop(context); // Dismiss loading dialog
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Failed to generate substitutions. Please try again.'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
   }
 
   @override
