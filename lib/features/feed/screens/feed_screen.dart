@@ -2015,6 +2015,15 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                         physics: const NeverScrollableScrollPhysics(),
                         itemCount: analysis.steps.length,
                         itemBuilder: (context, index) {
+                          // Remove both timestamp formats
+                          final stepText = analysis.steps[index]
+                              .replaceAll(RegExp(r'\s*\[\d+\.\d+s\]'),
+                                  '') // Remove single timestamps
+                              .replaceAll(
+                                  RegExp(r'\s*\[\d+\.\d+s\s*-\s*\d+\.\d+s\]'),
+                                  '') // Remove range timestamps
+                              .trim(); // Clean up any remaining whitespace
+
                           return Padding(
                             padding: const EdgeInsets.only(bottom: 16),
                             child: Row(
@@ -2040,7 +2049,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                 ),
                                 Expanded(
                                   child: Text(
-                                    analysis.steps[index],
+                                    stepText,
                                     style: const TextStyle(fontSize: 16),
                                   ),
                                 ),
