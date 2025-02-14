@@ -278,21 +278,35 @@ class _VideoTimelineState extends State<VideoTimeline>
     if (!mounted || !widget.controller.value.isInitialized) return [0.0];
 
     try {
-      // Extract timestamps from steps if not provided directly
-      List<double> extractedTimestamps;
-      if (widget.timestamps.isEmpty) {
-        extractedTimestamps = widget.steps.map((step) {
-          final match = RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
-          return match != null ? double.parse(match.group(1)!) : 0.0;
-        }).toList();
-      } else {
-        extractedTimestamps = List<double>.from(widget.timestamps);
+      // Extract timestamps from steps
+      List<double> extractedTimestamps = [];
+
+      // First try to extract timestamps from the format [X.XXs - Y.YYs]
+      for (String step in widget.steps) {
+        final rangeMatch =
+            RegExp(r'\[(\d+\.?\d*)s\s*-\s*(\d+\.?\d*)s\]$').firstMatch(step);
+        if (rangeMatch != null) {
+          final startTime = double.tryParse(rangeMatch.group(1)!);
+          final endTime = double.tryParse(rangeMatch.group(2)!);
+          if (startTime != null && endTime != null) {
+            extractedTimestamps.add(startTime);
+            extractedTimestamps.add(endTime);
+          }
+        } else {
+          // Try to extract single timestamp [X.XXs]
+          final singleMatch = RegExp(r'\[(\d+\.?\d*)s\]$').firstMatch(step);
+          if (singleMatch != null) {
+            final timestamp = double.tryParse(singleMatch.group(1)!);
+            if (timestamp != null) {
+              extractedTimestamps.add(timestamp);
+            }
+          }
+        }
       }
 
       // Filter out any invalid timestamps
-      extractedTimestamps = extractedTimestamps
-          .where((t) => t.isFinite && t >= 0) // Ensure non-negative and finite
-          .toList();
+      extractedTimestamps =
+          extractedTimestamps.where((t) => t.isFinite && t >= 0).toList();
 
       // Sort and remove duplicates
       extractedTimestamps = extractedTimestamps.toSet().toList()..sort();
@@ -316,7 +330,6 @@ class _VideoTimelineState extends State<VideoTimeline>
       if (extractedTimestamps.isEmpty ||
           (extractedTimestamps.last < duration &&
               duration - extractedTimestamps.last > 0.1)) {
-        // Add 100ms threshold
         extractedTimestamps.add(duration);
       }
 
@@ -326,11 +339,11 @@ class _VideoTimelineState extends State<VideoTimeline>
       }
 
       // Ensure the list isn't too long (prevent buffer overflow)
-      if (extractedTimestamps.length > 16) {
+      if (extractedTimestamps.length > 50) {
         // Keep first, last, and evenly spaced points in between
-        final step = (extractedTimestamps.length - 2) / 14;
+        final step = (extractedTimestamps.length - 2) / 48;
         final newTimestamps = [extractedTimestamps.first];
-        for (var i = 1; i < 15; i++) {
+        for (var i = 1; i < 49; i++) {
           final index = (i * step).round();
           newTimestamps.add(extractedTimestamps[index]);
         }
@@ -339,9 +352,7 @@ class _VideoTimelineState extends State<VideoTimeline>
       }
 
       return extractedTimestamps;
-    } catch (e, stackTrace) {
-      // Keep only essential error logging
-      debugPrint('Error in _fullTimestamps: $e');
+    } catch (e) {
       // Return safe default in case of any error
       return [0.0, widget.controller.value.duration.inSeconds.toDouble()];
     }

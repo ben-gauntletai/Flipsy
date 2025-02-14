@@ -2392,14 +2392,30 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                   padding: const EdgeInsets.only(
                                     bottom: 16,
                                   ),
-                                  child: VideoTimeline(
-                                    controller: _videoController!,
-                                    steps: widget.video.analysis!.steps,
-                                    timestamps: widget
-                                        .video.analysis!.transcriptionSegments
-                                        .map((segment) => segment.start)
-                                        .toList(),
-                                  ),
+                                  child: () {
+                                    print(
+                                        'VideoTimeline: Processing ${widget.video.analysis!.transcriptionSegments.length} segments');
+                                    print(
+                                        'VideoTimeline: Processing ${widget.video.analysis!.steps.length} steps');
+                                    return VideoTimeline(
+                                      controller: _videoController!,
+                                      steps: widget.video.analysis!.steps,
+                                      timestamps: [
+                                        // Only include start times from segments
+                                        ...widget.video.analysis!
+                                            .transcriptionSegments
+                                            .map((segment) {
+                                          print(
+                                              'VideoTimeline: Adding segment timestamp: ${segment.start}s');
+                                          return segment.start;
+                                        }),
+                                        // Add the video end time
+                                        _videoController!
+                                            .value.duration.inSeconds
+                                            .toDouble(),
+                                      ]..sort(), // Sort all timestamps
+                                    );
+                                  }(),
                                 ),
                               ),
                               // Invisible touch blocker for button area

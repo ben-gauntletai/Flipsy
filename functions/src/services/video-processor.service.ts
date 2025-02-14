@@ -1002,8 +1002,8 @@ export class VideoProcessorService {
         ${transcriptionData.text}
 
         Transcription Segments:
-        ${transcriptionData.segments.map(segment => 
-          `[${segment.start}s - ${segment.end}s]: ${segment.text}`
+        ${transcriptionData.segments.map((segment, index) => 
+          `Segment ${index + 1} [${segment.start}s - ${segment.end}s]: ${segment.text}`
         ).join('\n')}
         
         Frame Analyses:
@@ -1024,15 +1024,20 @@ export class VideoProcessorService {
         2. A complete and exhaustive list of ingredients
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated (make sure they aren't trivial)
-        5. A list of Step-by-step instructions with timestamps [X.XXs]
-        Each step should correspond to a segment. If the first segment starts at 0s and end at 2s, then only the transcription from 0s to 2s should be used to inform the step.
+        5. A list of Step-by-step instructions with timestamps [X.XXs] (Make sure to use square brackets)
+        Ideally most steps should correspond to a transcription segment, but if there are multiple steps in a row describing a step that you could summarize into one, then go ahead up to three transcription segments in a row. Be sure to include the correct timestamps, especially if you are combining them.
+        If the first segment starts at 0s and end at 2s, then only the transcription from 0s to 2s should be used to inform the step.
         when they start (6 words max but this only applies to this rule).
         If possible, if there are multiple things happening in a step, make sure that we're including the new stuff if we already labeled it in the previous step.
         Don't ever use the context from segments that are ahead. Just use the context from the current and only use the previous to inform the current step.
-        Each segment should be a step unless it doesn't make sure to do it. So ideally we would have the same number of steps as the number of transcription segments.
+        Each segment should be a step unless it doesn't make sense to do it. So ideally we would have the same number of steps as the number of transcription segments.
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
-        If the first and last segments are just introductory or concluding, just say "Intro" or "Conclusion".
-        
+
+        IMPORTANT: You must create exactly one step for each transcription segment. The step's timestamp should match the segment's start time. For example:
+        - For Segment 1 [0s - 2s]: "Introduce the recipe [0.00s - 2.00s]"
+        - For Segment 2 [2s - 4s]: "Gather ingredients [2.00s - 4.00s]"
+        And so on...
+
         Format your response as a JSON object with the following keys:
         {
           "summary": "string",
