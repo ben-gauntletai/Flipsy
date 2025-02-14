@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -22,11 +23,28 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   final TextEditingController _bioController = TextEditingController();
   final TextEditingController _instagramController = TextEditingController();
   final TextEditingController _youtubeController = TextEditingController();
+  final TextEditingController _newTagController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
   File? _imageFile;
   bool _isLoading = false;
   String? _error;
+
+  // Available dietary tags
+  final List<String> _availableDietaryTags = [
+    'Gluten-Free',
+    'Sugar-Free',
+    'Keto-Friendly',
+    'Vegan',
+    'Vegetarian',
+    'Dairy-Free',
+    'Nut-Free',
+    'Low-Carb',
+    'Paleo'
+  ];
+
+  // Selected dietary tags
+  late List<String> _selectedDietaryTags;
 
   @override
   void initState() {
@@ -37,6 +55,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _bioController.text = state.user.bio ?? '';
       _instagramController.text = state.user.instagramLink ?? '';
       _youtubeController.text = state.user.youtubeLink ?? '';
+      _selectedDietaryTags = List<String>.from(state.user.dietaryTags);
     }
   }
 
@@ -46,6 +65,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _bioController.dispose();
     _instagramController.dispose();
     _youtubeController.dispose();
+    _newTagController.dispose();
     super.dispose();
   }
 
@@ -195,11 +215,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _instagramController.text.trim() != state.user.instagramLink;
       final hasYoutubeChange =
           _youtubeController.text.trim() != state.user.youtubeLink;
+      final hasDietaryTagsChange =
+          !listEquals(_selectedDietaryTags, state.user.dietaryTags);
 
       if (avatarURL != null ||
           hasBioChange ||
           hasInstagramChange ||
-          hasYoutubeChange) {
+          hasYoutubeChange ||
+          hasDietaryTagsChange) {
         print('EditProfileScreen: Sending profile update request');
 
         final updateData = {
@@ -208,6 +231,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           if (hasInstagramChange)
             'instagramLink': _instagramController.text.trim(),
           if (hasYoutubeChange) 'youtubeLink': _youtubeController.text.trim(),
+          if (hasDietaryTagsChange) 'dietaryTags': _selectedDietaryTags,
         };
         print('EditProfileScreen: Update data: $updateData');
 
@@ -248,7 +272,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ..hideCurrentSnackBar()
           ..showSnackBar(
             SnackBar(
-              content: Text('Error updating profile: $e'),
+              content: Text(_error ?? 'An error occurred'),
               backgroundColor: Colors.red,
             ),
           );
@@ -276,6 +300,87 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _imageFile != null ||
         _instagramController.text.trim() != (state.user.instagramLink ?? '') ||
         _youtubeController.text.trim() != (state.user.youtubeLink ?? '');
+  }
+
+  void _addCustomTag() {
+    final newTag = _newTagController.text.trim();
+    if (newTag.isNotEmpty && !_selectedDietaryTags.contains(newTag)) {
+      setState(() {
+        _selectedDietaryTags.add(newTag);
+        if (!_availableDietaryTags.contains(newTag)) {
+          _availableDietaryTags.add(newTag);
+        }
+        _newTagController.clear();
+      });
+    }
+  }
+
+  Widget _buildDietaryTagsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _newTagController,
+                decoration: InputDecoration(
+                  hintText: 'Add custom dietary tag',
+                  isDense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onSubmitted: (_) => _addCustomTag(),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              onPressed: _addCustomTag,
+              icon: const Icon(Icons.add),
+              tooltip: 'Add custom tag',
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8.0,
+          runSpacing: 4.0,
+          children: _availableDietaryTags.map((tag) {
+            final isSelected = _selectedDietaryTags.contains(tag);
+            return FilterChip(
+              label: Text(
+                tag,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.black87,
+                ),
+              ),
+              selected: isSelected,
+              onSelected: (bool selected) {
+                setState(() {
+                  if (selected) {
+                    _selectedDietaryTags.add(tag);
+                  } else {
+                    _selectedDietaryTags.remove(tag);
+                  }
+                });
+              },
+              selectedColor:
+                  Theme.of(context).colorScheme.primary.withOpacity(0.2),
+              checkmarkColor: Theme.of(context).colorScheme.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            );
+          }).toList(),
+        ),
+      ],
+    );
   }
 
   @override
@@ -376,7 +481,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     'Edit profile',
                     style: TextStyle(
                       color: Colors.black87,
-                      fontSize: 17,
+                      fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -389,152 +494,158 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ),
                   ),
                 ),
-                body: Form(
-                  key: _formKey,
-                  child: SingleChildScrollView(
+                body: SafeArea(
+                  child: Form(
+                    key: _formKey,
                     child: Column(
                       children: [
-                        const SizedBox(height: 15),
-                        // Photo Options Row
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // Change Photo Button
-                            Column(
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                GestureDetector(
-                                  onTap: _pickImage,
-                                  child: Stack(
-                                    children: [
-                                      if (_imageFile != null)
-                                        ClipOval(
-                                          child: Image.file(
-                                            _imageFile!,
-                                            width: 95,
-                                            height: 95,
-                                            fit: BoxFit.cover,
+                                const SizedBox(height: 12),
+                                // Photo Options Row
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Column(
+                                      children: [
+                                        GestureDetector(
+                                          onTap: _pickImage,
+                                          child: Stack(
+                                            children: [
+                                              if (_imageFile != null)
+                                                ClipOval(
+                                                  child: Image.file(
+                                                    _imageFile!,
+                                                    width: 80,
+                                                    height: 80,
+                                                    fit: BoxFit.cover,
+                                                  ),
+                                                )
+                                              else
+                                                UserAvatar(
+                                                  avatarURL: user.avatarURL,
+                                                  radius: 40,
+                                                  backgroundColor:
+                                                      user.avatarURL != null
+                                                          ? null
+                                                          : Colors.green[700],
+                                                  showBorder: true,
+                                                ),
+                                              Positioned(
+                                                bottom: 0,
+                                                right: 0,
+                                                child: Container(
+                                                  padding:
+                                                      const EdgeInsets.all(4),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.green[700],
+                                                    shape: BoxShape.circle,
+                                                    border: Border.all(
+                                                      color: Colors.white,
+                                                      width: 2,
+                                                    ),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.camera_alt,
+                                                    color: Colors.white,
+                                                    size: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
-                                        )
-                                      else
-                                        UserAvatar(
-                                          avatarURL: user.avatarURL,
-                                          radius: 47.5,
-                                          backgroundColor:
-                                              user.avatarURL != null
-                                                  ? null
-                                                  : Colors.green[700],
-                                          showBorder: true,
                                         ),
-                                      Positioned(
-                                        bottom: 0,
-                                        right: 0,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.green[700],
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.camera_alt,
-                                            color: Colors.white,
-                                            size: 16,
+                                        const SizedBox(height: 6),
+                                        const Text(
+                                          'Change photo',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.black87,
                                           ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                _buildTextField(
+                                  label: 'Display Name',
+                                  controller: _displayNameController,
+                                  textCapitalization: TextCapitalization.words,
+                                  hintText: 'Enter your display name',
+                                  enabled: false,
+                                  showArrow: false,
+                                ),
+                                _buildTextField(
+                                  label: 'Bio',
+                                  controller: _bioController,
+                                  showArrow: true,
+                                  hintText: 'Add a bio to your profile',
+                                  showBottomDivider: false,
+                                  showBottomSpace: false,
+                                  textCapitalization:
+                                      TextCapitalization.sentences,
+                                  maxLines: 2,
+                                ),
+                                const Divider(height: 1, color: Colors.black12),
+                                _buildTextField(
+                                  label: 'Instagram',
+                                  controller: _instagramController,
+                                  showArrow: true,
+                                  hintText: 'Add your Instagram username',
+                                  showTopSpace: true,
+                                  prefixIcon: Icon(
+                                    FontAwesomeIcons.instagram,
+                                    size: 18,
+                                    color: Colors.grey[600],
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                const Text(
-                                  'Change photo',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.black87,
+                                _buildTextField(
+                                  label: 'YouTube',
+                                  controller: _youtubeController,
+                                  showArrow: true,
+                                  hintText: 'Add your YouTube channel',
+                                  prefixIcon: Icon(
+                                    FontAwesomeIcons.youtube,
+                                    size: 18,
+                                    color: Colors.grey[600],
                                   ),
                                 ),
+                                const SizedBox(height: 16),
+                                _buildDietaryTagsSection(),
                               ],
                             ),
-                          ],
+                          ),
                         ),
-
-                        const SizedBox(height: 25),
-                        // Form Fields
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
-                          child: Column(
-                            children: [
-                              _buildTextField(
-                                label: 'Display Name',
-                                controller: _displayNameController,
-                                textCapitalization: TextCapitalization.words,
-                                hintText: 'Enter your display name',
-                                enabled: false,
-                                showArrow: false,
+                          padding: const EdgeInsets.all(16),
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: isUpdating ? null : _updateProfile,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green[700],
+                                foregroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                disabledBackgroundColor: Colors.grey,
                               ),
-                              _buildTextField(
-                                label: 'Bio',
-                                controller: _bioController,
-                                showArrow: true,
-                                hintText: 'Add a bio to your profile',
-                                showBottomDivider: false,
-                                showBottomSpace: false,
-                                textCapitalization:
-                                    TextCapitalization.sentences,
-                              ),
-                              const Divider(height: 1, color: Colors.black12),
-                              _buildTextField(
-                                label: 'Instagram',
-                                controller: _instagramController,
-                                showArrow: true,
-                                hintText: 'Add your Instagram username',
-                                showTopSpace: true,
-                                prefixIcon: Icon(
-                                  FontAwesomeIcons.instagram,
-                                  size: 20,
-                                  color: Colors.grey[600],
+                              child: Text(
+                                isUpdating ? 'Saving...' : 'Save Changes',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              _buildTextField(
-                                label: 'YouTube',
-                                controller: _youtubeController,
-                                showArrow: true,
-                                hintText: 'Add your YouTube channel',
-                                prefixIcon: Icon(
-                                  FontAwesomeIcons.youtube,
-                                  size: 20,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                              const SizedBox(height: 30),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: isUpdating ? null : _updateProfile,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green[700],
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 16),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    disabledBackgroundColor: Colors.grey,
-                                  ),
-                                  child: Text(
-                                    isUpdating ? 'Saving...' : 'Save Changes',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(height: 30),
-                            ],
+                            ),
                           ),
                         ),
                       ],
@@ -569,27 +680,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     bool showTopSpace = false,
     TextCapitalization textCapitalization = TextCapitalization.none,
     Widget? prefixIcon,
+    int? maxLines,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (showTopSpace) const SizedBox(height: 20),
+        if (showTopSpace) const SizedBox(height: 12),
         Text(
           label,
           style: const TextStyle(
             color: Colors.black87,
-            fontSize: 15,
+            fontSize: 14,
             fontWeight: FontWeight.w500,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Row(
           children: [
             if (prefixIcon != null)
               Padding(
-                padding: const EdgeInsets.only(right: 12),
+                padding: const EdgeInsets.only(right: 8),
                 child: SizedBox(
-                  width: 24,
+                  width: 20,
                   child: Center(child: prefixIcon),
                 ),
               ),
@@ -598,23 +711,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 controller: controller,
                 enabled: enabled,
                 textCapitalization: textCapitalization,
+                maxLines: maxLines ?? 1,
                 style: const TextStyle(
-                  fontSize: 15,
+                  fontSize: 14,
                   color: Colors.black87,
                 ),
                 decoration: InputDecoration(
                   isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
                   border: InputBorder.none,
                   hintText: hintText,
                   hintStyle: TextStyle(
                     color: Colors.grey[400],
-                    fontSize: 15,
+                    fontSize: 14,
                   ),
                   helperText: helperText,
                   helperStyle: TextStyle(
                     color: Colors.grey[600],
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
               ),
@@ -623,13 +737,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               Icon(
                 Icons.chevron_right,
                 color: Colors.grey[400],
-                size: 22,
+                size: 20,
               ),
           ],
         ),
-        const SizedBox(height: 6),
         if (showBottomDivider) Divider(height: 1, color: Colors.grey[300]),
-        if (showBottomSpace) const SizedBox(height: 20),
+        if (showBottomSpace) const SizedBox(height: 12),
       ],
     );
   }

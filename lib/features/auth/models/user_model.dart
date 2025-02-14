@@ -15,6 +15,7 @@ class UserModel extends Equatable {
   final int followingCount;
   final int totalLikes;
   final int totalVideos;
+  final List<String> dietaryTags; // List of dietary preferences
 
   const UserModel({
     required this.id,
@@ -30,6 +31,7 @@ class UserModel extends Equatable {
     this.followingCount = 0,
     this.totalLikes = 0,
     this.totalVideos = 0,
+    this.dietaryTags = const [], // Default to empty list
   });
 
   factory UserModel.fromFirestore(DocumentSnapshot doc) {
@@ -75,6 +77,10 @@ class UserModel extends Equatable {
         followingCount: (data['followingCount'] as num?)?.toInt() ?? 0,
         totalLikes: (data['totalLikes'] as num?)?.toInt() ?? 0,
         totalVideos: (data['totalVideos'] as num?)?.toInt() ?? 0,
+        dietaryTags: (data['dietaryTags'] as List<dynamic>?)
+                ?.map((e) => e as String)
+                .toList() ??
+            [],
       );
 
       print(
@@ -101,6 +107,7 @@ class UserModel extends Equatable {
       'followingCount': followingCount,
       'totalLikes': totalLikes,
       'totalVideos': totalVideos,
+      'dietaryTags': dietaryTags,
     };
   }
 
@@ -118,6 +125,7 @@ class UserModel extends Equatable {
     int? followingCount,
     int? totalLikes,
     int? totalVideos,
+    List<String>? dietaryTags,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -133,6 +141,7 @@ class UserModel extends Equatable {
       followingCount: followingCount ?? this.followingCount,
       totalLikes: totalLikes ?? this.totalLikes,
       totalVideos: totalVideos ?? this.totalVideos,
+      dietaryTags: dietaryTags ?? this.dietaryTags,
     );
   }
 
@@ -151,5 +160,6 @@ class UserModel extends Equatable {
         followingCount,
         totalLikes,
         totalVideos,
+        dietaryTags,
       ];
 }

@@ -18,9 +18,11 @@ import * as admin from "firebase-admin";
 import OpenAI from "openai";
 import { PineconeService } from "./services/pinecone.service";
 import { initializeApp } from "firebase-admin/app";
-import { VideoVector } from "./types";
+import { VideoVector, SubstitutionResponse, SubstitutionRequest, SubstitutionHistoryItem } from "./types";
 import { VideoProcessorService } from "./services/video-processor.service";
 import { Storage } from "@google-cloud/storage";
+import { RecipeSubstitutionService } from './services/recipe-substitution.service';
+import { CallableContext } from 'firebase-functions/v1/https';
 
 // Custom type for vision messages
 // type VisionContent = {
@@ -2288,6 +2290,102 @@ export const generateIngredientSubstitutions = onCall(
     } catch (error) {
       console.error('Error generating substitutions:', error);
       throw new Error('Failed to generate substitutions');
+    }
+  }
+);
+
+export const getIngredientSubstitutions = functions.https.onCall(
+  async (request: CallableRequest<SubstitutionRequest>) => {
+    try {
+      const {
+        ingredients,
+        dietaryTags,
+        existingSubstitutions,
+        recipeDescription,
+        userId,
+        videoId,
+      } = request.data;
+
+      if (!ingredients || !Array.isArray(ingredients)) {
+        throw new Error('Invalid ingredients format');
+      }
+
+      if (!dietaryTags || !Array.isArray(dietaryTags)) {
+        throw new Error('Invalid dietary tags format');
+      }
+
+      if (!userId || !videoId) {
+        throw new Error('Missing userId or videoId');
+      }
+
+      const recipeService = RecipeSubstitutionService.getInstance();
+      const substitutions = await recipeService.getIngredientSubstitutions(
+        ingredients,
+        dietaryTags,
+        existingSubstitutions,
+        recipeDescription
+      );
+
+      // Save the full substitution data to Firestore for history tracking
+      const docRef = admin
+        .firestore()
+        .collection('users')
+        .doc(userId)
+        .collection('recipeSubstitutions')
+        .doc(videoId);
+
+      // Convert simple substitutions to full format for storage
+      const storageFormat: { [key: string]: { history: string[]; selected: string } } = {};
+      Object.entries(substitutions).forEach(([key, value]) => {
+        // Get existing history if available
+        const existing = existingSubstitutions?.[key];
+        const history = new Set<string>();
+
+        // Add existing history if available
+        if (existing?.history) {
+          if (Array.isArray(existing.history)) {
+            existing.history.forEach(h => {
+              if (typeof h === 'string') {
+                history.add(h.replace(/\*\*/g, '').trim());
+              } else if (h && typeof h === 'object' && 'selected' in h) {
+                history.add(h.selected.toString().replace(/\*\*/g, '').trim());
+              }
+            });
+          }
+        }
+
+        // Add new value to history
+        history.add(value);
+
+        storageFormat[key] = {
+          history: Array.from(history),
+          selected: value
+        };
+      });
+
+      await docRef.set(
+        {
+          ingredients: storageFormat,
+          appliedPreferences: dietaryTags,
+          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // Return just the simple substitutions
+      const response: SubstitutionResponse = {
+        substitutions,
+        appliedPreferences: dietaryTags,
+        savedToFirestore: true,
+      };
+
+      return response;
+    } catch (error) {
+      console.error('Error in getIngredientSubstitutions:', error);
+      throw new functions.https.HttpsError(
+        'internal',
+        error instanceof Error ? error.message : 'Unknown error occurred'
+      );
     }
   }
 );

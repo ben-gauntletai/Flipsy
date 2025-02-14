@@ -78,3 +78,47 @@ export interface VideoAnalysis {
   techniques: string[];
   steps: string[];
 }
+
+// Recipe Substitution Types
+export interface SubstitutionHistoryItem {
+  selected: string;
+  history?: string[];
+}
+
+export interface SubstitutionData {
+  history: (string | SubstitutionHistoryItem)[];
+  selected: string | SubstitutionHistoryItem;
+}
+
+export interface SubstitutionRequest {
+  ingredients: string[];
+  dietaryTags: string[];
+  existingSubstitutions?: { [key: string]: SubstitutionData };
+  recipeDescription?: string;
+  userId: string;
+  videoId: string;
+}
+
+export interface SubstitutionResponse {
+  substitutions: { [key: string]: string };
+  appliedPreferences: string[];
+  savedToFirestore: boolean;
+}
+
+export interface RecipeContext {
+  description?: string;
+  allIngredients: string[];
+  steps: string[];
+}
+
+export interface SubstitutionHistory {
+  history: string[];
+  selected: string;
+  timestamp: FirebaseFirestore.Timestamp;
+}
+
+export interface StoredSubstitutions {
+  ingredients: Record<string, SubstitutionHistory>;
+  appliedPreferences: string[];
+  updatedAt: FirebaseFirestore.Timestamp;
+}

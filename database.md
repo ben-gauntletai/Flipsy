@@ -74,6 +74,7 @@ Collection of all users in the application.
 - **followersCount**: number
 - **followingCount**: number
 - **bookmarkedCount**: number
+- **dietaryTags**: string[]  // Array of dietary preferences (e.g., 'Gluten-Free', 'Sugar-Free', 'Keto-Friendly')
 
 #### Sub-collections
 

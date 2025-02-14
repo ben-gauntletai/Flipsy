@@ -3,12 +3,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'logging_service.dart';
 import 'dart:developer' as developer;
+import 'package:rxdart/rxdart.dart';
 
 class RecipeService {
   static const String _logName = 'RecipeService';
   final FirebaseFunctions _functions = FirebaseFunctions.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final BehaviorSubject<Map<String, dynamic>> _substitutionController =
+      BehaviorSubject<Map<String, dynamic>>();
+
+  // Add this getter to expose the stream
+  Stream<Map<String, dynamic>> get substitutionStream =>
+      _substitutionController.stream;
+
+  // Add this to track the current state
+  final Map<String, Map<String, dynamic>> _currentState = {};
 
   RecipeService() {
     _testLogging();
@@ -308,6 +318,10 @@ class RecipeService {
           name: _logName,
         );
 
+        // Update local state and notify listeners
+        _currentState[videoId] = rawData as Map<String, dynamic>;
+        _notifySubstitutionChange(videoId, rawData);
+
         return result;
       } catch (e, stackTrace) {
         LoggingService.logError(
@@ -329,14 +343,18 @@ class RecipeService {
     }
   }
 
-  Future<void> setSelectedSubstitution(String videoId,
-      String originalIngredient, String selectedSubstitution) async {
+  Future<void> setSelectedSubstitution(
+    String videoId,
+    String originalIngredient,
+    String substitution,
+  ) async {
     LoggingService.logInfo(
       '📝 Setting substitution for videoId: $videoId',
       name: _logName,
     );
 
     try {
+      // Check if user is authenticated
       final userId = _auth.currentUser?.uid;
       LoggingService.logDebug(
         'Auth state check',
@@ -345,13 +363,10 @@ class RecipeService {
       );
 
       if (userId == null) {
-        LoggingService.logWarning(
-          'Cannot set substitution - no user authenticated',
-          name: _logName,
-        );
-        return;
+        throw Exception('User must be authenticated');
       }
 
+      // Get the document reference
       final docRef = _firestore
           .collection('users')
           .doc(userId)
@@ -364,43 +379,18 @@ class RecipeService {
         data: {'path': docRef.path},
       );
 
-      // Get current data to ensure we don't lose history
-      final doc = await docRef.get();
-      final data = doc.data() ?? {};
+      // Get current document state
+      final docSnapshot = await docRef.get();
+      final currentData = docSnapshot.data() ?? {};
+      final currentIngredients =
+          currentData['ingredients'] as Map<String, dynamic>? ?? {};
 
-      // Safely cast the ingredients map
-      final Map<String, dynamic> ingredientData = {};
-      if (data['ingredients'] != null) {
-        (data['ingredients'] as Map).forEach((key, value) {
-          ingredientData[key.toString()] = value as Map<String, dynamic>;
-        });
-      }
-
-      // Get current history and ensure it's a List<String>
-      final List<String> history = [];
-      if (ingredientData[originalIngredient]?['history'] != null) {
-        for (var item
-            in (ingredientData[originalIngredient]!['history'] as List)) {
-          history.add(item.toString());
-        }
-      }
-
-      // Add new substitution to history if not already present
-      if (!history.contains(selectedSubstitution) &&
-          selectedSubstitution != originalIngredient) {
-        history.add(selectedSubstitution);
-        LoggingService.logDebug(
-          'Added new substitution to history',
-          name: _logName,
-          data: {'newSubstitution': selectedSubstitution},
-        );
-      }
-
-      final updateData = {
+      // Prepare the update data
+      final ingredientData = {
         'ingredients': {
           originalIngredient: {
-            'history': history,
-            'selected': selectedSubstitution,
+            'history': [substitution],
+            'selected': substitution,
             'timestamp': FieldValue.serverTimestamp(),
           }
         }
@@ -409,10 +399,14 @@ class RecipeService {
       LoggingService.logDebug(
         'Updating document',
         name: _logName,
-        data: updateData,
+        data: ingredientData,
       );
 
-      await docRef.set(updateData, SetOptions(merge: true));
+      // Update the document
+      await docRef.set(ingredientData, SetOptions(merge: true));
+
+      // Notify listeners of the change
+      _notifySubstitutionChange(videoId, ingredientData);
 
       LoggingService.logSuccess(
         'Successfully updated substitution',
@@ -420,12 +414,71 @@ class RecipeService {
       );
     } catch (e, stackTrace) {
       LoggingService.logError(
-        'Error setting substitution',
+        '❌ Error in setSelectedSubstitution',
         name: _logName,
         error: e,
         stackTrace: stackTrace,
       );
       rethrow;
+    }
+  }
+
+  void _notifySubstitutionChange(
+      String videoId, Map<String, dynamic> ingredients) {
+    try {
+      // Ensure we're always sending ingredients in the same format
+      final Map<String, dynamic> state =
+          Map<String, dynamic>.from(_currentState[videoId] ?? {});
+
+      // Merge new ingredients with existing state
+      if (ingredients is Map) {
+        ingredients.forEach((key, value) {
+          if (value is Map<String, dynamic>) {
+            // Get existing ingredient data
+            final Map<String, dynamic> existingData =
+                Map<String, dynamic>.from(state[key] ?? {});
+
+            // Get current history
+            final List<String> history =
+                List<String>.from(existingData['history'] ?? []);
+
+            // Add new substitution to history if not present
+            if (value['selected'] != null &&
+                !history.contains(value['selected'])) {
+              history.add(value['selected'].toString());
+            }
+
+            // Update state with merged data
+            state[key] = {
+              'history': history,
+              'selected': value['selected'] ?? existingData['selected'],
+              'timestamp': value['timestamp'] ?? existingData['timestamp'],
+            };
+          }
+        });
+      }
+
+      // Update local state
+      _currentState[videoId] = state;
+
+      // Notify listeners with complete state
+      _substitutionController.add({
+        'videoId': videoId,
+        'state': state,
+      });
+
+      LoggingService.logDebug(
+        'Notifying state change',
+        name: _logName,
+        data: {'videoId': videoId, 'state': state},
+      );
+    } catch (e, stackTrace) {
+      LoggingService.logError(
+        'Error notifying substitution change',
+        name: _logName,
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -518,5 +571,133 @@ class RecipeService {
       );
       rethrow;
     }
+  }
+
+  Future<Map<String, String>> getIngredientSubstitutions(
+    List<String> ingredients,
+    List<String> dietaryTags,
+    String videoId, {
+    String? recipeDescription,
+  }) async {
+    LoggingService.logInfo(
+      '📝 Starting getIngredientSubstitutions',
+      name: _logName,
+    );
+
+    try {
+      // Validate inputs
+      if (ingredients.isEmpty) {
+        throw Exception('No ingredients provided');
+      }
+
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) {
+        throw Exception('User must be authenticated');
+      }
+
+      // Load existing substitutions first
+      final existingSubstitutions = await loadSubstitutions(videoId);
+      final Map<String, String> currentSubstitutions = {};
+
+      // Convert existing substitutions to the expected format
+      for (final entry in existingSubstitutions.entries) {
+        if (entry.value['selected'] != null &&
+            entry.value['selected'] != entry.key) {
+          currentSubstitutions[entry.key] = entry.value['selected'] as String;
+        }
+      }
+
+      // Call cloud function
+      final result =
+          await _functions.httpsCallable('getIngredientSubstitutions').call({
+        'ingredients': ingredients,
+        'dietaryTags': dietaryTags,
+        'existingSubstitutions': currentSubstitutions,
+        if (recipeDescription != null && recipeDescription.trim().isNotEmpty)
+          'recipeDescription': recipeDescription.trim(),
+        'userId': userId,
+        'videoId': videoId,
+      });
+
+      if (result.data == null) {
+        return {};
+      }
+
+      final Map<String, dynamic> responseData =
+          Map<String, dynamic>.from(result.data);
+      final Map<String, dynamic> rawSubstitutions =
+          Map<String, dynamic>.from(responseData['substitutions'] ?? {});
+      final Map<String, String> substitutions = {};
+
+      // Convert raw substitutions to string map
+      rawSubstitutions.forEach((key, value) {
+        substitutions[key.toString()] = value.toString();
+      });
+
+      // Get current document state
+      final docRef = _firestore
+          .collection('users')
+          .doc(userId)
+          .collection('recipeSubstitutions')
+          .doc(videoId);
+
+      final docSnapshot = await docRef.get();
+      final currentData = docSnapshot.data() ?? {};
+      final currentIngredients =
+          currentData['ingredients'] as Map<String, dynamic>? ?? {};
+
+      // Prepare the update data
+      final Map<String, dynamic> updatedIngredients =
+          Map<String, dynamic>.from(currentIngredients);
+
+      // Update ingredients data
+      for (final entry in substitutions.entries) {
+        final ingredient = entry.key.trim();
+        final substitution = entry.value.trim();
+
+        // Get current history
+        final List<String> history =
+            (updatedIngredients[ingredient]?['history'] as List<dynamic>?)
+                    ?.map((e) => e.toString())
+                    .toList() ??
+                [];
+
+        // Add new substitution to history if not present
+        if (!history.contains(substitution)) {
+          history.add(substitution);
+        }
+
+        updatedIngredients[ingredient] = {
+          'history': history,
+          'selected': substitution,
+          'timestamp': FieldValue.serverTimestamp(),
+        };
+      }
+
+      // Single write to Firestore
+      await docRef.set({
+        'ingredients': updatedIngredients,
+        'appliedPreferences': dietaryTags,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Notify listeners with the updated state
+      _notifySubstitutionChange(videoId, updatedIngredients);
+
+      return substitutions;
+    } catch (e, stackTrace) {
+      LoggingService.logError(
+        '❌ Error in getIngredientSubstitutions',
+        name: _logName,
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  @override
+  void dispose() {
+    _substitutionController.close();
   }
 }
