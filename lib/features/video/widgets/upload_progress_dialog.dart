@@ -46,15 +46,6 @@ class UploadProgressDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            TextButton(
-              onPressed: onCancel,
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.grey[600],
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              ),
-              child: const Text('Cancel'),
-            ),
           ],
         ),
       ),

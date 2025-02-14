@@ -41,8 +41,14 @@ class VideoService {
 
   // Add this method to cancel the current upload
   void cancelCurrentUpload() {
-    _currentUploadTask?.cancel();
-    _currentUploadTask = null;
+    print('\nVideoService: Cancelling current upload');
+    if (_currentUploadTask != null) {
+      _currentUploadTask!.cancel();
+      _currentUploadTask = null;
+      print('VideoService: Upload cancelled successfully');
+    } else {
+      print('VideoService: No active upload to cancel');
+    }
   }
 
   // Generate and upload thumbnail
@@ -87,8 +93,14 @@ class VideoService {
     Function(double)? onProgress,
   }) async {
     try {
+      print('\nVideoService: Starting video file upload');
+      print(
+          'VideoService: File size: ${(await videoFile.length()) / 1024 / 1024} MB');
+      print('VideoService: User ID: $userId');
+
       final fileName = '${const Uuid().v4()}.mp4';
       final storageRef = _storage.ref().child('users/$userId/videos/$fileName');
+      print('VideoService: Upload path: users/$userId/videos/$fileName');
 
       // Create metadata
       final metadata = SettableMetadata(
@@ -96,38 +108,81 @@ class VideoService {
         customMetadata: {'userId': userId},
       );
 
+      print('VideoService: Initiating upload task');
       // Upload with metadata
       _currentUploadTask = storageRef.putFile(videoFile, metadata);
+      bool wasCancelled = false;
 
       // Monitor upload progress
       final subscription = _currentUploadTask!.snapshotEvents.listen(
         (TaskSnapshot snapshot) {
+          if (wasCancelled) {
+            print('VideoService: Upload cancelled, stopping progress updates');
+            return;
+          }
           final progress = snapshot.bytesTransferred / snapshot.totalBytes;
           onProgress?.call(progress);
-          print('Upload progress: ${(progress * 100).toStringAsFixed(2)}%');
+          print(
+              'VideoService: Upload progress: ${(progress * 100).toStringAsFixed(2)}% (${snapshot.bytesTransferred}/${snapshot.totalBytes} bytes)');
         },
         onError: (error) {
-          print('Error in upload stream: $error');
-          _currentUploadTask = null;
+          if (error is FirebaseException && error.code == 'canceled') {
+            print('VideoService: Upload was explicitly cancelled by user');
+            wasCancelled = true;
+            _currentUploadTask?.cancel();
+            _currentUploadTask = null;
+          } else {
+            print('VideoService: Error in upload stream: $error');
+          }
         },
         cancelOnError: true,
       );
 
       try {
+        if (wasCancelled) {
+          print(
+              'VideoService: Upload was cancelled, throwing cancellation error');
+          throw FirebaseException(plugin: 'storage', code: 'canceled');
+        }
+
+        print('VideoService: Waiting for upload to complete...');
         // Wait for upload to complete and get download URL
         final snapshot = await _currentUploadTask!;
+
+        // Check again for cancellation after upload completes
+        if (wasCancelled || _currentUploadTask == null) {
+          print('VideoService: Upload was cancelled during completion');
+          throw FirebaseException(plugin: 'storage', code: 'canceled');
+        }
+
+        print('VideoService: Upload completed, getting download URL');
         final downloadUrl = await snapshot.ref.getDownloadURL();
 
-        print('Video file uploaded successfully: $downloadUrl');
+        print('VideoService: Video file uploaded successfully');
+        print('VideoService: Download URL: $downloadUrl');
         _currentUploadTask = null;
         return downloadUrl;
       } finally {
         subscription.cancel();
+        print('VideoService: Upload stream subscription cancelled');
+        if (wasCancelled) {
+          try {
+            // Clean up the partial upload if it was cancelled
+            await storageRef.delete();
+            print('VideoService: Cleaned up cancelled upload file');
+          } catch (e) {
+            print('VideoService: Error cleaning up cancelled upload: $e');
+          }
+        }
       }
     } catch (e) {
-      print('Error uploading video file: $e');
+      print('\nVideoService: Error during upload:');
+      print('Error type: ${e.runtimeType}');
+      print('Error details: $e');
       _currentUploadTask = null;
+
       if (e is FirebaseException && e.code == 'canceled') {
+        print('VideoService: Upload was cancelled by user (FirebaseException)');
         throw Exception('Upload cancelled by user');
       }
       throw Exception('Failed to upload video file: $e');
@@ -145,7 +200,11 @@ class VideoService {
     int spiciness = 0,
   }) async {
     try {
-      print('VideoService: Starting video upload');
+      print('\nVideoService: Starting video upload process');
+      print('VideoService: Initial checks:');
+      print('- File exists: ${await videoFile.exists()}');
+      print('- User ID: $userId');
+      print('- Privacy: $privacy');
 
       // Upload video file directly without compression
       final videoURL = await _uploadVideoFile(
@@ -153,15 +212,18 @@ class VideoService {
         userId,
         onProgress: onProgress,
       );
-      print('VideoService: Video uploaded successfully: $videoURL');
+      print('\nVideoService: Video upload completed');
+      print('VideoService: Video URL: $videoURL');
 
-      // If we get here and _currentUploadTask is null, it means upload was cancelled
-      if (_currentUploadTask == null) {
-        print('VideoService: Upload was cancelled, cleaning up...');
+      // Only check for cancellation if _currentUploadTask is null AND we don't have a videoURL
+      if (_currentUploadTask == null && videoURL.isEmpty) {
+        print('\nVideoService: Upload appears to be cancelled, cleaning up...');
         // Delete the uploaded file since upload was cancelled
         try {
+          print('VideoService: Attempting to delete partial upload');
           final fileRef = _storage.refFromURL(videoURL);
           await fileRef.delete();
+          print('VideoService: Successfully cleaned up cancelled upload');
         } catch (e) {
           print('VideoService: Error cleaning up cancelled upload: $e');
         }
@@ -169,13 +231,16 @@ class VideoService {
       }
 
       // Generate and upload thumbnail
-      print('VideoService: Generating and uploading thumbnail');
+      print('\nVideoService: Starting thumbnail generation');
       final thumbnailURL = await generateAndUploadThumbnail(userId, videoFile);
-      print('VideoService: Thumbnail uploaded successfully: $thumbnailURL');
+      print('VideoService: Thumbnail upload completed');
+      print('VideoService: Thumbnail URL: $thumbnailURL');
 
       return videoURL;
     } catch (e) {
-      print('VideoService: Error in upload process: $e');
+      print('\nVideoService: Error in upload process:');
+      print('Error type: ${e.runtimeType}');
+      print('Error details: $e');
       rethrow;
     }
   }
@@ -341,6 +406,7 @@ class VideoService {
       query = query.orderBy('createdAt', descending: true).limit(limit);
 
       return query.snapshots().map((snapshot) async {
+        print('\nVideoService: Processing feed snapshot');
         print(
             'VideoService: Got ${snapshot.docs.length} videos from Firestore');
 
@@ -357,6 +423,7 @@ class VideoService {
           followedUsers = followsSnapshot.docs
               .map((doc) => doc.data()['followingId'] as String)
               .toSet();
+          print('VideoService: User follows ${followedUsers.length} users');
         }
 
         for (final doc in snapshot.docs) {
@@ -364,6 +431,18 @@ class VideoService {
             final data = doc.data() as Map<String, dynamic>;
             final privacy = data['privacy'] as String? ?? 'everyone';
             final videoUserId = data['userId'] as String;
+            final status = data['status'] as String? ?? 'inactive';
+            final processingStatus =
+                data['processingStatus'] as String? ?? 'pending';
+
+            print('\nVideoService: Processing video ${doc.id}:');
+            print('- Status: $status');
+            print('- Processing Status: $processingStatus');
+            print('- Privacy: $privacy');
+            print('- User ID: $videoUserId');
+            print(
+                '- Current User Following: ${followedUsers.contains(videoUserId)}');
+            print('- Is Owner: ${videoUserId == _currentUserId}');
 
             // Include videos that are:
             // 1. Public (everyone)
@@ -376,21 +455,22 @@ class VideoService {
                         videoUserId == _currentUserId))) {
               final video = Video.fromFirestore(doc);
               uniqueVideos[doc.id] = video;
-              print(
-                  'VideoService: Successfully processed video ${doc.id} with privacy: $privacy');
+              print('VideoService: ✓ Added video ${doc.id} to feed');
             } else {
               print(
-                  'VideoService: Skipping video ${doc.id} due to privacy settings: $privacy');
+                  'VideoService: ✗ Skipped video ${doc.id} due to privacy settings');
             }
           } catch (e) {
-            print('VideoService: Error parsing video doc ${doc.id}: $e');
+            print('VideoService: Error processing video ${doc.id}: $e');
           }
         }
 
         final result = uniqueVideos.values.toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        print('VideoService: Returning ${result.length} unique videos');
+        print('\nVideoService: Final feed summary:');
+        print('- Total videos found: ${snapshot.docs.length}');
+        print('- Videos included in feed: ${result.length}');
         return result;
       }).asyncMap((videos) async => videos);
     } catch (e) {
