@@ -22,6 +22,9 @@ import '../../../features/video/widgets/collection_selection_sheet.dart';
 import '../../../features/video/widgets/video_timeline.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../../services/recipe_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'dart:developer' as developer;
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1746,28 +1749,75 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                           child: Text(currentSubstitution ??
                                               originalIngredient),
                                         ),
+                                        // Reset to Original Button (only show if there's a substitution)
+                                        if (currentSubstitution != null)
+                                          IconButton(
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                            icon: const Icon(Icons.restore,
+                                                color: Colors.blue, size: 20),
+                                            onPressed: () async {
+                                              try {
+                                                final recipeService =
+                                                    RecipeService();
+                                                await recipeService
+                                                    .setSelectedSubstitution(
+                                                  widget.video.id,
+                                                  originalIngredient,
+                                                  originalIngredient,
+                                                );
+
+                                                setSheetState(() {
+                                                  developer.log(
+                                                    'Resetting to original ingredient: $originalIngredient',
+                                                    name: 'SubstitutionUI',
+                                                  );
+                                                  _currentSubstitutions.remove(
+                                                      originalIngredient);
+                                                });
+                                              } catch (e, stackTrace) {
+                                                developer.log(
+                                                  'Error in substitution UI',
+                                                  name: 'SubstitutionUI',
+                                                  error: e,
+                                                  stackTrace: stackTrace,
+                                                );
+                                                print(
+                                                    'Error resetting substitution: $e');
+                                                if (mounted) {
+                                                  ScaffoldMessenger.of(context)
+                                                      .showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text(
+                                                          'Error resetting substitution'),
+                                                      duration:
+                                                          Duration(seconds: 2),
+                                                    ),
+                                                  );
+                                                }
+                                              }
+                                            },
+                                            tooltip: 'Reset to Original',
+                                          ),
+                                        const SizedBox(width: 4),
                                         const Icon(Icons.arrow_drop_down),
                                       ],
                                     ),
                                     itemBuilder: (context) {
                                       final List<PopupMenuEntry<String>> items =
                                           [
-                                        // Original ingredient
-                                        PopupMenuItem<String>(
-                                          value: originalIngredient,
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: Text(originalIngredient),
-                                              ),
-                                              if (currentSubstitution == null)
-                                                const Icon(Icons.check,
-                                                    size: 20),
-                                            ],
-                                          ),
-                                        ),
                                         if (history.isNotEmpty) ...[
-                                          const PopupMenuDivider(),
+                                          const PopupMenuItem<String>(
+                                            enabled: false,
+                                            height: 24,
+                                            child: Text(
+                                              'Previous Substitutions',
+                                              style: TextStyle(
+                                                color: Colors.grey,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
                                           ...history.map(
                                               (sub) => PopupMenuItem<String>(
                                                     value: sub,
@@ -1784,8 +1834,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                                       ],
                                                     ),
                                                   )),
+                                          const PopupMenuDivider(),
                                         ],
-                                        const PopupMenuDivider(),
                                         PopupMenuItem<String>(
                                           value: 'generate_new',
                                           child: Row(
@@ -1885,6 +1935,15 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                         // Handle selection of existing substitution
                                         try {
                                           final recipeService = RecipeService();
+
+                                          // Log the selection attempt
+                                          developer.log(
+                                            'Attempting to set substitution',
+                                            name: 'SubstitutionUI',
+                                            error: null,
+                                            level: 0,
+                                          );
+
                                           await recipeService
                                               .setSelectedSubstitution(
                                             widget.video.id,
@@ -1894,14 +1953,28 @@ class _VideoFeedItemState extends State<VideoFeedItem>
 
                                           setSheetState(() {
                                             if (value == originalIngredient) {
+                                              developer.log(
+                                                'Resetting to original ingredient: $originalIngredient',
+                                                name: 'SubstitutionUI',
+                                              );
                                               _currentSubstitutions
                                                   .remove(originalIngredient);
                                             } else {
+                                              developer.log(
+                                                'Setting new substitution: $value for $originalIngredient',
+                                                name: 'SubstitutionUI',
+                                              );
                                               _currentSubstitutions[
                                                   originalIngredient] = value;
                                             }
                                           });
-                                        } catch (e) {
+                                        } catch (e, stackTrace) {
+                                          developer.log(
+                                            'Error in substitution UI',
+                                            name: 'SubstitutionUI',
+                                            error: e,
+                                            stackTrace: stackTrace,
+                                          );
                                           print(
                                               'Error selecting substitution: $e');
                                           if (mounted) {
