@@ -25,6 +25,9 @@ import '../../../services/recipe_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'dart:developer' as developer;
+import '../../recipe/widgets/ingredient_list_item.dart';
+import '../../recipe/widgets/ingredients_list.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FeedScreen extends StatefulWidget {
   final bool isVisible;
@@ -1930,280 +1933,20 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                         ),
                       ),
                       const SizedBox(height: 10),
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: analysis.ingredients.length,
-                        itemBuilder: (context, index) {
-                          final originalIngredient =
-                              analysis.ingredients[index];
-                          final currentSubstitution =
-                              _currentSubstitutions[originalIngredient];
-                          final history =
-                              _substitutionHistoryMap[originalIngredient] ?? {};
-
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: const Icon(Icons.check_circle_outline),
-                            title: Row(
-                              children: [
-                                Expanded(
-                                  child: PopupMenuButton<String>(
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(currentSubstitution ??
-                                              originalIngredient),
-                                        ),
-                                        // Reset to Original Button (only show if there's a substitution and it's different from original)
-                                        if (currentSubstitution != null &&
-                                            currentSubstitution !=
-                                                originalIngredient)
-                                          IconButton(
-                                            padding: EdgeInsets.zero,
-                                            constraints: const BoxConstraints(),
-                                            icon: const Icon(Icons.restore,
-                                                color: Colors.blue, size: 20),
-                                            onPressed: () async {
-                                              try {
-                                                final recipeService =
-                                                    RecipeService();
-                                                await recipeService
-                                                    .setSelectedSubstitution(
-                                                  widget.video.id,
-                                                  originalIngredient,
-                                                  originalIngredient,
-                                                );
-
-                                                setSheetState(() {
-                                                  developer.log(
-                                                    'Resetting to original ingredient: $originalIngredient',
-                                                    name: 'SubstitutionUI',
-                                                  );
-                                                  _currentSubstitutions.remove(
-                                                      originalIngredient);
-                                                });
-                                              } catch (e, stackTrace) {
-                                                developer.log(
-                                                  'Error in substitution UI',
-                                                  name: 'SubstitutionUI',
-                                                  error: e,
-                                                  stackTrace: stackTrace,
-                                                );
-                                                print(
-                                                    'Error resetting substitution: $e');
-                                                if (mounted) {
-                                                  ScaffoldMessenger.of(context)
-                                                      .showSnackBar(
-                                                    const SnackBar(
-                                                      content: Text(
-                                                          'Error resetting substitution'),
-                                                      duration:
-                                                          Duration(seconds: 2),
-                                                    ),
-                                                  );
-                                                }
-                                              }
-                                            },
-                                            tooltip: 'Reset to Original',
-                                          ),
-                                        const SizedBox(width: 4),
-                                        const Icon(Icons.arrow_drop_down),
-                                      ],
-                                    ),
-                                    itemBuilder: (context) {
-                                      final List<PopupMenuEntry<String>> items =
-                                          [
-                                        if (history.isNotEmpty) ...[
-                                          const PopupMenuItem<String>(
-                                            enabled: false,
-                                            height: 24,
-                                            child: Text(
-                                              'Previous Substitutions',
-                                              style: TextStyle(
-                                                color: Colors.grey,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                          ...history.map(
-                                              (sub) => PopupMenuItem<String>(
-                                                    value: sub,
-                                                    child: Row(
-                                                      children: [
-                                                        Expanded(
-                                                          child: Text(sub),
-                                                        ),
-                                                        if (currentSubstitution ==
-                                                            sub)
-                                                          const Icon(
-                                                              Icons.check,
-                                                              size: 20),
-                                                      ],
-                                                    ),
-                                                  )),
-                                          const PopupMenuDivider(),
-                                        ],
-                                        PopupMenuItem<String>(
-                                          value: 'generate_new',
-                                          child: Row(
-                                            children: const [
-                                              Icon(Icons.add,
-                                                  color: Colors.blue),
-                                              SizedBox(width: 8),
-                                              Text(
-                                                'Generate New Substitution',
-                                                style: TextStyle(
-                                                    color: Colors.blue),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      ];
-                                      return items;
-                                    },
-                                    onSelected: (value) async {
-                                      if (value == 'generate_new') {
-                                        // Show loading indicator within the menu
-                                        showDialog(
-                                          context: context,
-                                          barrierDismissible: false,
-                                          builder: (context) => const Center(
-                                            child: CircularProgressIndicator(),
-                                          ),
-                                        );
-
-                                        try {
-                                          final recipeService = RecipeService();
-                                          final newSubstitutions =
-                                              await recipeService
-                                                  .generateSubstitutions(
-                                            originalIngredient,
-                                            _recipeContext,
-                                            _substitutionHistoryMap[
-                                                    originalIngredient] ??
-                                                {},
-                                            [], // Empty list - will be merged with user preferences
-                                          );
-
-                                          if (!mounted) return;
-                                          Navigator.pop(
-                                              context); // Dismiss loading dialog
-
-                                          if (newSubstitutions.isNotEmpty) {
-                                            final newSubstitution =
-                                                newSubstitutions.first;
-
-                                            // Add to history without selecting
-                                            setSheetState(() {
-                                              _substitutionHistoryMap[
-                                                      originalIngredient]!
-                                                  .add(newSubstitution);
-                                            });
-
-                                            // Save to Firestore without selecting
-                                            try {
-                                              await recipeService
-                                                  .saveSubstitution(
-                                                widget.video.id,
-                                                originalIngredient,
-                                                newSubstitution,
-                                                false, // Don't make it selected
-                                              );
-                                            } catch (e) {
-                                              print(
-                                                  'Error saving substitution: $e');
-                                              if (mounted) {
-                                                ScaffoldMessenger.of(context)
-                                                    .showSnackBar(
-                                                  const SnackBar(
-                                                    content: Text(
-                                                        'Error saving substitution'),
-                                                    duration:
-                                                        Duration(seconds: 2),
-                                                  ),
-                                                );
-                                              }
-                                            }
-                                          }
-                                        } catch (e) {
-                                          if (!mounted) return;
-                                          Navigator.pop(
-                                              context); // Dismiss loading dialog
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                'Failed to generate substitution. Please try again.',
-                                              ),
-                                              duration: Duration(seconds: 2),
-                                            ),
-                                          );
-                                        }
-                                      } else {
-                                        // Handle selection of existing substitution
-                                        try {
-                                          final recipeService = RecipeService();
-
-                                          // Log the selection attempt
-                                          developer.log(
-                                            'Attempting to set substitution',
-                                            name: 'SubstitutionUI',
-                                            error: null,
-                                            level: 0,
-                                          );
-
-                                          await recipeService
-                                              .setSelectedSubstitution(
-                                            widget.video.id,
-                                            originalIngredient,
-                                            value,
-                                          );
-
-                                          setSheetState(() {
-                                            if (value == originalIngredient) {
-                                              developer.log(
-                                                'Resetting to original ingredient: $originalIngredient',
-                                                name: 'SubstitutionUI',
-                                              );
-                                              _currentSubstitutions
-                                                  .remove(originalIngredient);
-                                            } else {
-                                              developer.log(
-                                                'Setting new substitution: $value for $originalIngredient',
-                                                name: 'SubstitutionUI',
-                                              );
-                                              _currentSubstitutions[
-                                                  originalIngredient] = value;
-                                            }
-                                          });
-                                        } catch (e, stackTrace) {
-                                          developer.log(
-                                            'Error in substitution UI',
-                                            name: 'SubstitutionUI',
-                                            error: e,
-                                            stackTrace: stackTrace,
-                                          );
-                                          print(
-                                              'Error selecting substitution: $e');
-                                          if (mounted) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                    'Error selecting substitution'),
-                                                duration: Duration(seconds: 2),
-                                              ),
-                                            );
-                                          }
-                                        }
-                                      }
-                                    },
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
+                      IngredientsList(
+                        videoId: widget.video.id,
+                        ingredients: analysis.ingredients,
+                        substitutions: _currentSubstitutions,
+                        substitutionHistoryMap: _substitutionHistoryMap,
+                        recipeContext: _recipeContext,
+                        onSubstitutionUpdated: (ingredient, value) {
+                          setSheetState(() {
+                            if (value == ingredient) {
+                              _currentSubstitutions.remove(ingredient);
+                            } else {
+                              _currentSubstitutions[ingredient] = value;
+                            }
+                          });
                         },
                       ),
                       const SizedBox(height: 20),

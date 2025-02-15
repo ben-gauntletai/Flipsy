@@ -1025,13 +1025,16 @@ export class VideoProcessorService {
         3. A complete and exhaustive list of tools used
         4. A complete and exhaustive list of cooking techniques demonstrated (make sure they aren't trivial)
         5. A list of Step-by-step instructions with timestamps [X.XXs] (Make sure to use square brackets)
-        Ideally most steps should correspond to a transcription segment, but if there are multiple steps in a row describing a step that you could summarize into one, then go ahead up to three transcription segments in a row. Be sure to include the correct timestamps, especially if you are combining them.
+        Ideally most steps should correspond to a transcription segment, but if there are multiple steps in a row describing a step that you could summarize into one, then go ahead up to three transcription segments in a row. 
+        Be sure to include the correct timestamps, especially if you are combining them. 
+        If the first and last steps, if they are not about the actual recipe, then combine those steps and call them "Intro" and "Outro" respectively, but they must be in a row (there doesn't have to be an intro or outro.). Please include correct timestamps if you're combining consecutive steps.
         If the first segment starts at 0s and end at 2s, then only the transcription from 0s to 2s should be used to inform the step.
         when they start (6 words max but this only applies to this rule).
         If possible, if there are multiple things happening in a step, make sure that we're including the new stuff if we already labeled it in the previous step.
         Don't ever use the context from segments that are ahead. Just use the context from the current and only use the previous to inform the current step.
         Each segment should be a step unless it doesn't make sense to do it. So ideally we would have the same number of steps as the number of transcription segments.
         (Put this at the end of the step, also make sure that the timestamps are informed by the transcription segments and frame timestamps)
+
 
         IMPORTANT: You must create exactly one step for each transcription segment. The step's timestamp should match the segment's start time. For example:
         - For Segment 1 [0s - 2s]: "Introduce the recipe [0.00s - 2.00s]"

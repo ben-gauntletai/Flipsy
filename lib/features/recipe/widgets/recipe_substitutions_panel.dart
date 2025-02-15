@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../../../services/recipe_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
 
 class RecipeSubstitutionsPanel extends StatefulWidget {
   final String videoId;
@@ -24,16 +26,37 @@ class RecipeSubstitutionsPanel extends StatefulWidget {
 class _RecipeSubstitutionsPanelState extends State<RecipeSubstitutionsPanel> {
   final RecipeService _recipeService = RecipeService();
   final Map<String, String> _substitutions = {};
+  final Set<String> _hiddenIngredients = {};
   bool _isLoading = false;
   String? _error;
   StreamSubscription? _substitutionSubscription;
   bool _initialized = false;
+  late SharedPreferences _prefs;
 
   @override
   void initState() {
     super.initState();
+    _setupPreferences();
     _setupSubscription();
     _loadSubstitutions();
+  }
+
+  Future<void> _setupPreferences() async {
+    _prefs = await SharedPreferences.getInstance();
+    final hiddenIngredients =
+        _prefs.getStringList('hidden_ingredients_${widget.videoId}') ?? [];
+    if (mounted) {
+      setState(() {
+        _hiddenIngredients.addAll(hiddenIngredients);
+      });
+    }
+  }
+
+  void _saveHiddenIngredients() {
+    _prefs.setStringList(
+      'hidden_ingredients_${widget.videoId}',
+      _hiddenIngredients.toList(),
+    );
   }
 
   void _setupSubscription() {
@@ -192,8 +215,42 @@ class _RecipeSubstitutionsPanelState extends State<RecipeSubstitutionsPanel> {
           itemBuilder: (context, index) {
             final ingredient = widget.ingredients[index];
             final substitution = _substitutions[ingredient];
+            final isHidden = _hiddenIngredients.contains(ingredient);
+
+            if (isHidden) {
+              return ListTile(
+                leading: IconButton(
+                  icon: const Icon(Icons.add, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _hiddenIngredients.remove(ingredient);
+                      _saveHiddenIngredients();
+                    });
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  splashRadius: 20,
+                ),
+                title: Text(
+                  ingredient,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+              );
+            }
 
             return ListTile(
+              leading: IconButton(
+                icon: const Icon(Icons.remove, size: 20),
+                onPressed: () {
+                  setState(() {
+                    _hiddenIngredients.add(ingredient);
+                    _saveHiddenIngredients();
+                  });
+                },
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+                splashRadius: 20,
+              ),
               title: Text(ingredient),
               subtitle: substitution != null
                   ? Text('Substituted with: $substitution')
