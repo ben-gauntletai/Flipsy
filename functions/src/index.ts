@@ -2234,21 +2234,30 @@ export const generateIngredientSubstitutions = onCall(
   },
   async (request) => {
     try {
-      const { ingredient, recipeContext, previousSubstitutions } = request.data;
+      const { ingredient, recipeContext, previousSubstitutions, dietaryTags } = request.data;
 
       if (!ingredient || typeof ingredient !== 'string') {
         throw new Error('Invalid ingredient provided');
+      }
+
+      if (!Array.isArray(dietaryTags)) {
+        throw new Error('Dietary tags must be an array');
       }
 
       const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
       });
 
-      const systemPrompt = `You are a culinary expert who provides ingredient substitutions. 
+      const systemPrompt = `You are a culinary expert who provides ingredient substitutions that strictly comply with dietary restrictions. 
       Consider the cooking method, flavor profile, and other ingredients in the recipe when suggesting a substitution.
-      The substitution must be different from any previously suggested substitutions.`;
+      The substitution must be different from any previously suggested substitutions and must comply with ALL dietary restrictions.`;
 
-      const userPrompt = `Please suggest a substitution for ${ingredient} in the following recipe context:
+      const dietaryContext = dietaryTags.length
+        ? `\nDietary restrictions (ALL must be satisfied):\n${dietaryTags.join('\n')}`
+        : '';
+
+      const userPrompt = `Please suggest a substitution for ${ingredient} that strictly complies with ALL dietary restrictions in the following context:
+      ${dietaryContext}
       
       Recipe Description: ${recipeContext.description || 'Not provided'}
       
@@ -2261,7 +2270,11 @@ export const generateIngredientSubstitutions = onCall(
       Previous substitutions that should NOT be suggested again:
       ${previousSubstitutions ? previousSubstitutions.join('\n') : 'None'}
       
-      Please just state the substitution, no other text. Only state a single substitution that has not been suggested before.`;
+      Please just state the substitution, no other text. Only state a single substitution that:
+      1. Has not been suggested before
+      2. Strictly complies with ALL dietary restrictions
+      3. Maintains similar texture and function in the recipe
+      4. Is commonly available`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",

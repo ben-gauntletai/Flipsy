@@ -60,7 +60,8 @@ class RecipeService {
   Future<List<String>> generateSubstitutions(
       String ingredient,
       Map<String, dynamic> recipeContext,
-      Set<String> previousSubstitutions) async {
+      Set<String> previousSubstitutions,
+      List<String> dietaryTags) async {
     LoggingService.logInfo(
       '📝 Starting generateSubstitutions',
       name: _logName,
@@ -72,10 +73,15 @@ class RecipeService {
         'ingredient': ingredient,
         'recipeContext': recipeContext,
         'previousSubstitutions': previousSubstitutions.toList(),
+        'dietaryTags': dietaryTags,
       },
     );
 
     try {
+      // Get user's dietary preferences and merge with provided tags
+      final userPreferences = await getUserDietaryPreferences();
+      final mergedTags = {...dietaryTags, ...userPreferences}.toList();
+
       LoggingService.logInfo(
         '🔄 Calling Cloud Function: generateIngredientSubstitutions',
         name: _logName,
@@ -87,6 +93,7 @@ class RecipeService {
         'ingredient': ingredient,
         'recipeContext': recipeContext,
         'previousSubstitutions': previousSubstitutions.toList(),
+        'dietaryTags': mergedTags,
       });
 
       LoggingService.logDebug(

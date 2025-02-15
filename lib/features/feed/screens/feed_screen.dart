@@ -2083,6 +2083,7 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                             _substitutionHistoryMap[
                                                     originalIngredient] ??
                                                 {},
+                                            [], // Empty list - will be merged with user preferences
                                           );
 
                                           if (!mounted) return;
