@@ -316,69 +316,250 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Widget _buildDietaryTagsSection() {
+    // Separate preset tags from custom tags
+    final presetTags = _availableDietaryTags.where((tag) => [
+          'Gluten-Free',
+          'Sugar-Free',
+          'Keto-Friendly',
+          'Vegan',
+          'Vegetarian',
+          'Dairy-Free',
+          'Nut-Free',
+          'Low-Carb',
+          'Paleo'
+        ].contains(tag));
+
+    final customTags =
+        _availableDietaryTags.where((tag) => !presetTags.contains(tag));
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _newTagController,
-                decoration: InputDecoration(
-                  hintText: 'Add custom dietary tag',
-                  isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-                  border: OutlineInputBorder(
+        // Section Title
+        const Text(
+          'Dietary Preferences',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Select your dietary preferences or add custom tags',
+          style: TextStyle(
+            fontSize: 14,
+            color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Custom Tag Input
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.grey[50],
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey[200]!),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Add Custom Tag',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[800],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _newTagController,
+                      decoration: InputDecoration(
+                        hintText: 'e.g., Low-Sodium, Egg-Free',
+                        hintStyle: TextStyle(color: Colors.grey[400]),
+                        isDense: true,
+                        filled: true,
+                        fillColor: Colors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: Colors.grey[300]!),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(color: Colors.grey[300]!),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).primaryColor,
+                          ),
+                        ),
+                      ),
+                      onSubmitted: (_) => _addCustomTag(),
+                      textCapitalization: TextCapitalization.words,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Material(
+                    color: Theme.of(context).primaryColor,
                     borderRadius: BorderRadius.circular(8),
+                    child: InkWell(
+                      onTap: _addCustomTag,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(10),
+                        child: const Icon(
+                          Icons.add,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+
+        // Preset Tags Section
+        if (presetTags.isNotEmpty) ...[
+          Text(
+            'Common Dietary Preferences',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[800],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: presetTags.map((tag) {
+              final isSelected = _selectedDietaryTags.contains(tag);
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                child: FilterChip(
+                  label: Text(
+                    tag,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isSelected ? Colors.white : Colors.grey[800],
+                      fontWeight:
+                          isSelected ? FontWeight.w500 : FontWeight.normal,
+                    ),
+                  ),
+                  selected: isSelected,
+                  onSelected: (bool selected) {
+                    setState(() {
+                      if (selected) {
+                        _selectedDietaryTags.add(tag);
+                      } else {
+                        _selectedDietaryTags.remove(tag);
+                      }
+                    });
+                  },
+                  backgroundColor: Colors.grey[100],
+                  selectedColor: Theme.of(context).primaryColor,
+                  checkmarkColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: isSelected
+                          ? Theme.of(context).primaryColor
+                          : Colors.grey[300]!,
+                    ),
                   ),
                 ),
-                onSubmitted: (_) => _addCustomTag(),
-                textCapitalization: TextCapitalization.words,
-              ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+        ],
+
+        // Custom Tags Section
+        if (customTags.isNotEmpty) ...[
+          Text(
+            'Your Custom Tags',
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey[800],
             ),
-            const SizedBox(width: 8),
-            IconButton(
-              onPressed: _addCustomTag,
-              icon: const Icon(Icons.add),
-              tooltip: 'Add custom tag',
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8.0,
-          runSpacing: 4.0,
-          children: _availableDietaryTags.map((tag) {
-            final isSelected = _selectedDietaryTags.contains(tag);
-            return FilterChip(
-              label: Text(
-                tag,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : Colors.black87,
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: customTags.map((tag) {
+              final isSelected = _selectedDietaryTags.contains(tag);
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                child: FilterChip(
+                  label: Text(
+                    tag,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: isSelected ? Colors.white : Colors.grey[800],
+                      fontWeight:
+                          isSelected ? FontWeight.w500 : FontWeight.normal,
+                    ),
+                  ),
+                  selected: isSelected,
+                  onSelected: (bool selected) {
+                    setState(() {
+                      if (selected) {
+                        _selectedDietaryTags.add(tag);
+                      } else {
+                        _selectedDietaryTags.remove(tag);
+                      }
+                    });
+                  },
+                  backgroundColor: Colors.grey[50],
+                  selectedColor:
+                      Theme.of(context).primaryColor.withOpacity(0.9),
+                  checkmarkColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: isSelected
+                          ? Theme.of(context).primaryColor
+                          : Colors.grey[300]!,
+                    ),
+                  ),
+                  onDeleted: () {
+                    setState(() {
+                      _selectedDietaryTags.remove(tag);
+                      _availableDietaryTags.remove(tag);
+                    });
+                  },
+                  deleteIcon: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: isSelected ? Colors.white : Colors.grey[600],
+                  ),
                 ),
-              ),
-              selected: isSelected,
-              onSelected: (bool selected) {
-                setState(() {
-                  if (selected) {
-                    _selectedDietaryTags.add(tag);
-                  } else {
-                    _selectedDietaryTags.remove(tag);
-                  }
-                });
-              },
-              selectedColor:
-                  Theme.of(context).colorScheme.primary.withOpacity(0.2),
-              checkmarkColor: Theme.of(context).colorScheme.primary,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            );
-          }).toList(),
-        ),
+              );
+            }).toList(),
+          ),
+        ],
       ],
     );
   }

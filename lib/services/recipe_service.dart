@@ -573,6 +573,35 @@ class RecipeService {
     }
   }
 
+  Future<List<String>> getUserDietaryPreferences() async {
+    try {
+      final userId = _auth.currentUser?.uid;
+      if (userId == null) {
+        return [];
+      }
+
+      final userDoc = await _firestore.collection('users').doc(userId).get();
+      if (!userDoc.exists) {
+        return [];
+      }
+
+      final userData = userDoc.data();
+      if (userData == null) {
+        return [];
+      }
+
+      return List<String>.from(userData['dietaryTags'] ?? []);
+    } catch (e, stackTrace) {
+      LoggingService.logError(
+        '❌ Error fetching user dietary preferences',
+        name: _logName,
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return [];
+    }
+  }
+
   Future<Map<String, String>> getIngredientSubstitutions(
     List<String> ingredients,
     List<String> dietaryTags,
@@ -595,6 +624,20 @@ class RecipeService {
         throw Exception('User must be authenticated');
       }
 
+      // Get user's dietary preferences and merge with provided tags
+      final userPreferences = await getUserDietaryPreferences();
+      final mergedTags = {...dietaryTags, ...userPreferences}.toList();
+
+      LoggingService.logDebug(
+        'Merged dietary tags',
+        name: _logName,
+        data: {
+          'providedTags': dietaryTags,
+          'userPreferences': userPreferences,
+          'mergedTags': mergedTags,
+        },
+      );
+
       // Load existing substitutions first
       final existingSubstitutions = await loadSubstitutions(videoId);
       final Map<String, String> currentSubstitutions = {};
@@ -607,11 +650,11 @@ class RecipeService {
         }
       }
 
-      // Call cloud function
+      // Call cloud function with merged tags
       final result =
           await _functions.httpsCallable('getIngredientSubstitutions').call({
         'ingredients': ingredients,
-        'dietaryTags': dietaryTags,
+        'dietaryTags': mergedTags,
         'existingSubstitutions': currentSubstitutions,
         if (recipeDescription != null && recipeDescription.trim().isNotEmpty)
           'recipeDescription': recipeDescription.trim(),

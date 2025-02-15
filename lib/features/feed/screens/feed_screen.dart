@@ -1706,8 +1706,8 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Recipe Title
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Recipe Details',
@@ -1716,168 +1716,206 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.food_bank),
-                          onPressed: () async {
-                            try {
-                              setSheetState(() {
-                                _isLoadingSubstitutions = true;
-                              });
+                        const SizedBox(height: 16),
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [
+                                Theme.of(context).primaryColor,
+                                Theme.of(context).primaryColor.withOpacity(0.8),
+                              ],
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Theme.of(context)
+                                    .primaryColor
+                                    .withOpacity(0.2),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: _isLoadingSubstitutions
+                                  ? null
+                                  : () async {
+                                      try {
+                                        setSheetState(() {
+                                          _isLoadingSubstitutions = true;
+                                        });
 
-                              final recipeService = RecipeService();
-                              final substitutions = await recipeService
-                                  .getIngredientSubstitutions(
-                                analysis.ingredients,
-                                [
-                                  'vegan',
-                                  'vegetarian',
-                                  'gluten-free'
-                                ], // Will be merged with user preferences
-                                widget.video.id,
-                                recipeDescription:
-                                    widget.video.description ?? '',
-                              );
+                                        final recipeService = RecipeService();
+                                        final substitutions =
+                                            await recipeService
+                                                .getIngredientSubstitutions(
+                                          analysis.ingredients,
+                                          [], // Empty list - will be merged with user preferences
+                                          widget.video.id,
+                                          recipeDescription:
+                                              widget.video.description ?? '',
+                                        );
 
-                              if (!mounted) return;
+                                        if (!mounted) return;
 
-                              // Apply substitutions
-                              setSheetState(() {
-                                _currentSubstitutions = substitutions;
-                                _isLoadingSubstitutions = false;
-                              });
+                                        // Apply substitutions
+                                        setSheetState(() {
+                                          _currentSubstitutions = substitutions;
+                                          _isLoadingSubstitutions = false;
+                                        });
 
-                              // Save all substitutions
-                              for (final entry in substitutions.entries) {
-                                await recipeService.setSelectedSubstitution(
-                                  widget.video.id,
-                                  entry.key,
-                                  entry.value,
-                                );
-
-                                // Add to history
-                                _substitutionHistoryMap[entry.key] ??= {};
-                                _substitutionHistoryMap[entry.key]!
-                                    .add(entry.value);
-                              }
-
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content:
-                                        Text('Applied dietary substitutions'),
-                                    duration: Duration(seconds: 2),
-                                  ),
-                                );
-                              }
-                            } catch (e) {
-                              print('Error applying dietary substitutions: $e');
-                              if (mounted) {
-                                setSheetState(() {
-                                  _isLoadingSubstitutions = false;
-                                });
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Error applying dietary substitutions: ${e.toString()}',
-                                    ),
-                                    duration: const Duration(seconds: 2),
-                                    action: SnackBarAction(
-                                      label: 'RETRY',
-                                      onPressed: () async {
-                                        // Retry the operation
-                                        try {
-                                          setSheetState(() {
-                                            _isLoadingSubstitutions = true;
-                                          });
-
-                                          final recipeService = RecipeService();
-                                          final substitutions =
-                                              await recipeService
-                                                  .getIngredientSubstitutions(
-                                            analysis.ingredients,
-                                            [
-                                              'vegan',
-                                              'vegetarian',
-                                              'gluten-free'
-                                            ],
+                                        // Save all substitutions
+                                        for (final entry
+                                            in substitutions.entries) {
+                                          await recipeService
+                                              .setSelectedSubstitution(
                                             widget.video.id,
-                                            recipeDescription:
-                                                widget.video.description ?? '',
+                                            entry.key,
+                                            entry.value,
                                           );
 
-                                          if (!mounted) return;
-
-                                          // Apply substitutions
-                                          setSheetState(() {
-                                            _currentSubstitutions =
-                                                substitutions;
-                                            _isLoadingSubstitutions = false;
-                                          });
-
-                                          // Save all substitutions
-                                          for (final entry
-                                              in substitutions.entries) {
-                                            await recipeService
-                                                .setSelectedSubstitution(
-                                              widget.video.id,
-                                              entry.key,
-                                              entry.value,
-                                            );
-
-                                            // Add to history
-                                            _substitutionHistoryMap[
-                                                entry.key] ??= {};
-                                            _substitutionHistoryMap[entry.key]!
-                                                .add(entry.value);
-                                          }
-
-                                          if (mounted) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                    'Successfully applied substitutions'),
-                                                duration: Duration(seconds: 2),
-                                              ),
-                                            );
-                                          }
-                                        } catch (retryError) {
-                                          if (mounted) {
-                                            setSheetState(() {
-                                              _isLoadingSubstitutions = false;
-                                            });
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                    'Failed to apply substitutions'),
-                                                duration: Duration(seconds: 2),
-                                              ),
-                                            );
-                                          }
+                                          // Add to history
+                                          _substitutionHistoryMap[entry.key] ??=
+                                              {};
+                                          _substitutionHistoryMap[entry.key]!
+                                              .add(entry.value);
                                         }
-                                      },
+                                      } catch (e) {
+                                        if (!mounted) return;
+                                        setSheetState(() {
+                                          _isLoadingSubstitutions = false;
+                                        });
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              'Error applying dietary substitutions: ${e.toString()}',
+                                            ),
+                                            duration:
+                                                const Duration(seconds: 2),
+                                            action: SnackBarAction(
+                                              label: 'RETRY',
+                                              onPressed: () async {
+                                                // Retry the operation
+                                                try {
+                                                  setSheetState(() {
+                                                    _isLoadingSubstitutions =
+                                                        true;
+                                                  });
+
+                                                  final recipeService =
+                                                      RecipeService();
+                                                  final substitutions =
+                                                      await recipeService
+                                                          .getIngredientSubstitutions(
+                                                    analysis.ingredients,
+                                                    [], // Empty list - will be merged with user preferences
+                                                    widget.video.id,
+                                                    recipeDescription: widget
+                                                            .video
+                                                            .description ??
+                                                        '',
+                                                  );
+
+                                                  if (!mounted) return;
+
+                                                  // Apply substitutions
+                                                  setSheetState(() {
+                                                    _currentSubstitutions =
+                                                        substitutions;
+                                                    _isLoadingSubstitutions =
+                                                        false;
+                                                  });
+
+                                                  // Save all substitutions
+                                                  for (final entry
+                                                      in substitutions
+                                                          .entries) {
+                                                    await recipeService
+                                                        .setSelectedSubstitution(
+                                                      widget.video.id,
+                                                      entry.key,
+                                                      entry.value,
+                                                    );
+
+                                                    // Add to history
+                                                    _substitutionHistoryMap[
+                                                        entry.key] ??= {};
+                                                    _substitutionHistoryMap[
+                                                            entry.key]!
+                                                        .add(entry.value);
+                                                  }
+                                                } catch (retryError) {
+                                                  if (mounted) {
+                                                    setSheetState(() {
+                                                      _isLoadingSubstitutions =
+                                                          false;
+                                                    });
+                                                    ScaffoldMessenger.of(
+                                                            context)
+                                                        .showSnackBar(
+                                                      const SnackBar(
+                                                        content: Text(
+                                                            'Failed to apply substitutions'),
+                                                        duration: Duration(
+                                                            seconds: 2),
+                                                      ),
+                                                    );
+                                                  }
+                                                }
+                                              },
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 16,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    if (_isLoadingSubstitutions)
+                                      const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          valueColor:
+                                              AlwaysStoppedAnimation<Color>(
+                                                  Colors.white),
+                                        ),
+                                      )
+                                    else
+                                      const Icon(
+                                        Icons.food_bank,
+                                        color: Colors.white,
+                                        size: 24,
+                                      ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      _isLoadingSubstitutions
+                                          ? 'Applying Dietary Restrictions...'
+                                          : 'Apply Dietary Restrictions',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.3,
+                                      ),
                                     ),
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          tooltip: _isLoadingSubstitutions
-                              ? 'Applying dietary restrictions...'
-                              : 'Apply Dietary Restrictions',
-                        ),
-                        if (_isLoadingSubstitutions)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 8.0),
-                            child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
+                                  ],
+                                ),
                               ),
                             ),
                           ),
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -1917,8 +1955,10 @@ class _VideoFeedItemState extends State<VideoFeedItem>
                                           child: Text(currentSubstitution ??
                                               originalIngredient),
                                         ),
-                                        // Reset to Original Button (only show if there's a substitution)
-                                        if (currentSubstitution != null)
+                                        // Reset to Original Button (only show if there's a substitution and it's different from original)
+                                        if (currentSubstitution != null &&
+                                            currentSubstitution !=
+                                                originalIngredient)
                                           IconButton(
                                             padding: EdgeInsets.zero,
                                             constraints: const BoxConstraints(),
