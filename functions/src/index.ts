@@ -2337,6 +2337,11 @@ export const getIngredientSubstitutions = functions.https.onCall(
       // Convert simple substitutions to full format for storage
       const storageFormat: { [key: string]: { history: string[]; selected: string } } = {};
       Object.entries(substitutions).forEach(([key, value]) => {
+        // Skip if substitution is the same as the original ingredient
+        if (value.toLowerCase() === key.toLowerCase()) {
+          return;
+        }
+
         // Get existing history if available
         const existing = existingSubstitutions?.[key];
         const history = new Set<string>();
@@ -2346,37 +2351,52 @@ export const getIngredientSubstitutions = functions.https.onCall(
           if (Array.isArray(existing.history)) {
             existing.history.forEach(h => {
               if (typeof h === 'string') {
-                history.add(h.replace(/\*\*/g, '').trim());
+                // Only add to history if different from original ingredient
+                if (h.replace(/\*\*/g, '').trim().toLowerCase() !== key.toLowerCase()) {
+                  history.add(h.replace(/\*\*/g, '').trim());
+                }
               } else if (h && typeof h === 'object' && 'selected' in h) {
-                history.add(h.selected.toString().replace(/\*\*/g, '').trim());
+                const selected = h.selected.toString().replace(/\*\*/g, '').trim();
+                // Only add to history if different from original ingredient
+                if (selected.toLowerCase() !== key.toLowerCase()) {
+                  history.add(selected);
+                }
               }
             });
           }
         }
 
-        // Add new value to history
-        history.add(value);
+        // Add new value to history only if different from original
+        if (value.toLowerCase() !== key.toLowerCase()) {
+          history.add(value);
+        }
 
-        storageFormat[key] = {
-          history: Array.from(history),
-          selected: value
-        };
+        // Only store if we have actual substitutions
+        if (history.size > 0) {
+          storageFormat[key] = {
+            history: Array.from(history),
+            selected: value
+          };
+        }
       });
 
-      await docRef.set(
-        {
-          ingredients: storageFormat,
-          appliedPreferences: dietaryTags,
-          lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      // Only save to Firestore if we have actual substitutions
+      if (Object.keys(storageFormat).length > 0) {
+        await docRef.set(
+          {
+            ingredients: storageFormat,
+            appliedPreferences: dietaryTags,
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
 
       // Return just the simple substitutions
       const response: SubstitutionResponse = {
         substitutions,
         appliedPreferences: dietaryTags,
-        savedToFirestore: true,
+        savedToFirestore: Object.keys(storageFormat).length > 0,
       };
 
       return response;

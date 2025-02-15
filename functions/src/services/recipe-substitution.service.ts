@@ -253,6 +253,68 @@ export class RecipeSubstitutionService {
     return formattedSubstitutions;
   }
 
+  private async checkIngredientsAgainstDietaryRestrictions(
+    ingredients: string[],
+    dietaryTags: string[],
+  ): Promise<Map<string, boolean>> {
+    if (ingredients.length === 0 || dietaryTags.length === 0) {
+      return new Map();
+    }
+
+    try {
+      const openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+
+      const prompt = `For each of the following ingredients, determine if they comply with these dietary restrictions: ${dietaryTags.join(', ')}.
+      
+      Return ONLY a JSON object where the keys are ingredients and the values are true (compliant) or false (non-compliant).
+      
+      Ingredients to check:
+      ${ingredients.join('\n')}`;
+
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a dietary expert who evaluates ingredients for dietary compliance. Respond only with the requested JSON format.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      });
+
+      const content = response.choices[0].message.content;
+      if (!content) {
+        throw new Error('No response from dietary check');
+      }
+
+      // Extract JSON from the response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        throw new Error('Invalid response format from dietary check');
+      }
+
+      const results = JSON.parse(jsonMatch[0]);
+      const complianceMap = new Map<string, boolean>();
+
+      // Convert to Map and ensure all ingredients are included
+      ingredients.forEach(ingredient => {
+        complianceMap.set(ingredient, results[ingredient] === true);
+      });
+
+      return complianceMap;
+    } catch (error) {
+      console.error('Error checking dietary compliance:', error);
+      throw error;
+    }
+  }
+
   async getIngredientSubstitutions(
     ingredients: string[],
     dietaryTags: string[],
@@ -282,37 +344,45 @@ export class RecipeSubstitutionService {
         }
       });
 
+      // Check dietary compliance for ingredients
+      const complianceMap = await this.checkIngredientsAgainstDietaryRestrictions(
+        cleanedIngredients,
+        cleanedTags
+      );
+
+      console.log('Dietary compliance check results:', Object.fromEntries(complianceMap));
+
+      // First, check if existing substitutions are compliant
+      const existingSubstitutionsToKeep: { [key: string]: string } = {};
+      Object.entries(existingSimple).forEach(([ingredient, substitution]) => {
+        // If the ingredient already has a compliant substitution, keep it
+        if (complianceMap.get(substitution)) {
+          existingSubstitutionsToKeep[ingredient] = substitution;
+        }
+      });
+
+      // Filter ingredients that need substitution (non-compliant and not already having a compliant substitution)
       const ingredientsNeedingSubstitution = cleanedIngredients.filter(
-        ingredient => !existingSimple[ingredient]
+        ingredient => {
+          const isCompliant = complianceMap.get(ingredient);
+          const hasCompliantSubstitution = existingSubstitutionsToKeep[ingredient];
+          
+          console.log(`Checking ingredient "${ingredient}":`, {
+            isCompliant,
+            hasCompliantSubstitution: !!hasCompliantSubstitution
+          });
+
+          return !isCompliant && !hasCompliantSubstitution;
+        }
       );
 
       if (ingredientsNeedingSubstitution.length === 0) {
-        console.log('No new substitutions needed');
-        // Return just the selected values from existing substitutions
-        const simpleSubstitutions: { [key: string]: string } = {};
-        Object.entries(existingSubstitutions).forEach(([key, value]) => {
-          if (value && typeof value === 'object') {
-            let selected = '';
-            if (typeof value.selected === 'string') {
-              selected = value.selected.replace(/\*\*/g, '').trim();
-            } else if (value.selected && typeof value.selected === 'object') {
-              const selectedItem = value.selected as { selected?: string; history?: string[] };
-              if (typeof selectedItem.selected === 'string') {
-                selected = selectedItem.selected.replace(/\*\*/g, '').trim();
-              } else if (Array.isArray(selectedItem.history) && selectedItem.history.length > 0) {
-                const lastItem = selectedItem.history[selectedItem.history.length - 1];
-                selected = typeof lastItem === 'string' ? lastItem.replace(/\*\*/g, '').trim() : '';
-              }
-            }
-            if (selected) {
-              simpleSubstitutions[key] = selected;
-            }
-          }
-        });
-        return simpleSubstitutions;
+        console.log('No new substitutions needed - all ingredients are either compliant or have compliant substitutions');
+        // Return existing compliant substitutions
+        return existingSubstitutionsToKeep;
       }
 
-      console.log('Generating substitutions for:', ingredientsNeedingSubstitution);
+      console.log('Generating substitutions for non-compliant ingredients:', ingredientsNeedingSubstitution);
 
       const openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
@@ -362,10 +432,29 @@ export class RecipeSubstitutionService {
             existingSubstitutions
           );
 
-          // Merge with existing substitutions
-          const finalSubstitutions: { [key: string]: string } = { ...existingSimple, ...formattedNew };
+          // Merge substitutions, but only for non-compliant ingredients
+          const finalSubstitutions: { [key: string]: string } = {};
+          
+          // Keep existing compliant substitutions
+          Object.assign(finalSubstitutions, existingSubstitutionsToKeep);
 
-          console.log('Final substitutions:', finalSubstitutions);
+          // Add new substitutions only for non-compliant ingredients
+          Object.entries(formattedNew).forEach(([ingredient, substitution]) => {
+            const cleanedIngredient = ingredientMap[ingredient] || ingredient;
+            // Only add substitution if it's different from the original ingredient
+            if (!complianceMap.get(cleanedIngredient) && substitution.toLowerCase() !== cleanedIngredient.toLowerCase()) {
+              finalSubstitutions[ingredient] = substitution;
+            } else {
+              console.log(`Skipping substitution for ingredient: ${ingredient} - ${substitution === cleanedIngredient ? 'same as original' : 'compliant'}`);
+            }
+          });
+
+          console.log('Final substitutions:', {
+            total: Object.keys(finalSubstitutions).length,
+            substitutions: finalSubstitutions,
+            keptCompliant: Object.keys(existingSubstitutionsToKeep).length,
+            newSubstitutions: Object.keys(formattedNew).length
+          });
 
           return finalSubstitutions;
         } catch (error) {
